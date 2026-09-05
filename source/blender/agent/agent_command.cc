@@ -31,6 +31,7 @@
 #include "DNA_ID.h"
 
 #include "AGENT_command.hh"
+#include "agent_context.hh"
 #include "agent_session.hh"
 
 namespace blender::agent {
@@ -157,6 +158,13 @@ class AgentCommand : public CommandHandler {
       PyList_SET_ITEM(arguments, i, PyUnicode_DecodeFSDefault(argv[i]));
     }
     PyObject *module = PyImport_ImportModule("agent_runtime");
+    PyObject *helper = PyImport_ImportModule("agent");
+    if (helper) {
+      PyObject *native = native_api(C);
+      PyObject_SetAttrString(helper, "_native", native);
+      Py_DECREF(native);
+      Py_DECREF(helper);
+    }
     const bool serving = argc >= 2 && STREQ(argv[0], "session") && STREQ(argv[1], "serve");
     PyObject *result = module && !serving ?
                            PyObject_CallMethod(module, "run", "OOO", arguments, snapshot, fields) :

@@ -383,12 +383,27 @@ agent.history() -> [{"snapshot": …, "label": …, "verb": …, "at": …}, …
 
 Many `bpy.ops` operators poll for a window, screen, `VIEW_3D` area and
 region. Background startup does not provide a reliable active UI area.
-Phase 3 will construct one
-`wmWindow`/`bScreen` with a single `VIEW_3D` area and `WINDOW` region at
-session start, without GHOST and without drawing, and installs it as the
-default context for `exec`. Operators that genuinely need a GPU viewport
-(e.g. GPU-based selection) report that in their error rather than failing
-opaquely.
+Phase 3 adopts the first loaded window's active screen and its first
+`VIEW_3D` area/`WINDOW` region. Background factory startup and file loading
+already provide these data; constructing a duplicate hierarchy unconditionally
+would change files unnecessarily. If missing, the agent allocates a data-only
+window with `wm_window_new`, a workspace/layout with `BKE_workspace_add` /
+`ED_workspace_layout_add`, and space/regions through the upstream space-type
+constructor. It never calls `WM_window_open` (which tries to create a native
+GHOST window) or initializes screen drawing.
+
+C++ resolves the hierarchy at each `exec`, at session startup and after
+memfile rollback. No window, screen, area or region pointer is cached across
+Main replacement. Calls made by user code that replace Main follow upstream
+context semantics within that call; the next exec reestablishes the default.
+Screen-coordinate `view3d.select`, `select_box`, `select_circle`, and
+`select_lasso` polls explicitly explain that GPU viewport selection is
+unavailable in the undrawn context. Mesh/data selection remains upstream bpy.
+
+Every exec boundary, including a failed exec, calls `ED_editors_flush_edits`:
+edit mode stays active, while mesh RNA, inspection, snapshots and save see
+current geometry. This uses upstream's editmode-load operation, not a forced
+mode switch, and supports continuing an edit across requests.
 
 ## Wire protocol (session)
 

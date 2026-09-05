@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_session.hh"
+#include "agent_context.hh"
 #include "agent_transport.hh"
 
 #include <filesystem>
@@ -137,6 +138,7 @@ static PyObject *snapshot_restore(PyObject *self, PyObject *arg)
     return PyErr_Format(PyExc_RuntimeError, "Memfile rollback failed");
   }
   ED_editors_init_for_undo(CTX_data_main(state.context));
+  context_ensure(state.context);
   BPY_context_set(state.context);
   state.init_undo(true);
   Py_RETURN_NONE;

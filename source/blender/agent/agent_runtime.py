@@ -221,6 +221,8 @@ def execute(args, snapshot, fields, session=None):
             raise TimeoutError(f"Execution exceeded {args.timeout:g} seconds")
     finally:
         sys.settrace(previous_trace)
+        # Keep edit mode active, but make Mesh RNA, inspection and saving current.
+        agent._native["flush"]()
     elapsed = (time.perf_counter() - start) * 1000
     return {"ok": True, "value": value, "diff": id_diff(before, snapshot(False), fields), "ms": elapsed}
 
@@ -240,6 +242,8 @@ def run(arguments, snapshot, fields, session=None):
                 if not os.path.isfile(path):
                     raise FileNotFoundError(path)
                 bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
+            if args.verb == "exec":
+                agent._native["context"]()
             result = execute(args, snapshot, fields, session) if args.verb == "exec" else inspect(args)
             if session and args.verb == "exec":
                 result["snapshot"] = session.snapshot(None, "exec")
@@ -285,6 +289,7 @@ class Session:
         self.history = []
         self.current = None
         self.closing = False
+        agent._native["context"]()
         self.before = id_state(True)
         self.snapshot(None, "open")
         agent._session = self
