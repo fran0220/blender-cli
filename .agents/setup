@@ -49,6 +49,7 @@ git config --local remote.lfs-fallback.pushurl no_push
 # Fetch upstream explicitly: Debian's Git LFS does not retry origin's missing
 # objects with remote.searchall alone. The local object cache makes this cheap warm.
 git lfs pull lfs-fallback
+echo "[setup] Source assets ready (${SECONDS}s total); fetching pinned libraries"
 # Override update=none for this invocation only; never update Blender's branch.
 GIT_LFS_SKIP_SMUDGE=1 git -c submodule.lib/linux_x64.update=checkout \
   submodule update --init --depth 1 -- lib/linux_x64

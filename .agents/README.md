@@ -30,3 +30,13 @@ Compilation can be expensive; select parallelism appropriate for the orb's RAM.
 Run selected tests with `ctest --test-dir build/orb --output-on-failure -R PATTERN`.
 The tracked `tests/files` LFS fixtures are included. GPU execution requires GPU
 hardware and is not provided by setup.
+
+## Setup verification
+
+On a Debian 12 x86_64 orb, system packages took 11 seconds, initial source assets
+about 4m50s, and library provisioning about 1m56s. Cold setup therefore needs
+several minutes of network access; these downloads are retained in the snapshot.
+Warm setup completed in 1.7 seconds without reinstalling packages, and resume in
+3 milliseconds. Clean-login-shell CMake configuration with the command above
+succeeded. The `atomic_test` target built and passed all 56 tests; a full Blender
+build and the full test suite were not run as part of setup validation.
