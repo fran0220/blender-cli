@@ -298,10 +298,21 @@ def digest():
     """
     # Evaluated transforms and edit-mode meshes are only current at a request boundary.
     import agent
-    from agent_runtime import settings
+    from agent_runtime import serialize, settings
     agent._native["flush"]()
     bpy.context.view_layer.update()
     stream = hashlib.sha256()
+
+    def tunable(value):
+        """The settings an agent can set.
+
+        Read-only RNA is derived from the rest, and some of it is a measurement rather
+        than a setting: a Nodes modifier reports its own `execution_time`, which would
+        make two runs of one program disagree about the scene.
+        """
+        walked = settings(value)
+        return sorted((name, walked[name]) for name in walked
+                      if not value.bl_rna.properties[name].is_readonly)
 
     def feed(*parts):
         for part in parts:
@@ -329,6 +340,30 @@ def digest():
             if spelling:
                 buffered(attribute.data, *spelling)
 
+    def node_graph(tree, *identity):
+        """A node tree's content: the nodes, what they are set to, and what they carry.
+
+        An unlinked input socket's `default_value` is the number the agent typed, so a
+        tree whose only difference is one socket is a different scene.
+        """
+        if tree is None:
+            return
+        for node in sorted(tree.nodes, key=lambda item: item.name):
+            feed("node", *identity, node.name, node.bl_idname, tunable(node),
+                 [(socket.identifier, socket.is_linked,
+                   serialize(getattr(socket, "default_value", None)))
+                  for socket in node.inputs])
+        feed("links", *identity,
+             sorted((link.from_node.name, link.from_socket.identifier,
+                     link.to_node.name, link.to_socket.identifier) for link in tree.links))
+        interface = getattr(tree, "interface", None)
+        if interface is not None:
+            feed("interface", *identity,
+                 [(item.identifier, item.item_type, getattr(item, "in_out", None),
+                   getattr(item, "socket_type", None),
+                   serialize(getattr(item, "default_value", None)))
+                  for item in interface.items_tree])
+
     for prop in sorted(bpy.data.bl_rna.properties, key=lambda item: item.identifier):
         if prop.type == "COLLECTION":
             items = getattr(bpy.data, prop.identifier)
@@ -346,9 +381,20 @@ def digest():
         # A modifier or constraint that differs only in a numeric setting is a
         # different scene, so the settings themselves are hashed, not just the type.
         for modifier in obj.modifiers:
-            feed("modifier", obj.name, modifier.name, sorted(settings(modifier).items()))
+            feed("modifier", obj.name, modifier.name, modifier.type, tunable(modifier))
+            # A Nodes modifier keeps its group's input values in a struct per socket,
+            # which the settings walk can only report as a bare reference.
+            inputs = getattr(getattr(modifier, "properties", None), "inputs", None)
+            if inputs is not None:
+                for prop in sorted(inputs.bl_rna.properties, key=lambda item: item.identifier):
+                    if prop.type != "POINTER" or prop.identifier == "rna_type":
+                        continue
+                    # A geometry socket declares the property but carries no value.
+                    value = getattr(inputs, prop.identifier, None)
+                    if value is not None:
+                        feed("gninput", obj.name, modifier.name, prop.identifier, tunable(value))
         for constraint in obj.constraints:
-            feed("constraint", obj.name, constraint.name, sorted(settings(constraint).items()))
+            feed("constraint", obj.name, constraint.name, constraint.type, tunable(constraint))
     for mesh in sorted(bpy.data.meshes, key=lambda item: item.name):
         feed("mesh", mesh.name, len(mesh.vertices), len(mesh.edges),
              len(mesh.loops), len(mesh.polygons),
@@ -362,13 +408,19 @@ def digest():
         # whatever geometry nodes stored by name. `position` and the dot-prefixed
         # topology attributes are the buffers above, so they are not read twice.
         attributes(mesh.attributes, "mesh", mesh.name, covered=_topology)
+    # Every node tree is content: shader, geometry and compositor alike. A group's
+    # socket value decides what the scene looks like even when nothing else moves.
     for material in sorted(bpy.data.materials, key=lambda item: item.name):
-        tree = material.node_tree
-        feed("material", material.name, [round(value, 6) for value in material.diffuse_color],
-             sorted((node.name, node.bl_idname) for node in tree.nodes) if tree else None,
-             sorted((link.from_node.name, link.from_socket.identifier,
-                     link.to_node.name, link.to_socket.identifier)
-                    for link in tree.links) if tree else None)
+        feed("material", material.name, [round(value, 6) for value in material.diffuse_color])
+        node_graph(material.node_tree, "material", material.name)
+    for group in sorted(bpy.data.node_groups, key=lambda item: item.name):
+        feed("group", group.name, group.bl_idname)
+        node_graph(group, "group", group.name)
+    for world in sorted(bpy.data.worlds, key=lambda item: item.name):
+        feed("world", world.name, [round(value, 6) for value in world.color])
+        node_graph(world.node_tree, "world", world.name)
+    for scene in sorted(bpy.data.scenes, key=lambda item: item.name):
+        node_graph(getattr(scene, "node_tree", None), "compositor", scene.name)
     # Non-mesh data: the RNA walk, then the point buffers RNA collapses to references.
     for name in ("curves", "metaballs", "lattices", "armatures", "volumes",
                  "pointclouds", "hair_curves", "grease_pencils_v3", "grease_pencils"):
@@ -376,7 +428,7 @@ def digest():
         if collection is None:
             continue
         for item in sorted(collection, key=lambda entry: entry.name):
-            feed("data", name, item.name, sorted(settings(item).items()))
+            feed("data", name, item.name, tunable(item))
     for curve in sorted(bpy.data.curves, key=lambda item: item.name):
         for index, spline in enumerate(curve.splines):
             feed("spline", curve.name, index, spline.type,

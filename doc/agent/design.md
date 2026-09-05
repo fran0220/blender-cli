@@ -399,13 +399,34 @@ dot-prefixed topology attributes are the geometry buffers and are not read
 twice; everything else on the mesh — UV and colour layers, sharpness,
 creases, and whatever geometry nodes stored by name — is.
 
+Every node tree is content and is walked the same way, shader, geometry and
+compositor alike: `bpy.data.node_groups`, material, world and compositor
+trees contribute their nodes, each node's settings, every input socket's
+`default_value` and linked state, the links, and the group interface with
+its defaults. A Nodes modifier also keeps its group's input values in a
+struct per socket, which the settings walk can only report as a reference,
+so those are read directly. Two scenes whose geometry nodes differ in one
+socket therefore have different digests even when nothing reaches a mesh.
+
 The settings walk is `agent_runtime.settings`, the one `inspect --full`
 already uses, so what an agent can read is what the digest distinguishes:
 two scenes differing only in a modifier's numeric setting have different
-digests even when the setting never reaches a mesh datablock. A `Mesh` is
-the one ID that walk skips, because its content is the geometry buffers and
-its attribute domains, and walking a million-vertex collection as RNA
-references would cost far more and say less.
+digests even when the setting never reaches a mesh datablock. Only the
+writable half is kept. Read-only RNA is derived from the rest, and some of
+it is a measurement rather than a setting — a Nodes modifier reports its own
+`execution_time`, which would otherwise make two runs of one program
+disagree about the scene. A `Mesh` is the one ID that walk skips, because
+its content is the geometry buffers and its attribute domains, and walking a
+million-vertex collection as RNA references would cost far more and say
+less.
+
+Measured on Linux (Release, five calls each, median; every scene hashed
+identically across all five): an empty scene costs 0.4 ms; 50 objects with
+150 modifiers, 50 constraints and a geometry node group cost 40.5 ms; a
+1,002,001-vertex grid alone costs 663.5 ms; both together cost 610.4 ms.
+Mesh buffers dominate, and the RNA, node-tree and attribute walks do not
+grow with vertex count. A `digest` is computed once per `program` request,
+not per `exec`.
 
 ### Versions
 

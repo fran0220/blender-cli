@@ -270,6 +270,29 @@ def main():
             # The vertices are identical: only the stored attribute differs.
             assert call("inspect")["objects"][0]["mesh"]["vertices"] == 8
 
+            # The same node group left unapplied reaches no mesh at all: only the node
+            # tree walk tells these two scenes apart.
+            live_nodes = stored.replace('bpy.ops.object.modifier_apply(modifier="GN")\n', "")
+            quiet = program("set", "--text", live_nodes)
+            loud = program("set", "--text",
+                           live_nodes.replace('"density": 0.25', '"density": 0.75'))
+            assert loud["ran"] == [1], loud
+            assert loud["digest"] != quiet["digest"], (quiet["digest"], loud["digest"])
+            assert not call("inspect")["objects"][0]["mesh"].get("density")
+
+            # A value set on the modifier rather than in the group is content too: it
+            # lives in a per-socket struct the settings walk reports as a reference.
+            exposed = (live_nodes.replace('P = {"density": 0.25}\n', 'P = {"amount": 1.5}\n')
+                       .replace('_store.inputs["Value"].default_value = P["density"]\n',
+                                '_store.inputs["Value"].default_value = 0.5\n')
+                       + '_group.interface.new_socket("Amount", in_out="INPUT",\n'
+                         '                            socket_type="NodeSocketFloat")\n'
+                         '_modifier.properties.inputs.Socket_2.value = P["amount"]\n')
+            low = program("set", "--text", exposed)
+            high = program("set", "--text", exposed.replace('"amount": 1.5', '"amount": 4.5'))
+            assert high["ran"] == [1], high
+            assert high["digest"] != low["digest"], (low["digest"], high["digest"])
+
             # Grease pencil keeps its strokes in attribute domains RNA reports as bare
             # references, so a digest that skipped them would miss the drawing itself.
             strokes = ("# blender-cli program\n# base: factory-empty\n"
