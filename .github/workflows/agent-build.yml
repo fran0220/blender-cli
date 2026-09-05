@@ -103,6 +103,43 @@ jobs:
       - name: Protocol tests
         if: inputs.full || runner.os == 'Linux'
         run: ctest --test-dir build/ci -R agent --output-on-failure
+      - name: Trim, archive and verify installed package
+        if: inputs.full || runner.os == 'Linux'
+        run: |
+          platform='${{ matrix.platform }}'
+          platform="${platform/_/-}"
+          python3 source/blender/agent/packaging/package.py build/ci/bin build/release \
+            --platform "$platform" --archive
+          original=build/ci/bin/blender-cli
+          trimmed=build/release/blender-cli
+          if [[ "$RUNNER_OS" = macOS ]]; then original=build/ci/bin/Blender.app/Contents/MacOS/blender-cli; fi
+          if [[ "$RUNNER_OS" = Windows ]]; then original+=.exe; trimmed+=.exe; fi
+          set +e
+          python3 tests/agent/package.py "$original" "$trimmed"
+          status=$?
+          set -e
+          if [[ "$status" = 77 ]]; then
+            echo '::warning::Package GPU checks skipped; see native device reason above. Not rendering evidence.'
+          elif [[ "$status" != 0 ]]; then
+            exit "$status"
+          fi
+          for test in protocol session observe compare; do
+            set +e
+            python3 "tests/agent/$test.py" "$trimmed"
+            status=$?
+            set -e
+            if [[ "$status" != 0 && "$status" != 77 ]]; then exit "$status"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: inputs.full || runner.os == 'Linux'
+        with:
+          name: package-${{ matrix.platform }}
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            build/blender-cli-*.tar.zst
+            build/blender-cli-*.zip
+            build/release.json
       - name: Compiler cache statistics
         if: always()
         run: sccache --show-stats

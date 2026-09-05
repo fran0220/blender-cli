@@ -16,7 +16,7 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 | GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
 | Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
-| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | todo |
+| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | doing — native gate launched in [run 33964004642](https://github.com/fran0220/blender-cli/actions/runs/33964004642); configure/build conclusions pending |
 
 ## Phase 1 — a process that answers
 
@@ -129,10 +129,10 @@ macOS arm64 and Windows x64.
 
 | Item | Status |
 |---|---|
-| Configure and build the agent profile on macOS arm64 and Windows x64 | todo |
-| Per-component size measurement; adjust the profile from numbers, not guesses | todo |
-| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | todo |
-| Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | todo |
+| Configure and build the agent profile on macOS arm64 and Windows x64 | doing — two-tier Actions workflow landed; native gate in progress, full build pending |
+| Per-component size measurement; adjust the profile from numbers, not guesses | doing — supervised Linux install build in progress |
+| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | unverified — copy-only packaging and six-verb before/after test landed; awaiting install to prove removals and Standard byte equality |
+| Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | unverified — archive stage landed; macOS uses plain bin/ + Resources/ preserving upstream relative lookup; unsigned, no notarization |
 
 ## Phase 6 — hosts (not started, not scheduled)
 

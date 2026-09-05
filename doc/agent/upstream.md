@@ -41,6 +41,7 @@ CMake/Python) on the line or block it adds. The full list:
 | `source/creator/CMakeLists.txt` | link `bf_agent` under `WITH_AGENT` |
 | `source/creator/creator.cc` | one call registering the agent command before deferred command dispatch |
 | `tests/CMakeLists.txt` | add `tests/agent` under `WITH_AGENT` after upstream's Python test helpers are defined, to register installed-launcher protocol tests |
+| `README.md` | marked agent distribution section: required CLI extraction and unsigned macOS quarantine instructions; documentation-only exception |
 
 Adding a file to this table requires a reason in the same commit's message.
 A touch that is not registration or build wiring is a design error to solve
@@ -60,6 +61,9 @@ tests/agent/
 
 The workflow directory owns the fork's native compiler gate and full-build CI;
 it does not modify upstream's buildbot integration.
+`source/blender/agent/packaging/` owns install-copy trimming, component accounting,
+Standard-only color configuration extraction and archive creation. It is inside
+the existing agent-owned subtree; upstream install rules remain untouched.
 
 ## Versioning
 
