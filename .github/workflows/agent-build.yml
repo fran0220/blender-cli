@@ -7,6 +7,9 @@ on:
       full:
         required: true
         type: boolean
+      platforms:
+        type: string
+        default: '["macos_arm64","windows_x64","linux_x64"]'
 permissions:
   contents: read
 jobs:
@@ -16,17 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            platform: macos_arm64
-            jobs: 3
-          - runner: windows-2022
-            platform: windows_x64
-            jobs: 4
-          - runner: ubuntu-24.04
-            platform: linux_x64
-            jobs: 4
-    runs-on: ${{ matrix.runner }}
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform == 'macos_arm64' && 'macos-15' || matrix.platform == 'windows_x64' && 'windows-2022' || 'ubuntu-24.04' }}
     defaults:
       run:
         shell: bash
@@ -93,12 +87,12 @@ jobs:
         run: |
           ninja -C build/ci -t query bf_agent
           ninja -C build/ci -t query blender-cli
-          cmake --build build/ci --target bf_agent blender-cli --parallel ${{ matrix.jobs }}
+          cmake --build build/ci --target bf_agent blender-cli --parallel ${{ runner.os == 'macOS' && 3 || 4 }}
           echo 'GATE_TARGETS_OK: bf_agent blender-cli'
       - name: Full build and install
         if: inputs.full || runner.os == 'Linux'
         run: |
-          cmake --build build/ci --parallel ${{ matrix.jobs }}
+          cmake --build build/ci --parallel ${{ runner.os == 'macOS' && 3 || 4 }}
           cmake --install build/ci
           echo BUILD_EXIT=0
       - name: Protocol tests

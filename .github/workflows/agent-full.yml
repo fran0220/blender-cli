@@ -3,6 +3,12 @@
 name: Agent full build
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native platform to rebuild (all builds both release targets)
+        type: choice
+        default: all
+        options: [all, macos_arm64, windows_x64]
   push:
     tags: ['*-agent.*']
 permissions:
@@ -12,3 +18,4 @@ jobs:
     uses: ./.github/workflows/agent-build.yml
     with:
       full: true
+      platforms: ${{ inputs.platform == 'macos_arm64' && '["macos_arm64"]' || inputs.platform == 'windows_x64' && '["windows_x64"]' || '["macos_arm64","windows_x64"]' }}
