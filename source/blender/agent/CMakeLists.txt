@@ -6,7 +6,7 @@ if(NOT WITH_PYTHON OR WITH_PYTHON_MODULE OR NOT WITH_BLENDER)
   message(FATAL_ERROR "WITH_AGENT requires the Blender executable with embedded Python")
 endif()
 
-set(INC . ../python ../makesrna ../blenloader ../editors/include)
+set(INC . ../python ../makesrna ../blenloader ../editors/include ../windowmanager)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
 set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
   agent_socket.hh agent_transport.hh)

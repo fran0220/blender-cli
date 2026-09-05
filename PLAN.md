@@ -43,11 +43,11 @@ round trip for a trivial `exec` is under 10 ms on Linux.
 
 | Item | Status |
 |---|---|
-| Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | todo |
-| Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | todo |
-| Persistent Python namespace per session (`agent` helper module preloaded) | todo |
-| Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | todo |
-| `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | todo |
+| Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | doing — transport syntax checked on Linux; real protocol verification pending full build |
+| Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | doing — main-thread runtime integrated; timers/cancellation test added, not yet run |
+| Persistent Python namespace per session (`agent` helper module preloaded) | doing — module surface implemented; ten-call persistence test awaiting build |
+| Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | doing — independent memfiles and background undo stack integrated; geometry round trip unverified |
+| `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | doing — detached launcher and direct socket client syntax checked; lifecycle/latency unverified |
 
 ## Phase 3 — observation
 

@@ -67,7 +67,11 @@ class Transport {
       if (FD_ISSET(listener_, &readers)) {
         Socket fd = accept(listener_, nullptr, nullptr);
         if (fd != invalid_socket) {
-          if (peers_.size() >= 64 || fd >= FD_SETSIZE) {
+          bool full = peers_.size() >= FD_SETSIZE - 1;
+#ifndef _WIN32
+          full |= fd >= FD_SETSIZE;
+#endif
+          if (full) {
             socket_close(fd);
           }
           else {

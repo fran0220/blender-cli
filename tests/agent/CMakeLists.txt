@@ -10,3 +10,10 @@ add_blender_test_impl(agent_protocol "" "${TEST_PYTHON_EXE}"
   "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
 )
 set_tests_properties(agent_protocol PROPERTIES TIMEOUT 240)
+
+add_blender_test_impl(agent_session "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/session.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+set_tests_properties(agent_session PROPERTIES TIMEOUT 240)

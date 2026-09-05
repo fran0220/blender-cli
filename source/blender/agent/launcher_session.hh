@@ -181,7 +181,8 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       return -1;
     }
     std::vector<std::string> forwarded(args.begin() + 1, args.end());
-    nlohmann::json request = {{"id", 1}, {"verb", args[0]}, {"args", {{"argv", forwarded}}}};
+    const auto id = std::chrono::steady_clock::now().time_since_epoch().count();
+    nlohmann::json request = {{"id", id}, {"verb", args[0]}, {"args", {{"argv", forwarded}}}};
     /* IDs are supplied by raw clients. A launcher uses one connection for one request. */
     if (!socket_write(fd, request.dump() + "\n")) {
       socket_close(fd);

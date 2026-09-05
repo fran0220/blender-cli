@@ -132,7 +132,7 @@ with `bpy`, `bmesh`, `mathutils`, `math` and the `agent` helper module.
 
 #### Phase 1 one-shot contract
 
-Only `exec` and `inspect` are implemented; the other four verbs answer
+At the Phase 1 boundary, only `exec` and `inspect` were implemented; the other four verbs answered
 `NotImplemented` and exit 1. Session snapshots, observations and RNA error
 suggestions are absent, not placeholder fields. One-shot namespaces are fresh
 and preload `bpy`, `bmesh`, `mathutils`, `math`; `agent` arrives with Phase 2.
@@ -204,6 +204,96 @@ The exact flag mapping (prefix `ID_RECALC_`) is:
 
 Reserved/provision bits do not name field groups. Combined upstream masks map
 to each constituent group.
+
+#### Phase 2 session contract
+
+`session open [--file F]` detaches the sibling Blender executable and waits up
+to 10 seconds for its local endpoint to accept. POSIX uses `fork`, `setsid`,
+`/dev/null` stdin, and append-only `.blender-cli/session.log` stdout/stderr;
+Windows uses Unicode `CreateProcessW` with `DETACHED_PROCESS` and redirected
+handles. `.blender-cli/session.pid` records the daemon PID, also used as the
+returned session ID. A process-held `.blender-cli/session.lock` serializes
+open/forced-close operations. The directory is owner-only on POSIX. Opening
+an already-live session fails; a dead PID permits stale socket cleanup.
+`session close` does not save. It requests normal loop termination through
+the command handler and `WM_exit`; if the daemon cannot answer within two
+seconds, the launcher terminates it (SIGTERM then SIGKILL on POSIX,
+TerminateProcess on Windows) and reports `forced: true`.
+
+Other CLI calls connect directly when the endpoint accepts. They do not
+launch Blender. A missing/dead endpoint falls back to the original one-shot
+invocation; a live PID with an unavailable endpoint reports an error rather
+than silently editing a different scene. Common `--json` and human output
+remain compact/indented JSON respectively. Session result objects without an
+`ok` field and the history array are successful; `ok: false` exits 1.
+
+The wire mapping is deliberately argv-based: `verb` is the first CLI word;
+`args.argv` is the remaining string array, without shell re-parsing. Script
+paths resolve in the session's original working directory. Thus Python's
+existing argument parser is the source of truth in both modes. Raw clients
+must use distinct numeric request IDs across outstanding requests in the
+session. Each line has one matching response. Requests queue by completed-line
+arrival at the transport reader; simultaneously ready connections have no
+cross-connection ordering guarantee. Closing abandons later queued requests.
+Partial lines over 16 MiB disconnect. The endpoint is local trusted-code
+access, not a sandbox or a multi-user authentication boundary.
+
+Cancellation is an out-of-band line on a **second connection** with the
+running request's ID (the same connection is also accepted). It has no
+separate response. Unknown/inactive IDs have no effect. The transport thread
+only moves/parses protocol bytes and sets an atomic cancellation flag;
+Python trace checkpoints on the main thread copy it into `G.is_break` and
+raise `Cancelled`. This avoids a data race on upstream's plain Boolean.
+Native calls cannot be preempted: cancellation is noticed when they return
+to Python. Code that catches the exception or disables tracing is not
+forcibly interrupted. Failed/cancelled execs do not create a snapshot and
+may have partially changed data; rollback is the recovery operation.
+
+The main thread executes one request, pumps `BLI_timer_execute`, and answers.
+While idle it pumps timers at roughly 10 ms intervals, releasing the GIL
+while waiting for transport. Timers never run Blender API code on a transport
+thread. A long-running request delays timers until it returns.
+
+The persistent namespace preloads `bpy`, `bmesh`, `mathutils`, `math`, and
+`agent`; one-shot namespaces now also preload `agent`. `agent.snapshot`,
+`rollback`, `diff`, and `history` require a session. `observe` and `compare`
+have the signatures below but raise `NotImplementedError` explicitly naming
+Phase 3 and Phase 4. `describe` remains unimplemented.
+
+Snapshots restore Blender Main data, **not Python variables or external
+files**. Reacquire RNA references from `bpy.data` after rollback: saved Python
+references into old Main may become invalid. Every successful session exec
+adds a history event and a `snapshot` field; `inspect` does not. Initial state
+has an `open` event. Manual snapshots have optional labels. `at` is Unix time
+in seconds. `agent.diff()` samples the current exec boundary, with the Phase 1
+ID-tag semantics (explicit undo/snapshot operations can reset accumulated tags).
+`--file` loads only at `session open`; `session save --file F` writes without
+reloading, and bare save uses the current Blender filepath.
+
+The content-addressed store retains independent upstream memfiles, not a
+linear undo tail: rolling back then executing does not delete the former
+future. SHA-256 hashes the concatenated `MemFileChunk` buffers, including
+upstream's pointer-based references to retained immutable shared storage.
+These are process-local memfile identities, **not canonical geometry hashes**
+and not comparable across processes. Duplicate hashes reuse stored data but
+still append history events. Oldest-created unique hashes are evicted at a
+256 MiB budget measured by upstream `MemFileUndoData.undo_size`; this includes
+upstream's approximate shared-storage accounting and is not a hard RSS limit.
+A single larger snapshot fails with `MemoryError`; its scene mutations are
+not automatically reversed. History preserves events for evicted hashes;
+rollback to one raises `KeyError`. `~N` selects an earlier history event
+relative to the current snapshot; `~0` restores the current snapshot.
+
+`WM_init` already registers undo types, including in background mode;
+`wm_file_read_post` skips stack initialization there. The agent initializes
+`wm->runtime->undo_stack` with `BKE_undosys_stack_create`,
+`BKE_undosys_stack_init_from_main`, and `_from_context` when needed. Each
+agent snapshot also updates upstream's stack (two steps, 32 MiB accounting
+target, upstream retains the minimum needed steps). Agent-owned memfiles
+are independent of it, so operator undo cannot invalidate stored hashes.
+Rollback decodes with old-Main reuse disabled, tears down/reinitializes editor
+data, and resets the WM undo stack to the restored Main. No upstream file
+changes are needed.
 
 ### `inspect`
 
@@ -286,6 +376,7 @@ agent.compare(ref, view, metrics=("iou",), mask="auto") -> {"iou": …}
 agent.snapshot(label=None) -> "sha256:…"
 agent.rollback(snapshot_id) -> None
 agent.diff() -> {"added": …, "changed": …, "removed": …}   # since last exec boundary
+agent.history() -> [{"snapshot": …, "label": …, "verb": …, "at": …}, …]
 ```
 
 ## Synthetic context
@@ -303,7 +394,7 @@ opaquely.
 JSON lines over `AF_UNIX`. One request, one response, in order:
 
 ```
-→ {"id": 1, "verb": "exec", "args": {"code": "…", "observe": ["front"]}}
+→ {"id": 1, "verb": "exec", "args": {"argv": ["-c", "…"]}}
 ← {"id": 1, "result": {…}}
 ```
 

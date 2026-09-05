@@ -14,6 +14,7 @@
 #include "BKE_main.hh"
 #include "BKE_undo_system.hh"
 #include "BKE_wm_runtime.hh"
+#include "BLI_listbase.hh"
 #include "BLI_timer.hh"
 #include "BLO_undofile.hh"
 #include "BPY_extern.hh"
@@ -182,7 +183,10 @@ int session_serve(
     bool closing = false;
     while (!closing) {
       Transport::Request request;
-      if (transport.next(request)) {
+      bool received;
+      Py_BEGIN_ALLOW_THREADS received = transport.next(request);
+      Py_END_ALLOW_THREADS if (received)
+      {
         G.is_break = false;
         const std::string message = request.message.dump();
         PyObject *answer = PyObject_CallMethod(runtime, "dispatch", "s", message.c_str());
