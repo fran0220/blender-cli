@@ -57,13 +57,13 @@ folding), `tests/agent/protocol.py`, `tests/agent/session.py`.
 
 | Item | Status |
 |---|---|
-| Request objects `{"id","op",…}` with strict per-op field validation; events streamed as JSON lines as they are produced (C++ writer, Python producer) | todo |
-| `repl` stdio bridge (`--file`, `--standalone`); socket and stdio carry identical bytes | todo |
-| `cancel` answered on the transport thread; running request ends with `Cancelled`; rollback to the pre-request snapshot on any failed request | todo |
-| Folded envelope for one-shot verbs derived from the event list by one function; `--json` and human output both come from it | todo |
-| Provider registry: `Provider` protocol, orders, failure isolation (`log` event, never fatal), `agent.register_provider` | todo |
-| `session status` / `session feedback`; `step` counter; `diff` event carries `snapshot` and `step`; durable labelled snapshots under `.blender-cli/snapshots/` and `rollback <label>` after recovery | todo |
-| Remove the old `{"id","verb","args"}` wire shape, `exec --observe`, and the old response envelope; tests rewritten against the event stream | todo |
+| Request objects `{"id","op",…}` validated field by field against `agent_contract.py`; events streamed as JSON lines as they are produced (C++ writer, Python producer) | done — `agent_protocol` asserts `log`, `log`, `value`, `diff`, `done` in order, and `log` lines arriving one per `print` |
+| `repl` stdio bridge (`--file`, `--standalone`); socket and stdio carry identical bytes | done — standalone in `agent_protocol`, bridged to the daemon in `agent_session`, sharing its namespace |
+| `cancel` answered on the transport thread; running request ends with `Cancelled`; rollback to the pre-request snapshot on any failed request | done — `agent_session` cancels a running loop from a second connection and gets `{"target","cancelled":true}` at once; an inactive id answers `cancelled:false` |
+| Folded envelope for one-shot verbs derived from the event list by one function; `--json` and human output both come from it | done — `fold()` in `agent_events.hh`, used by the launcher and the in-process verb |
+| Provider registry: `Provider` protocol, orders, failure isolation (`log` event, never fatal), `agent.register_provider` | done — `register_provider`, `register_op`, `register_helper`, `register_record_hook`, `PROVIDER_MODULES`; the built-in `diff` provider is order 100 |
+| `session status` / `session feedback`; `step` counter; `diff` event carries `snapshot` and `step`; durable labelled snapshots under `.blender-cli/snapshots/` and `rollback <label>` after recovery | done — a request that changes nothing takes no snapshot and does not advance `step` |
+| Remove the old `{"id","verb","args"}` wire shape, `exec --observe`, the `compare` verb and the old response envelope; tests rewritten against the event stream | done — `tests/agent/compare.py` deleted with the verb |
 
 ### F — feedback: perception and image providers
 
