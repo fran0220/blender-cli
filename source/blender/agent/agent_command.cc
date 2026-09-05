@@ -120,8 +120,11 @@ class AgentCommand : public CommandHandler {
     if (argc == 0 || STREQ(argv[0], "--help")) {
       puts(
           "Usage: blender-cli <session|exec|inspect|observe|compare|describe> [options]\n"
-          "  exec -c CODE | FILE.py [--timeout S]\n"
+          "  exec -c CODE | FILE.py [--timeout S] [--observe VIEWS]\n"
           "  inspect [--object NAME] [--full] [--select PATH ...]\n"
+          "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
+          "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
+          "          [--layout sheet|separate] [--out PATH | --inline]\n"
           "  Common: --file F --save [F] --json\n"
           "  --version: upstream version and fork tag");
       return 0;

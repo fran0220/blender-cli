@@ -52,7 +52,7 @@ evidence until run there.
 |---|---|
 | Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | done — Linux real endpoint, ordered pipelined IDs and full 200 KB response pass; product platforms unverified |
 | Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | done — idle Python timer, second-connection cancellation and subsequent exec pass |
-| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; Phase 3/4 helpers raise explicit errors |
+| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; observation is delivered below, Phase 4 compare still raises an explicit error |
 | Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | done — cube 8 → 26 → 8 vertices; branch retention, labels, ~N, operator undo coexistence, Main replacement and save/reload pass |
 | `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | done — normal/forced close, duplicate-open refusal, stale recovery, file-open and one-shot fallback pass; median round trip 5.453 ms |
 
@@ -62,15 +62,25 @@ Done when: `observe --views front,side,top,persp` returns one contact sheet
 whose bytes are identical across two runs on the same platform, and
 `bpy.ops.mesh.*` edit-mode operators succeed inside `exec` without a GUI.
 
+Proven on Debian 12 x86_64, xPack GCC 14.3.0, software Vulkan with Mesa
+25.0.7: agent-profile install returns `BUILD_EXIT=0`; all three agent CTests
+pass (88.20s). Separate-process four-view PNGs are byte-identical (SHA-256
+`84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`).
+A separate session run measured first/subsequent five-pass front observations
+at 3.538s / 3.470s with a warm driver shader cache. Mesa 22.3.6 rendered
+Combined but crashed on upstream's native Z pass; setup now installs modern
+Mesa from bookworm-backports. No upstream source changes were needed.
+Metal/macOS and real-GPU Vulkan/Windows remain **unverified**.
+
 | Item | Status |
 |---|---|
-| Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | doing — loaded-context adoption and edit-data flush implemented; full build/operator verification pending |
-| Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | doing — native full render and disposable-scene implementation; Linux verification pending, product platforms unverified |
-| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | todo |
-| Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | todo |
-| Passes: color, wireframe, silhouette, normal, depth | todo |
-| Contact sheet composition; `--ref` side-by-side and overlay | todo |
-| `exec --observe` returns the image in the same round trip | todo |
+| Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | done — real subdivide/bevel/extrude/translate, retained edit-mode flush, fallback layout, rollback and explicit GPU-selection error pass |
+| Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | done on Linux — native full render, byte equality, unchanged memfile snapshots and empty helper diff pass; product platforms unverified |
+| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | done — all presets, right-side alias, named framing, empty scene and missing-camera error pass |
+| Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | done — fixed three-SUN rig and Standard/sRGB; all three tile sizes pass |
+| Passes: color, wireframe, silhouette, normal, depth | done — 2580×516 five-pass sheet, nonempty tiles, binary silhouette checks and visual inspection of beveled cube/sphere pass |
+| Contact sheet composition; `--ref` side-by-side and overlay | done — view×pass order, separate-file count, square/nonsquare reference dimensions, overlay and inline PNG checks pass |
+| `exec --observe` returns the image in the same round trip | done — one-shot/session attachment and `agent.observe()` use the same renderer; pending user edits remain in diff |
 
 ## Phase 4 — closing the loop inside the process
 
