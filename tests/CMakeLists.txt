@@ -76,6 +76,11 @@ if(WITH_BLENDER AND WITH_PYTHON AND NOT WITH_PYTHON_MODULE)
   add_subdirectory(python)
 endif()
 
+# blender-cli
+if(WITH_AGENT)
+  add_subdirectory(agent)
+endif()
+
 # Blender as python module tests.
 if(WITH_PYTHON_MODULE)
   add_subdirectory(blender_as_python_module)

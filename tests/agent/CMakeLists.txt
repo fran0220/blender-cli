@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Follow the installed TEST_BLENDER_EXE layout, including the macOS app bundle.
+get_filename_component(agent_bin_dir "${TEST_BLENDER_EXE}" DIRECTORY)
+add_blender_test_impl(agent_protocol "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/protocol.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+set_tests_properties(agent_protocol PROPERTIES TIMEOUT 240)

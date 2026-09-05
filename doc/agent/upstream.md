@@ -40,6 +40,7 @@ CMake/Python) on the line or block it adds. The full list:
 | `source/blender/CMakeLists.txt` | `add_subdirectory(agent)` under `WITH_AGENT` |
 | `source/creator/CMakeLists.txt` | link `bf_agent` under `WITH_AGENT` |
 | `source/creator/creator.cc` | one call registering the agent command before deferred command dispatch |
+| `tests/CMakeLists.txt` | add `tests/agent` under `WITH_AGENT` after upstream's Python test helpers are defined, to register installed-launcher protocol tests |
 
 Adding a file to this table requires a reason in the same commit's message.
 A touch that is not registration or build wiring is a design error to solve
@@ -62,6 +63,10 @@ Releases are tagged `<upstream>-agent.N` where `<upstream>` is the upstream
 version string of the merged base (for example `5.3.0-alpha`) and `N`
 increments per release. `BKE_blender_version.h` is not modified;
 `blender-cli --version` reports both numbers.
+
+The first implementation reports `-agent.1` appended to upstream's runtime
+version string. This identifies the fork revision series, not a claim that a
+release artifact has been published.
 
 ## Precompiled libraries
 
