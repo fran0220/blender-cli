@@ -73,10 +73,11 @@ jobs:
         with:
           arch: x64
       - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
         with:
           path: .cache/sccache
-          key: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-${{ github.sha }}
+          key: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-${{ inputs.full && 'full' || 'gate' }}-${{ github.sha }}-${{ github.run_attempt }}
           restore-keys: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-
       - name: Configure
         run: |
@@ -143,6 +144,11 @@ jobs:
       - name: Compiler cache statistics
         if: always()
         run: sccache --show-stats
+      - uses: actions/cache/save@v4
+        if: always() && steps.compiler-cache.outcome == 'success' && steps.compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: .cache/sccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
