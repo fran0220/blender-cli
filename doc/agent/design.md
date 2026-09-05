@@ -663,6 +663,28 @@ stored files across sessions, not canonical geometry hashes. `session close`,
 including stale close, never removes the index or these files. The snapshots
 directory belongs to the agent to clean; no deletion verb or close flag is added.
 
+Long-lived render measurements on Linux (Mesa 25.0.7 lavapipe, concurrent
+stress workloads; times are not isolated latency benchmarks):
+
+| Path | Completed renders | Wall time | Process memory maps |
+|---|---|---|---|
+| Unpatched 512px helper loop | 35; crashed on 36 | 147.54 s including crash | 3,093 after render 1 → 64,644 after 35; limit 65,530 |
+| Unpatched 128px observation pipeline | 35; crashed on 36 | 88.5 s through render 35 | 3,093 → 64,636 |
+| Fixed 512px `agent.observe` loop, one exec | 300 | 1,863.62 s; render 200 at 1,276.37 s | 1,302–1,543 after warmup |
+| Fixed 512px CLI `observe` round trips | 300 | 1,449.46 s | 1,301–1,542 after warmup |
+| Explicit OpenGL backend, 512px helper loop | 50 | 403.29 s | 863 after render 1, 868 after 50 |
+
+The failure was descriptor-set buffer mappings retained by the Vulkan thread's
+active descriptor pool, not leaked disposable scenes or render results.
+Respecting the declared 250-set capacity reaches the existing timeline-safe
+pool reset, which frees those sets and mappings. The remaining partial pool
+is bounded; its map count oscillates rather than growing with render count.
+Warm RSS (renders 50–300) was 1,131,400–1,257,988 KiB for the helper and
+1,136,988–1,224,832 KiB for CLI calls. Both sessions answered a subsequent exec
+and closed normally. The regression uses 120 real 128px observation-pipeline
+renders, since the unpatched map growth is the same ~1,810 per render at both
+sizes. These measurements do not establish native macOS or Windows behavior.
+
 `WM_init` already registers undo types, including in background mode;
 `wm_file_read_post` skips stack initialization there. The agent initializes
 `wm->runtime->undo_stack` with `BKE_undosys_stack_create`,
