@@ -138,8 +138,9 @@ def package(install, output, platform, archive):
         if path.name not in keep:
             remove(path)
     python = version_dir / "python"
-    stdlibs = list(python.glob("lib/python3.*")) + list(python.glob("Lib"))
-    assert len(stdlibs) == 1, stdlibs
+    # Do not probe both layouts: Lib also matches lib on case-insensitive macOS.
+    stdlibs = [python / "lib"] if platform == "windows-x64" else list(python.glob("lib/python3.*"))
+    assert len(stdlibs) == 1 and stdlibs[0].is_dir(), stdlibs
     for name in ("test", "idlelib", "tkinter", "ensurepip", "lib2to3", "turtledemo"):
         remove(stdlibs[0] / name)
     for path in sorted(python.rglob("*.a")):
@@ -217,7 +218,8 @@ def package(install, output, platform, archive):
             artifact = Path(shutil.make_archive(str(output.parent / name), "zip", output.parent, output.name))
         else:
             artifact = output.parent / (name + ".tar.zst")
-            subprocess.run(["tar", "-I", "zstd -19", "-cf", str(artifact), "-C", str(output.parent),
+            # The long option is shared by GNU tar and macOS bsdtar; -I is not.
+            subprocess.run(["tar", "--use-compress-program", "zstd -19", "-cf", str(artifact), "-C", str(output.parent),
                             output.name], check=True)
         report.update(artifact=artifact.name, compressed_bytes=artifact.stat().st_size)
     report_path = output.with_suffix(".json")
