@@ -398,10 +398,10 @@ int session_serve(bContext *C,
   const auto path = directory / "session.sock";
   std::filesystem::create_directories(directory);
   state.autosave = directory / ("autosave-" + std::to_string(getpid()) + ".blend");
+  /* Where a dump would go if one were ever written. Upstream announces the
+   * path when it writes one; a session that never crashes says nothing. */
   crashlog_path = (directory / ("session-" + std::to_string(getpid()) + ".crash.txt")).string();
   crashlog_callback = session_crashlog;
-  fprintf(stderr, "Agent crash dump: %s\n", crashlog_path.c_str());
-  fflush(stderr);
 
   Channel *channel = nullptr;
   int status = 0;
