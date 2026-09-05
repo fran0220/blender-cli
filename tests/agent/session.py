@@ -14,6 +14,8 @@ import sys
 import tempfile
 import time
 
+from gpu import require_device
+
 
 @contextlib.contextmanager
 def connection(endpoint):
@@ -49,9 +51,9 @@ def main():
     ):
         root = Path(directory).resolve()
 
-        def call(*args, ok=True, cwd=root):
+        def call(*args, ok=True, cwd=root, timeout=30):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=cwd,
-                                     capture_output=True, text=True, timeout=30)
+                                     capture_output=True, text=True, timeout=timeout)
             assert process.returncode == (0 if ok else 1), (args, process.stdout, process.stderr)
             result = json.loads(process.stdout)
             if isinstance(result, dict):
@@ -298,6 +300,29 @@ len(mesh.vertices)
         assert call("session", "save")["file"] == metadata["filepath"]
         call("session", "close")
         assert saved_autosave.exists() and saved_autosave.with_suffix(".json").exists()
+        # Exercise the real observation pipeline in one native process at a cheap tile size.
+        # The unpatched 128px and 512px paths both leak ~1810 VMAs per render and die at ~35.
+        require_device(executable)
+        call("session", "open")
+        try:
+            result = execute("""
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=1)
+import agent_observe as observation
+source = bpy.context.scene
+for render_index in range(120):
+    with observation.isolated_data():
+        scene, points, center, radius, framing = observation.render_scene(source, 128, None)
+        near, far = observation.aim(scene, source, "front", points, center, radius)
+        images = observation.render_passes(scene, 128, near, far)
+        assert images["color"].shape == (128, 128, 3)
+render_index + 1
+""", timeout=1500)
+            assert result["value"] == "120", result
+            assert vertices() == 8
+            assert execute("42")["value"] == "42"
+        finally:
+            call("session", "close")
     print("agent session: all assertions passed")
 
 

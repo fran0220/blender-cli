@@ -69,6 +69,8 @@ void VKDescriptorPools::discard_active_pool(VKContext &context)
 {
   context.discard_pool.discard_descriptor_pool_for_reuse(vk_descriptor_pool_, this);
   vk_descriptor_pool_ = VK_NULL_HANDLE;
+  /* blender-cli */
+  allocated_sets_ = 0;
 }
 
 void VKDescriptorPools::recycle(VkDescriptorPool vk_descriptor_pool)
@@ -84,6 +86,13 @@ VkDescriptorSet VKDescriptorPools::allocate(const VkDescriptorSetLayout descript
   BLI_assert(descriptor_set_layout != VK_NULL_HANDLE);
   BLI_assert(vk_descriptor_pool_ != VK_NULL_HANDLE);
   const VKDevice &device = VKBackend::get().device;
+
+  /* blender-cli: Vulkan allows drivers to overallocate pools. Do not wait for a driver error
+   * to retire descriptor sets: lavapipe otherwise retains a mapping per set indefinitely. */
+  if (allocated_sets_ == POOL_SIZE_DESCRIPTOR_SETS) {
+    discard_active_pool(*VKContext::get());
+    ensure_pool(device);
+  }
 
   VkDescriptorSetAllocateInfo allocate_info = {};
   allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -103,6 +112,10 @@ VkDescriptorSet VKDescriptorPools::allocate(const VkDescriptorSetLayout descript
     return allocate(descriptor_set_layout);
   }
 
+  /* blender-cli */
+  if (result == VK_SUCCESS) {
+    allocated_sets_++;
+  }
   return vk_descriptor_set;
 }
 

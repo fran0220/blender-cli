@@ -49,6 +49,8 @@ class VKDescriptorPools {
   Vector<VkDescriptorPool> recycled_pools_;
   /** Active descriptor pool. Should always be a valid handle. */
   VkDescriptorPool vk_descriptor_pool_ = VK_NULL_HANDLE;
+  /* blender-cli: Drivers may overallocate; enforce our advertised maxSets ourselves. */
+  uint32_t allocated_sets_ = 0;
   Mutex mutex_;
 
  public:
