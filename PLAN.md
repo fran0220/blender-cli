@@ -267,8 +267,9 @@ K lands and finishes after F/T/P/D. L runs on the first build where W is
   monospaced filename alias for one font face, and the real startup AgX transform
   beside Standard. Literal deletion broke one-shot JSON or engine registration;
   do not patch upstream Python or disguise AgX as Standard to satisfy a size goal.
-- Comparison is not a request. A target plus the objective event replaces the
-  former comparison verb; `agent.compare()` remains for ad-hoc in-code use.
+- Comparison is not a request. A target is registered once and the objective
+  event scores it after every action; `agent.compare()` is the same
+  computation for ad-hoc in-code use.
 - Feedback defaults: perception and objective on, image mode `delta` with
   threshold 0.002, front view, 256 px, overlay on. Budgets are per session,
   overridable per request only for images.
