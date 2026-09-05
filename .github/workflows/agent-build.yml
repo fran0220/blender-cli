@@ -72,7 +72,9 @@ jobs:
         with:
           path: .cache/sccache
           key: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-${{ inputs.full && 'full' || 'gate' }}-${{ github.sha }}-${{ github.run_attempt }}
-          restore-keys: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-
+          restore-keys: |
+            compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-full-
+            compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-
       - name: Configure
         run: |
           extra=()
