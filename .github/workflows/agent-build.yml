@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Agent build implementation
+on:
+  workflow_call:
+    inputs:
+      full:
+        required: true
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  build:
+    name: ${{ matrix.platform }} / ${{ inputs.full && 'full' || 'gate' }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos_arm64
+            jobs: 3
+          - runner: windows-2022
+            platform: windows_x64
+            jobs: 4
+          - runner: ubuntu-24.04
+            platform: linux_x64
+            jobs: 4
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/sccache
+      SCCACHE_CACHE_SIZE: 2G
+      GIT_LFS_SKIP_SMUDGE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Pinned library revision
+        id: lib
+        run: echo "revision=$(git rev-parse HEAD:lib/${{ matrix.platform }})" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            lib/${{ matrix.platform }}
+            .git/modules/lib/${{ matrix.platform }}
+          key: libraries-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}
+      - name: Fetch upstream assets and pinned libraries
+        run: |
+          git lfs install --local
+          git config remote.lfs-fallback.url https://projects.blender.org/blender/blender.git
+          git config remote.lfs-fallback.pushurl no_push
+          git lfs pull lfs-fallback
+          git -c submodule.lib/${{ matrix.platform }}.update=checkout submodule update --init --depth 1 -- lib/${{ matrix.platform }}
+          git -C lib/${{ matrix.platform }} lfs pull
+          test "$(git -C lib/${{ matrix.platform }} rev-parse HEAD)" = '${{ steps.lib.outputs.revision }}'
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14 ninja-build libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev libgl-dev libegl-dev mesa-vulkan-drivers zstd
+          echo CC=gcc-14 >> "$GITHUB_ENV"
+          echo CXX=g++-14 >> "$GITHUB_ENV"
+      - name: macOS prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = arm64
+          brew install ninja zstd
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: actions/cache@v4
+        with:
+          path: .cache/sccache
+          key: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-${{ github.sha }}
+          restore-keys: compiler-${{ matrix.platform }}-${{ steps.lib.outputs.revision }}-
+      - name: Configure
+        run: |
+          extra=()
+          if [[ "$RUNNER_OS" = Windows ]]; then extra+=(-DWITH_WINDOWS_SCCACHE=ON); fi
+          if [[ "$RUNNER_OS" = macOS ]]; then extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64); fi
+          cmake -S . -B build/ci -G Ninja -C build_files/cmake/config/blender_agent.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_OPTIMIZE_DEPENDENCIES=ON \
+            -DAGENT_WARNINGS_AS_ERRORS=ON "${extra[@]}"
+      - name: Gate targets
+        if: '!inputs.full && runner.os != ''Linux'''
+        run: |
+          ninja -C build/ci -t query bf_agent
+          ninja -C build/ci -t query blender-cli
+          cmake --build build/ci --target bf_agent blender-cli --parallel ${{ matrix.jobs }}
+          echo 'GATE_TARGETS_OK: bf_agent blender-cli'
+      - name: Full build and install
+        if: inputs.full || runner.os == 'Linux'
+        run: |
+          cmake --build build/ci --parallel ${{ matrix.jobs }}
+          cmake --install build/ci
+          echo BUILD_EXIT=0
+      - name: Protocol tests
+        if: inputs.full || runner.os == 'Linux'
+        run: ctest --test-dir build/ci -R agent --output-on-failure
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.platform }}-${{ inputs.full && 'full' || 'gate' }}
+          path: |
+            build/ci/CMakeCache.txt
+            build/ci/Testing/Temporary/LastTest.log
+            build/ci/Testing/Temporary/LastTestsFailed.log

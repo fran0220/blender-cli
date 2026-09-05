@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Agent full build
+on:
+  workflow_dispatch:
+  push:
+    tags: ['*-agent.*']
+permissions:
+  contents: read
+jobs:
+  full:
+    uses: ./.github/workflows/agent-build.yml
+    with:
+      full: true

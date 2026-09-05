@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Agent gate
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gate:
+    uses: ./.github/workflows/agent-build.yml
+    with:
+      full: false
