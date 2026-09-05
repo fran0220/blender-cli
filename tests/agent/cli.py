@@ -92,6 +92,12 @@ def main():
         call("exec", "-c", "bpy.ops.wm.read_factory_settings(use_empty=True)", "--save", blend)
         call("session", "open", "--file", blend)
         try:
+            # session feedback: dotted settings, JSON values, and the policy back.
+            policy = call("session", "feedback", "perception=false", "image.mode=off",
+                          'image.views=["front"]')["feedback"]
+            assert policy["perception"] is False and policy["image"]["mode"] == "off", policy
+            assert policy["image"]["views"] == ["front"], policy
+            assert call("session", "status")["feedback"] == policy
             # exec: code, script, record, timeout and the image policy override.
             assert call("exec", "-c", "6 * 7")["value"] == "42"
             script = root / "step.py"
@@ -105,7 +111,20 @@ def main():
             assert len(call("program", "get")["steps"]) == steps, "--no-record must not record"
             assert call("exec", "-c", "while True:\n    pass", "--timeout", "0.01",
                         ok=False)["error"]["type"] == "TimeoutError"
-            assert "images" not in call("exec", "-c", "1", "--image", "off")
+
+            # --image is the per-request image policy, and it is the request's
+            # `feedback` field: a whole frame when asked for one, nothing when not.
+            # The first change establishes the view the next one is a delta of.
+            call("session", "feedback", "perception=true", "image.mode=delta", "image.size=128")
+            call("exec", "-c", "bpy.data.objects['Cube'].scale.z = 2.5")
+            frames = call("exec", "-c", "bpy.data.objects['Cube'].scale.x = 2.0",
+                          "--image", "full")["images"]
+            assert [image["kind"] for image in frames] == ["full"], frames
+            assert frames[0]["size"] == [128, 128], frames
+            assert frames[0]["region"] == [0, 0, 128, 128], frames
+            assert "images" not in call("exec", "-c", "bpy.data.objects['Cube'].scale.y = 1.5",
+                                        "--image", "off")
+            call("session", "feedback", "perception=false", "image.mode=off")
 
             # inspect: object, full and the space-separated RNA paths.
             full = call("inspect", "--object", "Cube", "--full")
