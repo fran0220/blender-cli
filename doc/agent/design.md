@@ -257,9 +257,9 @@ thread. A long-running request delays timers until it returns.
 
 The persistent namespace preloads `bpy`, `bmesh`, `mathutils`, `math`, and
 `agent`; one-shot namespaces now also preload `agent`. `agent.snapshot`,
-`rollback`, `diff`, and `history` require a session. `observe` and `compare`
-have the signatures below but raise `NotImplementedError` explicitly naming
-Phase 3 and Phase 4. `describe` remains unimplemented.
+`rollback`, `diff`, and `history` require a session. Phase 3 implements
+`observe` in both modes. `compare` still raises `NotImplementedError` naming
+Phase 4; `describe` remains unimplemented.
 
 Snapshots restore Blender Main data, **not Python variables or external
 files**. Reacquire RNA references from `bpy.data` after rollback: saved Python
@@ -340,6 +340,86 @@ observe [--views V,…] [--passes P,…] [--size 512|768|1024] [--ref IMG] [--la
   and pass.
 
 Result: `{"image": path, "views": [...], "passes": [...], "size": [w, h]}`.
+
+#### Phase 3 observation contract
+
+The full `RE_RenderFrame` EEVEE pipeline is the primary path, rather than
+`ED_view3d_draw_offscreen_imbuf_simple`: it supplies native Combined, Normal
+and Depth passes without borrowing viewport shading, camera state or GPU
+selection buffers. The engine owns lazy `WM_init_gpu_offscreen` and its GPU
+context lifecycle; the agent must not initialize that one-shot API again.
+C++ copies the render-pass float buffers and frees the render. It does not
+invoke the render operator, create a Render Result image, update the user's
+scene frame or pause any viewport.
+
+Observation builds a disposable scene from evaluated geometry and instance
+world transforms of the current view layer, excluding hidden-render objects,
+cameras and lights. Mesh-convertible objects are frozen to evaluated meshes;
+other geometry data is copied. Existing materials are retained for color.
+The original scene's camera, world, render/color settings and object data are
+not edited. All temporary IDs are removed even on failure. Render, frame and
+depsgraph Python callbacks are suspended and restored, so observation does
+not run user code that could mutate Main. Observation is not a snapshot or
+rollback operation and does not invalidate the agent's RNA references.
+
+Axis cameras look toward the bounds center: front from −Y, back +Y, left −X,
+right +X, top +Z, bottom −Z; `side` aliases **right**. All six are orthographic.
+`persp` looks from normalized (1, −1, 0.8), azimuth −45° and elevation
+approximately 29.5°, with a 50 mm lens and 36 mm sensor. Auto-framing uses
+world-space evaluated bounds with a 10% margin; perspective fits their
+bounding sphere. `--frame OBJECT` selects bounds, not rendered membership.
+An empty scene uses bounds [−1, 1]³ and renders background. `camera` copies the
+evaluated `scene.camera` projection/transform, disables depth of field, and
+errors with `ValueError` when no camera is assigned.
+
+Lighting is a built-in three-SUN key/fill/rim rig: directions (−3, −4, 6),
+(4, −1, 2), (1, 4, 5), energies 3/1/2, 10° angular size, white light. This is
+scale-independent and uses no preference studio lights. The neutral world
+has linear RGB 0.05, strength 1; transparent film is composited over linear
+RGB 0.035. EEVEE uses 32 render samples, a fresh render at fixed frame 1
+(fixed sampling sequence), no compositor, sequencer, stamps or dithering.
+Standard/sRGB, exposure 0, gamma 1 and no look are fixed. Color is converted
+from linear Combined with the standard sRGB transfer function and clamped to
+RGB8; data passes bypass that transfer. Tile size is 512 by default, or
+`--size 768|1024`.
+
+Exact pass definitions (all RGB8):
+
+| Pass | Definition |
+|---|---|
+| `color` | Antialiased EEVEE Combined, with the fixed lighting/background and Standard transfer above. |
+| `wire` | Color darkened by up to 90% at evaluated triangle edges. A second EEVEE material-override render uses the upstream Wireframe shader, pixel size 1; its antialiased coverage supplies the overlay mask. This is a diagnostic tessellation wire, not original polygon-edge topology. |
+| `silhouette` | Binary white (255) where native Depth is inside the camera far clip and Combined alpha ≥ 0.5; black (0) otherwise. No intermediate gray/antialiasing survives. Transparent surfaces follow this coverage rule, not a semantic object-ID mask. |
+| `normal` | Native EEVEE world-space shading normal mapped componentwise by 0.5n + 0.5; black outside the silhouette. Normal/depth use EEVEE's nearest-to-pixel-center data sample, not color's antialiasing average. |
+| `depth` | Axial camera depth d mapped to clamp(1 − (d − near)/(far − near), 0, 1), repeated in RGB; near/far are the min/max camera-space depths of the framing bounds (range at least 0.001). Near is white, far/background black; the silhouette masks background. |
+
+Sheet rows follow requested **view order**, columns **pass order**. Each tile
+has a 2-pixel RGB (32,32,32) border on every side: dimensions are
+`passes × (size+4)` by `views × (size+4)`. `--ref IMG` adds a rightmost column
+beside the first view row; the reference is bilinearly resized to tile height
+with aspect preserved and the same border, leaving lower rows blank.
+`--ref IMG --overlay` instead fits the reference inside the first view/first
+pass tile, preserves aspect, centers it and blends at 50% in display space.
+
+`--layout separate` produces one bordered PNG per view×pass, in that order;
+only the first gets a reference/overlay. The result additionally has
+`images: [{view, pass, image, size}, ...]`, with the first image also exposed
+at the top level. Default session outputs are content-addressed files under
+`<cwd>/.blender-cli/observe/`; one-shot outputs use a new system temporary
+directory. `--out PATH` chooses a sheet filename, or a directory for separate
+layout. `--inline` writes no files and substitutes a `base64` string for each
+`image` path (mutually exclusive with `--out`). All results include `ok: true`,
+requested views/passes and actual output dimensions. `exec --observe VIEWS`
+attaches this result as `observe`; `agent.observe(views, passes, size, ref)`
+uses the same implementation and returns the dict directly.
+
+PNG output has only IHDR, IDAT and IEND chunks, RGB8, filter 0 and zlib level 9:
+no timestamps, metadata hashes, paths or render timing. Byte determinism is
+scoped to the same scene state, same build, same platform, same Mesa/driver
+(or product-platform GPU driver), and the same observation arguments. It is
+not a cross-driver floating-point equivalence claim. Metal/macOS and
+real-GPU Vulkan/Windows require their own platform runs; Linux software
+Vulkan evidence cannot establish either.
 
 ### `compare`
 
