@@ -169,11 +169,6 @@ collection.objects.link(obj)
         assert both["message"] == "exec requires exactly one of code or script", both
         assert call("exec", ok=False)["error"]["message"] == "exec requires exactly one of code or script"
 
-        # Ops the contract declares but this build does not implement say so by name.
-        for op, extra in (("target", ("list",)), ("fit", ("--params", "[]"))):
-            stub = call(op, *extra, ok=False)["error"]
-            assert stub["type"] == "NotImplemented" and op in stub["message"], stub
-
         # The event stream is the source; the envelope above is derived from it.
         events = repl({"id": 4, "op": "exec",
                        "code": "import sys\nprint('out')\nprint('err', file=sys.stderr)\n"

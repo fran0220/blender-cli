@@ -135,10 +135,10 @@ removed by W).
 
 | Item | Status |
 |---|---|
-| Target storage in the session and on disk under `.blender-cli/targets/`; `target set/list/clear` | todo |
-| Objective provider (order 300): per-target metrics at feedback size, deltas, worst cell, best-so-far | todo |
-| `fit`: parameter specs (program params or RNA paths), objective forms, budget, methods `coordinate`, `nelder-mead`, `random`; evaluates through program re-run or RNA assignment plus objective scoring in-process | todo |
-| `progress` events, `cancel` semantics, `done` shape; `agent.fit()` and `agent.objective()` helpers | todo |
+| Target storage in the session and on disk under `.blender-cli/targets/`; `target set/list/clear` | done on Linux — `session.targets` is the loaded set; `target set` copies the reference, writes `silhouette.png`/`target.json` and answers the first scoring in its `done`, so registering a target costs no extra round trip |
+| Objective provider (order 300): per-target metrics at feedback size, deltas, worst cell, best-so-far | done on Linux — measured 2.61 s per action for one target at 256 px against 2.6 ms with none; a second target on the same view adds nothing (2.59 s), confirming one render per distinct view |
+| `fit`: parameter specs (program params or RNA paths), objective forms, budget, methods `coordinate`, `nelder-mead`, `random`; evaluates through program re-run or RNA assignment plus objective scoring in-process | done on Linux — cube scale x/y against a binary-rendered silhouette reaches IoU 0.999975 in exactly 40 evaluations at 512 px (3.63 s per evaluation); program parameters go through `agent_program.attach(session).set_params`, and a step that raises costs one evaluation, scores worst and is counted in `failed` rather than failing the request |
+| `progress` events, `cancel` semantics, `done` shape; `agent.fit()` and `agent.objective()` helpers | done on Linux — `progress` is rate limited to 0.5 s; a `cancel` on a second connection ends `fit` with `done` and `cancelled: true` after 4 of 200 evaluations with the best applied; seeded `random` repeats its params, score and curve exactly; the helpers are installed through `register_helper` and answer the event's dict |
 
 ### P — program model
 

@@ -208,18 +208,37 @@ Sent after every action when at least one target is registered:
 
 ```
 {"event": "objective",
- "targets": {"front": {"iou": 0.931, "delta": {"iou": +0.012},
-                       "chamfer": 3.1, "ssim": 0.82,
+ "targets": {"front": {"iou": 0.931, "chamfer": 3.1,
+                       "delta": {"iou": +0.012, "chamfer": -0.4},
                        "worst": {"region": [x0,y0,x1,y1], "iou": 0.61,
                                  "missing": 0.7, "extra": 0.3}}},
  "best": {"front": {"iou": 0.931, "snapshot": "sha256:…", "step": 12}}}
 ```
 
-`worst` is the 4×4 grid cell of the view with the largest silhouette error,
-split into reference-not-model (`missing`) and model-not-reference
-(`extra`). `best` remembers the best score seen this session and the
+Each target carries exactly the metrics it was registered with, scored at the
+feedback size in its own view; targets sharing a view share one render.
+`delta` is the change in each of those metrics since the previous scoring,
+and is `null` the first time a target is scored, exactly as perception's
+`changed` is `null` on the first action.
+
+`worst` is the 4×4 grid cell of the view with the largest silhouette error
+(the most disagreeing pixels; ties go to the first cell in row-major order),
+split into reference-not-model (`missing`) and model-not-reference (`extra`)
+as fractions of that cell's disagreement, so they sum to 1 (to 0 when the
+cell agrees exactly). `region` is `[x0, y0, x1, y1]` in view pixels,
+top-left origin, high coordinates exclusive — the same convention as
+`reference.bbox`.
+
+`best` remembers the best value of the target's **primary metric** — the
+first metric it was registered with — seen this session, and the
 snapshot/step that produced it, so an agent can return to it without
-bookkeeping.
+bookkeeping. Larger is better for `iou` and `ssim`, smaller for `chamfer`
+and `hist`.
+
+The objective provider records the values it reports, so the next `delta` is
+measured against them. `agent.objective()` returns the same dict for the
+current state without recording it, so calling it never changes what the
+next event reports.
 
 ### Image event
 
@@ -531,8 +550,13 @@ when a step fails. Setting a parameter no step reads re-executes nothing.
 `target set` stores the reference under `.blender-cli/targets/<name>/` with
 its preprocessed silhouette (mask policy and `fit` policy as in `compare`),
 bound to one view. Registered targets are scored by the objective provider
-after every action at budget size (256, silhouette metrics only) and at full
-size on `observe`/`fit` completion.
+after every state-changing request at the feedback size (256), and at
+`budget.size` during `fit`. A target scores only the metrics it was
+registered with, and targets sharing a view share one render, so the pushed
+objective costs one render per distinct target view; a target registered
+with `ssim` or `hist` pays for them on every action. A target bound to a
+budget view is scored from the render the perception provider already made
+for that request, so it costs nothing beyond the metrics.
 
 `fit`:
 
@@ -543,20 +567,63 @@ size on `observe`/`fit` completion.
  "objective": {"target": "front", "metric": "iou"}
             | {"targets": ["front", "side"], "metric": "iou", "weights": [0.7, 0.3]}
             | {"code": "agent.compare(...)['iou']"},
- "budget": {"evals": 200, "seconds": 120, "size": 128},
+ "budget": {"evals": 200, "seconds": 120, "size": 128},   # seconds optional
  "method": "coordinate"}
 ```
 
-Each evaluation sets the parameters (program parameters re-execute from the
-parameter block's cached prefix; RNA paths assign directly), renders the
-objective's views at `budget.size`, and scores. `progress` events are sent
-at most every 0.5 s. `cancel` stops the search and keeps the best. `done`
-returns `{best: {params, score}, evals, curve: [[eval, best]…], applied:
-true, error_map: image}`; the best parameters are applied to the live scene
-and, for program parameters, written into `P`. Methods: `coordinate`
-(cyclic coordinate descent with shrinking steps), `nelder-mead`, `random`
-(Latin-hypercube then local refinement). Determinism: same program, same
-budget, same method ⇒ same result.
+Every parameter needs `min` and `max`; the search starts from the live value,
+clamped into that interval, and works in the unit cube so a step means the
+same thing on every parameter. Each evaluation sets the parameters (program
+parameters re-execute from the parameter block's cached prefix; RNA paths
+assign directly), updates the depsgraph, renders the objective's views at
+`budget.size`, and scores. Repeated parameter vectors are answered from the
+search's own cache and cost no render and no evaluation.
+
+`objective` defaults to every registered target on `iou` with equal weights.
+The metric's direction decides whether the search maximises (`iou`, `ssim`)
+or minimises (`chamfer`, `hist`); a `code` objective is always maximised and
+must return a number. `budget` defaults to `{"evals": 200, "size": 128}`;
+`seconds` has no default, so the evaluation count is the only bound unless
+the agent asks for a wall-clock one.
+
+`progress` events are sent at most every 0.5 s and carry the best value and
+its parameters, so an agent watching a long fit never has to ask. `cancel`
+and an exhausted budget behave alike: the search stops, the best parameters
+are applied, and the request ends with `done`, not `error` — a cancelled fit
+that discarded its result would cost the agent everything it paid for. Only
+`fit` answers a cancel this way; every other request ends with `Cancelled`.
+
+`done` returns
+
+```
+{"ok": true, "ms": …, "method": "coordinate",
+ "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]},
+ "best": {"params": {"handle_x": 0.41}, "score": 0.994, "snapshot": "sha256:…"},
+ "evals": 37, "failed": 0, "curve": [[1, 0.81], [4, 0.93], [19, 0.994]],
+ "applied": true, "cancelled": false,
+ "error_map": {"target": "front", "view": "front", "image": "…png",
+               "size": [w, h], "region": [x0, y0, x1, y1]}}
+```
+
+`curve` records only the evaluations that improved the best value, so it is
+the search's trajectory rather than its transcript. `error_map` is the first
+objective target's silhouette error at `budget.size` — missing red, extra
+blue, agreement white — with `region` naming its worst 4×4 cell; it is
+absent for a `code` objective. The best parameters are applied to the live
+scene and, for program parameters, written into `P`.
+
+A parameter vector whose program step raises is a dead region of the search
+space, not a failed request: the evaluation costs its budget, scores as the
+worst possible value, is reported in `failed`, and the search continues. The
+step's error is logged on `stderr`. `fit` fails only when nothing scored at
+all.
+
+Methods: `coordinate` (cyclic coordinate descent that walks an improving
+direction until it stops improving and halves the step on a barren cycle),
+`nelder-mead`, `random` (a seeded Latin hypercube over half the evaluation
+budget, then coordinate refinement from its best sample). Determinism: same
+program, same budget, same method ⇒ same result, whenever the evaluation
+budget binds before the time budget.
 
 ## Describe and corrective errors
 
@@ -1180,11 +1247,40 @@ A target binds a reference image to a preset view. While targets exist, every
 state-changing request ends with an `objective` event scoring each target at
 the feedback size; `fit` optimises against them. Metrics: `iou` (silhouette
 intersection-over-union), `chamfer` (edge distance, pixels), `ssim`, `hist`
-(color-histogram distance). `--mask auto` removes the reference background
-with classic CV before comparison. There is no comparison verb: the same
-computation is `agent.compare(ref, view, metrics=…)` inside `exec`, returning
+(color-histogram distance); the default is `iou`, and the first one listed is
+the target's primary metric. `--mask auto` removes the reference
+background with classic CV before comparison. There is no comparison verb:
+the same computation is `agent.compare(ref, view, metrics=…)` inside `exec`,
+returning
 `{"view": "front", "reference": {…}, "iou": 0.83, "chamfer": 4.2, "ssim": 0.71, "hist": 0.12}`,
 and the `objective` event carries it for every target.
+
+A target name matches `[A-Za-z0-9][A-Za-z0-9._-]*`, because it is also a
+directory name. `target set` copies the reference into
+`.blender-cli/targets/<name>/reference.<ext>`, so moving or deleting the
+original never changes what the session is fitting, and writes the
+preprocessed binary silhouette beside it as `silhouette.png` and the record
+as `target.json`. Setting an existing name replaces it and forgets its
+previous and best values. A session reads every stored target at open, so a
+target outlives a crash. `done`:
+
+```
+target set   {"ok": true, "name": "front", "ref": "…/reference.png", "view": "front",
+              "mask": "auto", "fit": "bbox", "metrics": ["iou"],
+              "reference": {"bbox": [x0,y0,x1,y1], "occupancy": 0.9, "fit": "bbox"},
+              "silhouette": "…/silhouette.png",
+              "objective": {"targets": {…}, "best": {…}}}
+target list  {"ok": true, "targets": [ …one set record without `silhouette`… ]}
+target clear {"ok": true, "cleared": ["front"]}
+```
+
+`target clear` without a name clears every target; with an unknown name it is
+a `KeyError`, not a silent success. `reference` describes the preprocessed
+reference at the feedback size, in that tile's pixels. `target` changes no
+scene data, so no `objective` event follows it; instead `target set` carries
+the first scoring in its `done` as `objective`, in the event's shape, so
+registering a target already answers how far the scene is from it without a
+second request.
 
 #### Metric details
 
