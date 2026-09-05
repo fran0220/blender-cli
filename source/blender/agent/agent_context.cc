@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_context.hh"
+#include "agent_render.hh"
 
 #include "BKE_context.hh"
 #include "BKE_main.hh"
@@ -84,6 +85,11 @@ static PyObject *flush(PyObject *self, PyObject *)
   Py_RETURN_NONE;
 }
 
+static PyObject *render_scene(PyObject *self, PyObject *name)
+{
+  return render(context(self), name);
+}
+
 static bool viewport_required(bContext *C)
 {
   CTX_wm_operator_poll_msg_set(
@@ -107,6 +113,7 @@ PyObject *native_api(bContext *C)
   static PyMethodDef methods[] = {
       {"context", ensure, METH_NOARGS, nullptr},
       {"flush", flush, METH_NOARGS, nullptr},
+      {"render", render_scene, METH_O, nullptr},
   };
   PyObject *capsule = PyCapsule_New(C, "agent.context", nullptr);
   PyObject *result = PyDict_New();

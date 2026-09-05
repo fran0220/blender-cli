@@ -38,14 +38,25 @@ def parse(arguments):
     parser.add_argument("--save", nargs="?", const="")
     parser.add_argument("--json", action="store_true")
     # Later-phase verbs must report NotImplemented even with their future arguments.
-    if arguments[0] in {"session", "observe", "compare", "describe"}:
+    if arguments[0] in {"session", "compare", "describe"}:
         raise NotImplemented(f"{arguments[0]} is not implemented in Phase 1")
-    if arguments[0] not in {"exec", "inspect"}:
+    if arguments[0] not in {"exec", "inspect", "observe"}:
         raise ValueError(f"Unknown verb: {arguments[0]}")
     if arguments[0] == "exec":
         parser.add_argument("-c", dest="code")
         parser.add_argument("script", nargs="?")
         parser.add_argument("--timeout", type=float)
+        parser.add_argument("--observe")
+    elif arguments[0] == "observe":
+        parser.add_argument("--views", default="front,persp")
+        parser.add_argument("--passes", default="color")
+        parser.add_argument("--size", type=int, default=512)
+        parser.add_argument("--ref")
+        parser.add_argument("--layout", choices=("sheet", "separate"), default="sheet")
+        parser.add_argument("--frame")
+        parser.add_argument("--overlay", action="store_true")
+        parser.add_argument("--out")
+        parser.add_argument("--inline", action="store_true")
     else:
         parser.add_argument("--object")
         parser.add_argument("--full", action="store_true")
@@ -244,7 +255,15 @@ def run(arguments, snapshot, fields, session=None):
                 bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
             if args.verb == "exec":
                 agent._native["context"]()
-            result = execute(args, snapshot, fields, session) if args.verb == "exec" else inspect(args)
+                result = execute(args, snapshot, fields, session)
+                if args.observe:
+                    result["observe"] = agent.observe(views=args.observe)
+            elif args.verb == "observe":
+                from agent_observe import observe
+                result = observe(**{key: getattr(args, key) for key in
+                                    ("views", "passes", "size", "ref", "layout", "frame", "overlay", "out", "inline")})
+            else:
+                result = inspect(args)
             if session and args.verb == "exec":
                 result["snapshot"] = session.snapshot(None, "exec")
             if save:

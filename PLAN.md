@@ -64,8 +64,8 @@ whose bytes are identical across two runs on the same platform, and
 
 | Item | Status |
 |---|---|
-| Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | todo |
-| Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | todo |
+| Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | doing — loaded-context adoption and edit-data flush implemented; full build/operator verification pending |
+| Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | doing — native full render and disposable-scene implementation; Linux verification pending, product platforms unverified |
 | Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | todo |
 | Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | todo |
 | Passes: color, wireframe, silhouette, normal, depth | todo |

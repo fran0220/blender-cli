@@ -6,14 +6,16 @@ if(NOT WITH_PYTHON OR WITH_PYTHON_MODULE OR NOT WITH_BLENDER)
   message(FATAL_ERROR "WITH_AGENT requires the Blender executable with embedded Python")
 endif()
 
-set(INC . ../python ../makesrna ../blenloader ../editors/include ../windowmanager)
+set(INC . ../python ../makesrna ../blenloader ../editors/include ../windowmanager ../render)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
 set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
-  agent_socket.hh agent_transport.hh agent_context.cc agent_context.hh)
+  agent_socket.hh agent_transport.hh agent_context.cc agent_context.hh
+  agent_render.cc agent_render.hh)
 set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
   PRIVATE bf::dna
+  PRIVATE bf::imbuf
   PRIVATE bf::intern::guardedalloc
   PRIVATE bf::extern::json
 )
@@ -36,4 +38,4 @@ else()
   set(agent_scripts_dir "${BLENDER_VERSION}/scripts/modules")
 endif()
 install(TARGETS blender-cli RUNTIME DESTINATION ${agent_exe_dir})
-install(FILES agent_runtime.py agent.py DESTINATION ${agent_scripts_dir})
+install(FILES agent_runtime.py agent.py agent_observe.py DESTINATION ${agent_scripts_dir})

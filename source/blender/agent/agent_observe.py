@@ -1,0 +1,299 @@
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+"""Deterministic observation of evaluated geometry, without editing the user's scene."""
+
+import base64
+import contextlib
+import hashlib
+import math
+from pathlib import Path
+import struct
+import tempfile
+import zlib
+
+import bpy
+import numpy as np
+from mathutils import Vector
+
+import agent
+
+
+VIEWS = ("front", "back", "left", "right", "top", "bottom", "persp", "camera", "side")
+PASSES = ("color", "wire", "silhouette", "normal", "depth")
+BORDER = 2
+
+
+def names(value, allowed):
+    result = value.split(",") if isinstance(value, str) else list(value)
+    if not result or any(item not in allowed for item in result):
+        raise ValueError(f"Expected a nonempty list from {', '.join(allowed)}")
+    return result
+
+
+def srgb(linear):
+    linear = np.maximum(linear, 0)
+    return np.where(linear <= 0.0031308, linear * 12.92,
+                    1.055 * np.power(linear, 1 / 2.4) - 0.055)
+
+
+def bytes_rgb(rgb):
+    return np.floor(np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+def png(rgb):
+    """RGB8 PNG: fixed filter/compression, only IHDR/IDAT/IEND, no varying metadata."""
+    height, width, _ = rgb.shape
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\0" + row.tobytes() for row in rgb)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+def resize(rgb, width, height):
+    """Deterministic pixel-center bilinear resampling, clamped at the image edge."""
+    y = np.clip((np.arange(height) + 0.5) * rgb.shape[0] / height - 0.5, 0, rgb.shape[0] - 1)
+    x = np.clip((np.arange(width) + 0.5) * rgb.shape[1] / width - 0.5, 0, rgb.shape[1] - 1)
+    y0, x0 = y.astype(int), x.astype(int)
+    y1, x1 = np.minimum(y0 + 1, rgb.shape[0] - 1), np.minimum(x0 + 1, rgb.shape[1] - 1)
+    fy, fx = (y - y0)[:, None, None], (x - x0)[None, :, None]
+    return ((rgb[y0[:, None], x0] * (1 - fx) + rgb[y0[:, None], x1] * fx) * (1 - fy) +
+            (rgb[y1[:, None], x0] * (1 - fx) + rgb[y1[:, None], x1] * fx) * fy)
+
+
+@contextlib.contextmanager
+def isolated_data():
+    # Delete only IDs created by this operation, even if setup/render/composition fails.
+    groups = [getattr(bpy.data, prop.identifier) for prop in bpy.data.bl_rna.properties
+              if prop.type == "COLLECTION"]
+    before = {item.as_pointer() for group in groups for item in group}
+    # Observation does not execute user render/frame/depsgraph handlers. They may mutate Main.
+    handler_names = ("render_init", "render_pre", "render_post", "render_write", "render_complete",
+                     "render_cancel", "frame_change_pre", "frame_change_post",
+                     "depsgraph_update_pre", "depsgraph_update_post")
+    handlers = [(getattr(bpy.app.handlers, name), list(getattr(bpy.app.handlers, name)))
+                for name in handler_names]
+    for callbacks, _ in handlers:
+        callbacks.clear()
+    try:
+        yield
+    finally:
+        added = [item for group in groups for item in group if item.as_pointer() not in before]
+        if added:
+            bpy.data.batch_remove(added)
+        for callbacks, original in handlers:
+            callbacks[:] = original
+
+
+def render_scene(source, size, frame):
+    graph = bpy.context.evaluated_depsgraph_get()
+    scene = bpy.data.scenes.new("Agent observation")
+    scene.render.engine = "BLENDER_EEVEE"
+    scene.render.resolution_x = scene.render.resolution_y = size
+    scene.render.resolution_percentage = 100
+    scene.render.film_transparent = True
+    scene.render.use_compositing = False
+    scene.render.use_sequencer = False
+    scene.render.use_stamp = False
+    scene.render.dither_intensity = 0
+    scene.eevee.taa_render_samples = 32
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0
+    scene.view_settings.gamma = 1
+    scene.display_settings.display_device = "sRGB"
+    scene.view_layers[0].use_pass_z = True
+    scene.view_layers[0].use_pass_normal = True
+    scene.world = bpy.data.worlds.new("Agent neutral world")
+    background = scene.world.node_tree.nodes.get("Background")
+    background.inputs["Color"].default_value = (0.05, 0.05, 0.05, 1)
+    background.inputs["Strength"].default_value = 1
+
+    points = []
+    if frame and frame not in source.objects:
+        raise KeyError(f"No framing object: {frame}")
+    for instance in graph.object_instances:
+        obj = instance.object
+        if not instance.show_self or obj.hide_render or obj.type in {"CAMERA", "LIGHT", "EMPTY", "ARMATURE", "LATTICE"}:
+            continue
+        if obj.type in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
+            data = bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True, depsgraph=graph)
+        else:
+            data = obj.data.copy()
+        copy = bpy.data.objects.new("Agent geometry", data)
+        copy.matrix_world = instance.matrix_world.copy()
+        scene.collection.objects.link(copy)
+        if not frame or obj.original.name == frame:
+            points.extend(instance.matrix_world @ Vector(corner) for corner in obj.bound_box)
+    if not points:
+        points = [Vector((-1, -1, -1)), Vector((1, 1, 1))]
+    low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
+    high = Vector(tuple(max(p[i] for p in points) for i in range(3)))
+    center = (low + high) / 2
+    radius = max((high - low).length / 2, 0.01)
+    # World-space, preference-independent key/fill/rim; SUN lights are scale independent.
+    for direction, energy in (((-3, -4, 6), 3.0), ((4, -1, 2), 1.0), ((1, 4, 5), 2.0)):
+        light = bpy.data.lights.new("Agent studio", "SUN")
+        light.energy = energy
+        light.angle = math.radians(10)
+        obj = bpy.data.objects.new("Agent studio", light)
+        obj.rotation_euler = (-Vector(direction)).to_track_quat('-Z', 'Y').to_euler()
+        scene.collection.objects.link(obj)
+    camera = bpy.data.objects.new("Agent camera", bpy.data.cameras.new("Agent camera"))
+    scene.collection.objects.link(camera)
+    scene.camera = camera
+    return scene, points, center, radius
+
+
+def aim(scene, source, view, points, center, radius):
+    camera = scene.camera
+    if view == "camera":
+        original = source.camera.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        camera.data = original.data.copy()
+        camera.data.dof.use_dof = False
+        camera.matrix_world = original.matrix_world.copy()
+    else:
+        direction = Vector({"front": (0, -1, 0), "back": (0, 1, 0), "left": (-1, 0, 0),
+                            "right": (1, 0, 0), "side": (1, 0, 0), "top": (0, 0, 1),
+                            "bottom": (0, 0, -1), "persp": (1, -1, 0.8)}[view]).normalized()
+        camera.rotation_euler = (-direction).to_track_quat('-Z', 'Y').to_euler()
+        camera.data.type = "PERSP" if view == "persp" else "ORTHO"
+        camera.data.lens = 50
+        camera.data.sensor_width = 36
+        distance = radius * 1.1 / math.sin(math.atan(18 / 50)) if view == "persp" else radius * 3
+        matrix = camera.rotation_euler.to_matrix().to_4x4()
+        matrix.translation = center + direction * distance
+        camera.matrix_world = matrix
+        basis = camera.rotation_euler.to_matrix().transposed()
+        projected = [basis @ (point - center) for point in points]
+        camera.data.ortho_scale = max(max(abs(p.x), abs(p.y)) for p in projected) * 2.2
+        camera.data.ortho_scale = max(camera.data.ortho_scale, 0.02)
+        camera.data.clip_start = max(radius * 0.001, 0.0001)
+        camera.data.clip_end = distance + radius * 4
+    # EEVEE Z is axial camera depth, not Euclidean ray distance.
+    transform = camera.matrix_world.inverted()
+    depths = [-(transform @ point).z for point in points]
+    return min(depths), max(max(depths), min(depths) + 0.001)
+
+
+def wire_material():
+    material = bpy.data.materials.new("Agent wire")
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    output = nodes.new("ShaderNodeOutputMaterial")
+    emission = nodes.new("ShaderNodeEmission")
+    wire = nodes.new("ShaderNodeWireframe")
+    wire.use_pixel_size = True
+    wire.inputs["Size"].default_value = 1.0
+    material.node_tree.links.new(wire.outputs[0], emission.inputs["Color"])
+    material.node_tree.links.new(emission.outputs[0], output.inputs["Surface"])
+    return material
+
+
+def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
+            layout="sheet", frame=None, overlay=False, out=None, inline=False):
+    views, passes = names(views, VIEWS), names(passes, PASSES)
+    if size not in (512, 768, 1024):
+        raise ValueError("size must be 512, 768 or 1024")
+    if layout not in ("sheet", "separate"):
+        raise ValueError("layout must be sheet or separate")
+    if overlay and not ref:
+        raise ValueError("--overlay requires --ref")
+    if inline and out:
+        raise ValueError("--inline and --out are mutually exclusive")
+    source = bpy.context.scene
+    if "camera" in views and source.camera is None:
+        raise ValueError("The camera view requires scene.camera")
+    tiles = []
+    with isolated_data():
+        scene, points, center, radius = render_scene(source, size, frame)
+        wire = wire_material() if "wire" in passes else None
+        for view in views:
+            near, far = aim(scene, source, view, points, center, radius)
+            buffers = agent._native["render"](scene.name)
+
+            def pixels(name, channels):
+                return np.frombuffer(buffers[name], dtype=np.float32).reshape(size, size, channels)[::-1]
+
+            combined = pixels("Combined", 4)
+            color = srgb(combined[:, :, :3] + (1 - combined[:, :, 3:4]) * 0.035)
+            depth = pixels("Depth", 1)
+            mask = (depth < scene.camera.data.clip_end) & (combined[:, :, 3:4] >= 0.5)
+            images = {"color": bytes_rgb(color), "silhouette": np.repeat(mask.astype(np.uint8) * 255, 3, axis=2),
+                      "normal": bytes_rgb(np.where(mask, pixels("Normal", 3) * 0.5 + 0.5, 0)),
+                      "depth": bytes_rgb(np.repeat(np.where(mask, 1 - (depth - near) / (far - near), 0), 3, axis=2))}
+            if wire:
+                scene.view_layers[0].material_override = wire
+                wire_buffers = agent._native["render"](scene.name)
+                edge = np.frombuffer(wire_buffers["Combined"], dtype=np.float32).reshape(size, size, 4)[::-1, :, :1]
+                images["wire"] = bytes_rgb(color * (1 - np.clip(edge, 0, 1) * 0.9))
+                scene.view_layers[0].material_override = None
+            tiles.extend(images[pass_name] for pass_name in passes)
+        reference = None
+        if ref:
+            image = bpy.data.images.load(str(Path(ref).resolve()), check_existing=False)
+            w, h = image.size
+            if not w or not h:
+                raise ValueError("Reference image has no pixels")
+            rgba = np.empty(w * h * 4, dtype=np.float32)
+            image.pixels.foreach_get(rgba)
+            rgba = rgba.reshape(h, w, 4)[::-1]
+            reference = rgba[:, :, :3] * rgba[:, :, 3:4] + (1 - rgba[:, :, 3:4]) * (32 / 255)
+            if overlay:
+                scale = min(size / w, size / h)
+                rw, rh = max(1, round(w * scale)), max(1, round(h * scale))
+                resized = resize(reference, rw, rh)
+                x, y = (size - rw) // 2, (size - rh) // 2
+                tiles[0][y:y + rh, x:x + rw] = bytes_rgb(
+                    tiles[0][y:y + rh, x:x + rw] / 510 + resized / 2)
+                reference = None
+            else:
+                reference = bytes_rgb(resize(reference, max(1, round(w * size / h)), size))
+
+    stride = size + BORDER * 2
+    extra = reference.shape[1] + BORDER * 2 if reference is not None else 0
+    if layout == "sheet":
+        sheet = np.full((len(views) * stride, len(passes) * stride + extra, 3), 32, np.uint8)
+        for i, tile in enumerate(tiles):
+            y, x = (i // len(passes)) * stride + BORDER, (i % len(passes)) * stride + BORDER
+            sheet[y:y + size, x:x + size] = tile
+        if reference is not None:
+            sheet[BORDER:BORDER + size, len(passes) * stride + BORDER:-BORDER] = reference
+        outputs = [sheet]
+    else:
+        outputs = []
+        for i, tile in enumerate(tiles):
+            image = np.full((stride, stride + (extra if i == 0 else 0), 3), 32, np.uint8)
+            image[BORDER:BORDER + size, BORDER:BORDER + size] = tile
+            if i == 0 and reference is not None:
+                image[BORDER:BORDER + size, stride + BORDER:-BORDER] = reference
+            outputs.append(image)
+    result = {"ok": True, "views": views, "passes": passes, "size": [outputs[0].shape[1], outputs[0].shape[0]]}
+    directory = None
+    if not inline:
+        directory = (Path.cwd() / ".blender-cli" / "observe" if agent._session else
+                     Path(tempfile.mkdtemp(prefix="blender-cli-observe-"))) if not out else Path(out).resolve()
+        if not out or layout == "separate":
+            directory.mkdir(parents=True, exist_ok=True)
+    records = []
+    for i, image in enumerate(outputs):
+        encoded = png(image)
+        record = {"size": [image.shape[1], image.shape[0]]}
+        if inline:
+            record["base64"] = base64.b64encode(encoded).decode("ascii")
+        else:
+            path = directory if out and layout == "sheet" else directory / (hashlib.sha256(encoded).hexdigest() +
+                    (f"-{i}" if layout == "separate" else "") + ".png")
+            path.write_bytes(encoded)
+            record["image"] = str(path)
+        if layout == "separate":
+            record.update(view=views[i // len(passes)], **{"pass": passes[i % len(passes)]})
+        records.append(record)
+    result.update(records[0])
+    if layout == "separate":
+        result["images"] = records
+    return result

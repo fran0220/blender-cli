@@ -30,7 +30,8 @@ def history():
 
 
 def observe(views=("front",), passes=("color",), size=512, ref=None):
-    raise NotImplementedError("agent.observe is delivered in Phase 3")
+    from agent_observe import observe as render
+    return render(views=views, passes=passes, size=size, ref=ref)
 
 
 def compare(ref, view, metrics=("iou",), mask="auto"):
