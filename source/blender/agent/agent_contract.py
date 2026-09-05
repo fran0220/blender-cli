@@ -13,7 +13,13 @@ Field keys: `type` (string|number|integer|boolean|array|object), `required`,
 `default`, `enum`, `items` (a nested field spec), `ref` (a `DEFS` key),
 `minimum`, `maximum`, `exclusive_minimum`, `doc`. Op keys: `doc`, `fields`,
 `events`, `example`, `mutates` (True, False, or the set of `action` values
-that change `Main`), and `exactly_one_of`.
+that change `Main`), `exactly_one_of`, and `cancels`.
+
+`cancels` names how an op answers a `cancel` that reaches it. The default is
+`"error"`: the request ends with `error` of type `Cancelled`, having restored
+the state it started from. `"done"` means the op keeps what it produced and
+ends successfully with `cancelled: true`, which is what a paid-for search
+does — discarding its result would be the opposite of the point.
 """
 
 DEFS = {
@@ -150,6 +156,7 @@ REQUESTS = {
     "fit": {
         "doc": "Search parameters against the registered targets inside the process.",
         "mutates": True,
+        "cancels": "done",
         "fields": {
             "params": {"type": "array", "required": True, "items": {"ref": "fit_param"},
                        "doc": "Parameters to search."},
@@ -266,7 +273,13 @@ EVENTS = {
                  "fields": {"eval": {"type": "integer"}, "of": {"type": "integer"},
                             "best": {"type": "number"}, "params": {"type": "object"}}},
     "done": {"doc": "Terminal success event, carrying the op-specific result fields.",
-             "fields": {"ok": {"type": "boolean"}, "ms": {"type": "number"}}},
+             "fields": {"ok": {"type": "boolean"}, "ms": {"type": "number"},
+                        "cancelled": {"type": "boolean",
+                                      "doc": "For an op whose `cancels` is `done`, that it was "
+                                             "cancelled and kept its result; on a `cancel`, "
+                                             "whether a request with that id was running."},
+                        "target": {"type": "integer",
+                                   "doc": "On a `cancel`, the id it was aimed at."}}},
     "error": {"doc": "Terminal failure event.",
               "fields": {"ok": {"type": "boolean"}, "type": {"type": "string"},
                          "message": {"type": "string"}, "line": {"type": "integer"},

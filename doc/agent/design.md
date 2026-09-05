@@ -82,7 +82,16 @@ numeric bounds. One request executes at a time; later requests queue in
 arrival order. `cancel` is handled on the transport thread and answered
 immediately with its own `done` — `{"target": N, "cancelled": true|false}`,
 false when no request with that id is running — while it raises `G.is_break`
-for the running request, which then ends with `error` of type `Cancelled`.
+for the running request.
+
+How that request then ends is the op's `cancels` outcome in the request
+table. The default is `error`: the request ends with `error` of type
+`Cancelled`, having restored the state it started from, because a half-applied
+edit is worth nothing. `fit` declares `done` instead: a search that has
+already paid for its evaluations keeps them, applies the best parameters and
+ends with `ok: true` and `cancelled: true`. Discarding a paid-for search is
+the opposite of what the search is for. An op's outcome is data, so
+`describe schema` projects it rather than restating it.
 
 Every CLI verb is exactly one request and its flags are that request's
 fields; the mapping lives once, in `agent_cli.hh`, so the launcher and the
@@ -940,16 +949,21 @@ cross-connection ordering guarantee. Closing abandons later queued requests.
 Partial lines over 16 MiB disconnect. The endpoint is local trusted-code
 access, not a sandbox or a multi-user authentication boundary.
 
-Cancellation is an out-of-band line on a **second connection** with the
-running request's ID (the same connection is also accepted). It has no
-separate response. Unknown/inactive IDs have no effect. The transport thread
-only moves/parses protocol bytes and sets an atomic cancellation flag;
-Python trace checkpoints on the main thread copy it into `G.is_break` and
-raise `Cancelled`. This avoids a data race on upstream's plain Boolean.
+`cancel` is an ordinary request, normally sent on a **second connection**
+while the first is busy (the same connection is also accepted). It is
+answered out of order, on the transport thread, with its own `done`:
+`{"id": <the cancel's id>, "event": "done", "ok": true, "target": N,
+"cancelled": true|false}`, where `cancelled` is false when no request with
+that id is running. That answer says the cancel was delivered; how the
+running request ends is its own terminal event, under *Channel protocol*.
+The transport thread only moves and parses protocol bytes and sets an atomic
+flag; Python trace checkpoints on the main thread copy it into `G.is_break`
+and raise `Cancelled`. This avoids a data race on upstream's plain Boolean.
 Native calls cannot be preempted: cancellation is noticed when they return
 to Python. Code that catches the exception or disables tracing is not
-forcibly interrupted. Failed/cancelled execs do not create a snapshot and
-may have partially changed data; rollback is the recovery operation.
+forcibly interrupted. A cancelled or failed request takes no snapshot of the
+state it abandoned; it is restored to the snapshot it began from, except
+where the op's `cancels` outcome is `done` and it keeps what it produced.
 
 The main thread executes one request, pumps `BLI_timer_execute`, and answers.
 While idle it pumps timers at roughly 10 ms intervals, releasing the GIL
