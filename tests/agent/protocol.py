@@ -124,7 +124,7 @@ collection.objects.link(obj)
         assert not bad_path["ok"], bad_path
         missing_file = call("inspect", "--file", root / "absent.blend", ok=False)
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
-        for verb in ("session", "observe", "compare", "describe"):
+        for verb in ("session", "compare", "describe"):
             assert call(verb, ok=False)["error"]["type"] == "NotImplemented"
         assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"
         human = raw("exec", "-c", "42")

@@ -48,7 +48,6 @@ def main():
                 if index in (0, 5, 9):
                     print(f"exec {index + 1}: {json.dumps(result)}", flush=True)
             assert execute("agent is __import__('agent')")["value"] == "True"
-            assert execute("agent.observe()", ok=False)["error"]["type"] == "NotImplementedError"
             assert execute("agent.compare('ref.png', 'front')", ok=False)["error"]["type"] == "NotImplementedError"
             baseline = call("session", "snapshot", "--label", "before")
             assert vertices() == 8
