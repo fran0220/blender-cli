@@ -26,7 +26,7 @@ def diff():
 
 
 def history():
-    return list(_active().history)
+    return [dict(event) for event in _active().history]
 
 
 def observe(views=("front",), passes=("color",), size=512, ref=None):

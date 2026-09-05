@@ -20,6 +20,7 @@
 #  include <fcntl.h>
 #  include <signal.h>
 #  include <sys/file.h>
+#  include <sys/wait.h>
 #endif
 
 namespace blender::agent {
@@ -38,6 +39,19 @@ inline bool process_alive(int pid)
   CloseHandle(process);
   return alive;
 #else
+  int status;
+  if (waitpid(pid, &status, WNOHANG) == pid) {
+    return false;
+  }
+#  ifdef __linux__
+  std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+  std::string line;
+  std::getline(stat, line);
+  const auto end = line.rfind(')');
+  if (end != std::string::npos && end + 2 < line.size() && line[end + 2] == 'Z') {
+    return false;
+  }
+#  endif
   return kill(pid, 0) == 0 || errno == EPERM;
 #endif
 }
@@ -212,13 +226,19 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     }
     socket_close(fd);
     auto response = nlohmann::json::parse(line);
-    int status = print(response.at("result"));
-    if (closing && status == 0) {
-      for (int i = 0; i < 200 && std::filesystem::exists(path); i++) {
+    auto result = response.at("result");
+    if (closing && result.is_object() && result.value("ok", false)) {
+      for (int i = 0; i < 200 && process_alive(pid); i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
+      if (process_alive(pid)) {
+        terminate_process(pid);
+        std::filesystem::remove(path);
+        std::filesystem::remove(pidfile);
+        result["forced"] = true;
+      }
     }
-    return status;
+    return print(result);
   }
   catch (const std::exception &error) {
     return print(

@@ -295,6 +295,7 @@ class Session:
         self.current = self.native["snapshot"]()
         self.history.append({"snapshot": self.current, "label": label,
                              "verb": verb, "at": time.time()})
+        self.current_index = len(self.history) - 1
         return self.current
 
     def rollback(self, target):
@@ -302,13 +303,16 @@ class Session:
             count = int(target[1:])
             if count < 0:
                 raise ValueError("Rollback offset must be nonnegative")
-            index = next(i for i in range(len(self.history) - 1, -1, -1)
-                         if self.history[i]["snapshot"] == self.current)
-            if count > index:
+            if count > self.current_index:
                 raise ValueError("Rollback offset precedes session history")
-            target = self.history[index - count]["snapshot"]
+            index = self.current_index - count
+            target = self.history[index]["snapshot"]
+        else:
+            index = next((i for i in range(len(self.history) - 1, -1, -1)
+                          if self.history[i]["snapshot"] == target), -1)
         self.native["rollback"](target)
         self.current = target
+        self.current_index = index
         bpy.context.view_layer.update()
 
     def diff(self):

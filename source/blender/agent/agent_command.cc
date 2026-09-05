@@ -48,6 +48,9 @@ static PyObject *id_state(PyObject *self, PyObject *args)
     return nullptr;
   }
   auto &state = *static_cast<RequestState *>(PyCapsule_GetPointer(self, "agent.request"));
+  if (reset) {
+    state.initial_recalc.clear();
+  }
   PyObject *result = PyDict_New();
   ID *id;
   FOREACH_MAIN_ID_BEGIN (CTX_data_main(state.context), id) {
