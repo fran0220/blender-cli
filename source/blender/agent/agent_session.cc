@@ -271,7 +271,7 @@ int session_serve(
         transport.answer(request, result);
         state.last_request = Session::Clock::now();
         if (!closing && state.dirty &&
-            state.last_request - state.last_write >= std::chrono::seconds(2))
+            state.last_request - state.last_write >= std::chrono::seconds(5))
         {
           state.autosave_write();
         }

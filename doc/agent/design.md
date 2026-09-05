@@ -290,7 +290,7 @@ reloading, and bare save uses the current Blender filepath.
 The session maintains `<initial cwd>/.blender-cli/autosave-<pid>.blend` from
 the current agent snapshot, not unsnapshotted live edits. Snapshot creation
 (including open, successful exec and manual snapshot) and rollback mark it dirty.
-The main thread writes after queuing a response if at least two seconds have
+The main thread writes after queuing a response if at least five seconds have
 elapsed since the last write; otherwise the idle pump writes after one second
 without a request. Explicit `session save` does not trigger a snapshot or a
 pre-response autosave. A clean close deletes only that session's autosave;
@@ -298,6 +298,22 @@ crash files survive recovery and later closes. The most recent completed write
 is recoverable; this is not synchronous durability for every acknowledged edit.
 Write failures are logged and retried, without turning a successful exec into a
 failed response.
+
+Linux orb measurements (Release, xPack GCC 14.3.0, five writes each; elapsed
+decode + user-count rebuild + compressed write/rename + isolated-Main cleanup):
+
+| Snapshot | Samples (ms) | Median (ms) | Autosave bytes |
+|---|---|---|---|
+| Factory cube scene | 7.565, 7.200, 6.947, 9.996, 9.255 | 7.565 | 75,182 |
+| `primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)` — 1,002,001 vertices | 88.886, 85.532, 86.020, 90.414, 85.068 | 86.020 | 31,807,615 |
+
+An 86 ms main-thread write can delay the next queued round trip meaningfully.
+The measured policy therefore increases the busy-session interval from the
+initial two seconds to five (roughly 4.3% → 1.7% write duty at this mesh size),
+while retaining the one-second idle trigger. This reduces write frequency, not
+the maximum single-write stall; continuously busy sessions trade up to five
+seconds of unpersisted work for less interference. Large linked assets or slower
+storage can cost more. Each actual write logs its elapsed cost in `session.log`.
 
 Upstream 5.3 no longer supplies `BLO_memfile_write_file`: memfiles contain
 out-of-stream shared arrays and cannot be dumped as blend files. The agent
