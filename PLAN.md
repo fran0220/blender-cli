@@ -77,7 +77,7 @@ Metal/macOS and real-GPU Vulkan/Windows remain **unverified**.
 |---|---|
 | Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | done — real subdivide/bevel/extrude/translate, retained edit-mode flush, fallback layout, rollback and explicit GPU-selection error pass |
 | Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | done on Linux — native full render, byte equality, unchanged memfile snapshots and empty helper diff pass; product platforms unverified |
-| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | doing — converted-geometry bounds and public framing metadata implemented; bevelled-curve/Array+Displace conversion equality regressions awaiting Linux build |
+| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | done on Linux — converted-geometry bounds and public framing metadata; bevelled-curve and Array+Displace mesh conversions retain identical framing and PNG bytes. Manual mug IoU against its conversion: 0.0776149355 before → 1 after; ImageMagick bbox 466×460+23+26 in a 512 tile, visually inspected. Existing deterministic fixture hash is unchanged |
 | Geometry Nodes mesh instances retain evaluated geometry, materials and framing | done on Linux — 12 red ico instances; front white/red pixels 19,415/15,597 versus 0/0 before; temporary bounds agree with mesh vertices within 1e-5; named framing, unchanged snapshots and visually inspected front/perspective renders pass. Existing byte-identity hash remains `84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`; all four final CTests pass (278.09s) |
 | Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | done — fixed three-SUN rig and Standard/sRGB; all three tile sizes pass |
 | Passes: color, wireframe, silhouette, normal, depth | done — 2580×516 five-pass sheet, nonempty tiles, binary silhouette checks and visual inspection of beveled cube/sphere pass |
@@ -118,10 +118,16 @@ mask limitations and resizing policy are defined only in `doc/agent/design.md`.
 
 | Item | Status |
 |---|---|
-| `compare --ref --view [--metrics]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | doing — plural CLI option (no alias) and reference metadata implemented; full Linux regression pending |
-| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | doing — default bbox fitting shares observe occupancy; 20%-margin regression and explicit fit=none exact self-comparison awaiting Linux build |
-| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | doing — one-hop data.bevel_depth hints implemented with Object receiver regressions; Linux run pending |
-| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | doing — public agent module/function signatures, defaults and docstrings; unresolved paths produce ValueError without internal CLI line numbers; Linux run pending |
+| `compare --ref --view [--metrics]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | done on Linux — plural CLI option (old spelling rejected), reference metadata, all prior quality thresholds and 20-candidate fit pass; fit selects 0.60 with IoU 0.9978540444 |
+| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | done on Linux — default bbox fit shares observe occupancy; 20%-margin reference IoU 0.4352601245 with none → 0.9977926975 with bbox; exact self-comparison explicitly uses fit=none. Fitted reference reports bbox [116,23,396,488], pixel occupancy 0.908203125 |
+| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | done on Linux — one-hop data.bevel_depth hints pass for context.object and bpy.data.objects receivers; prior RNA error assertions pass |
+| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | done on Linux — agent module and all seven public helper signatures/defaults/docstrings; unsupported paths produce ValueError without internal CLI line numbers; prior RNA descriptions pass |
+
+Dogfood framing/discovery changes: full Linux profile build/install returned
+`BUILD_EXIT=0`; all four CTests passed (317.55s). The plain-mesh deterministic
+fixture retains SHA-256 `84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`:
+its actual vertex bounds agree with the previous object bounds. The fixture
+does not require a new hash. New product-platform behavior remains unverified.
 
 ## Phase 5 — size, packaging, platforms
 
