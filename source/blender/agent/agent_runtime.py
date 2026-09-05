@@ -752,10 +752,10 @@ class Session:
                      "line": getattr(error, "lineno", None) or (
                          frames[-1].lineno if frames else None)}
             if source:
-                from agent_rna import error_context
-                rna = error_context(error, *source)
-                if rna:
-                    event["rna"] = rna
+                # `rna` names the nearest valid identifier; `fix` is the corrected
+                # statement, present only when a single correction is certain.
+                from agent_rna import error_fields
+                event.update(error_fields(error, *source) or {})
             # Any module may name what failed by attaching fields to its exception.
             event.update({name: value for name, value
                           in (getattr(error, "agent_fields", None) or {}).items()
