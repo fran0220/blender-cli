@@ -66,6 +66,20 @@ def resize(rgb, width, height):
             (rgb[y1[:, None], x0] * (1 - fx) + rgb[y1[:, None], x1] * fx) * fy)
 
 
+def transform(points, matrix, rows=3):
+    """Apply a matrix to whole arrays of points, in upstream's own term order.
+
+    Blender's `mul_v3_m4v3` sums `m[0]*x + m[1]*y + m[2]*z + m[3]` in that order and
+    in single precision; keeping both makes a million points one vectorized pass
+    without moving the result off the value the per-vertex path produced.
+    """
+    matrix = np.array(matrix, dtype=np.float32)
+    columns = [points[:, 0] * matrix[row][0] + points[:, 1] * matrix[row][1] +
+               points[:, 2] * matrix[row][2] + (matrix[row][3] if matrix.shape[1] == 4 else 0)
+               for row in range(rows)]
+    return np.stack(columns, axis=1)
+
+
 @contextlib.contextmanager
 def isolated_data():
     # Delete only IDs created by this operation, even if setup/render/composition fails.
@@ -119,7 +133,7 @@ def render_scene(source, size, frame):
     background.inputs["Color"].default_value = (0.05, 0.05, 0.05, 1)
     background.inputs["Strength"].default_value = 1
 
-    points = []
+    batches = []
     objects = set()
     if frame and frame not in source.objects:
         raise KeyError(f"No framing object: {frame}")
@@ -140,13 +154,18 @@ def render_scene(source, size, frame):
         scene.collection.objects.link(copy)
         if not frame or obj.original.name == frame:
             vertices = getattr(data, "vertices", ())
-            coordinates = (vertex.co for vertex in vertices) if len(vertices) else map(Vector, obj.bound_box)
-            points.extend(instance.matrix_world @ coordinate for coordinate in coordinates)
+            if len(vertices):
+                local = np.empty(len(vertices) * 3, dtype=np.float32)
+                vertices.foreach_get("co", local)
+                local = local.reshape(-1, 3)
+            else:
+                local = np.array(obj.bound_box, dtype=np.float32)
+            batches.append(transform(local, instance.matrix_world))
             objects.add(obj.original.name)
-    if not points:
-        points = [Vector((-1, -1, -1)), Vector((1, 1, 1))]
-    low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
-    high = Vector(tuple(max(p[i] for p in points) for i in range(3)))
+    points = (np.concatenate(batches) if batches else
+              np.array(((-1, -1, -1), (1, 1, 1)), dtype=np.float32))
+    low = Vector(points.min(axis=0).tolist())
+    high = Vector(points.max(axis=0).tolist())
     center = (low + high) / 2
     radius = max((high - low).length / 2, 0.01)
     # World-space, preference-independent key/fill/rim; SUN lights are scale independent.
@@ -187,16 +206,19 @@ def aim(scene, source, view, points, center, radius):
         matrix.translation = center + direction * distance
         camera.matrix_world = matrix
         basis = camera.rotation_euler.to_matrix().transposed()
-        projected = [basis @ (point - center) for point in points]
-        camera.data.ortho_scale = max(max(abs(p.x), abs(p.y)) for p in projected) * (2 / OCCUPANCY)
+        projected = transform(points - np.array(center, dtype=np.float32), basis, rows=2)
+        camera.data.ortho_scale = float(np.abs(projected).max()) * (2 / OCCUPANCY)
         camera.data.ortho_scale = max(camera.data.ortho_scale, 0.02)
         camera.data.clip_start = max(radius * 0.001, 0.0001)
         camera.data.clip_end = distance + radius * 4
     # EEVEE Z is axial depth except for panoramic cameras, which use radial depth.
-    transform = camera.matrix_world.inverted()
-    depths = [(transform @ point).length if camera.data.type == "PANO" else -(transform @ point).z
-              for point in points]
-    return min(depths), max(max(depths), min(depths) + 0.001)
+    view = transform(points, camera.matrix_world.inverted())
+    if camera.data.type == "PANO":
+        depths = np.sqrt(view[:, 0] * view[:, 0] + view[:, 1] * view[:, 1] + view[:, 2] * view[:, 2])
+    else:
+        depths = -view[:, 2]
+    near, far = float(depths.min()), float(depths.max())
+    return near, max(far, near + 0.001)
 
 
 def wire_material():
@@ -253,11 +275,13 @@ def view_axes(view, camera):
     return axes
 
 
-def render_budget(views, size):
+def render_budget(views, size, samples):
     """One render per view at feedback size, as raw buffers rather than encoded tiles.
 
     Feedback compares consecutive states pixel by pixel and crops regions out of them,
     so it needs the arrays; counts come from the same converted geometry as `framing`.
+    The sample count is the budget's, not observation's: a delta is read for where it
+    moved, not for its finish.
     """
     source = bpy.context.scene
     if "camera" in views and source.camera is None:
@@ -265,6 +289,7 @@ def render_budget(views, size):
     tiles = {}
     with isolated_data():
         scene, points, center, radius, framing = render_scene(source, size, None)
+        scene.eevee.taa_render_samples = samples
         counts = {"objects": 0, "verts": 0, "faces": 0}
         for obj in scene.collection.objects:
             if obj.type in {"LIGHT", "CAMERA"}:
