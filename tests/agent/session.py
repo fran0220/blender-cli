@@ -73,6 +73,10 @@ def main():
         def execute(code, **kwargs):
             return call("exec", "-c", code, **kwargs)
 
+        def quiet():
+            """Feedback has its own test; this one measures the channel itself."""
+            call("session", "feedback", "perception=false", "objective=false", "image.mode=off")
+
         def history():
             return call("session", "history")["history"]
 
@@ -89,6 +93,7 @@ def main():
             raise AssertionError(f"Idle autosave did not update: {path}")
 
         opened = call("session", "open")
+        quiet()
         endpoint = opened["socket"]
         assert endpoint == str(root / ".blender-cli" / "session.sock"), opened
         local_endpoint = str(Path(endpoint).relative_to(root))
@@ -155,13 +160,14 @@ len(mesh.vertices)
             assert execute("timer_fired")["value"] == "True"
 
             # The feedback policy is per session and is what `session status` reports.
-            policy = call("session", "feedback", "image.mode=off", "perception=false")["feedback"]
-            assert policy["image"]["mode"] == "off" and policy["perception"] is False, policy
+            policy = call("session", "feedback", "image.mode=full", "perception=true")["feedback"]
+            assert policy["image"]["mode"] == "full" and policy["perception"] is True, policy
             status = call("session", "status")
             assert status["feedback"] == policy and status["targets"] == [], status
             assert status["session"] == opened["session"] and status["recovered_from"] is None
             assert call("session", "feedback", "image.mode=delta",
                         "perception=true")["feedback"] == call("session", "status")["feedback"]
+            quiet()
 
             # Cancellation is on a second connection while the original is executing, and
             # is answered at once instead of queueing behind the running request.
@@ -200,8 +206,10 @@ len(mesh.vertices)
                                   "code": "bridged = 'yes'\nbridged"}) + "\n")
             assert bridged.returncode == 0, bridged
             streamed = [json.loads(line) for line in bridged.stdout.splitlines() if line.strip()]
-            assert [event["event"] for event in streamed] == ["value", "diff", "done"], streamed
-            assert streamed[0]["value"] == "'yes'", streamed
+            order = ["value", "diff", "perception", "objective", "image", "done"]
+            ranked = [order.index(event["event"]) for event in streamed]
+            assert ranked == sorted(ranked) and streamed[-1]["event"] == "done", streamed
+            assert streamed[0] == {"id": 9200, "event": "value", "value": "'yes'"}, streamed
             assert execute("bridged")["value"] == "'yes'", "repl shares the session namespace"
 
             failed = execute("raise RuntimeError('intentional')", ok=False)
@@ -212,14 +220,15 @@ len(mesh.vertices)
             blend = root / "out.blend"
             call("session", "save", "--file", blend)
             assert blend.is_file()
-            # Timing includes process creation, transport, execution, snapshot and JSON printing.
+            # Timing includes process creation, transport, execution, snapshot and JSON
+            # printing, with the feedback budget off: this is the channel's own cost.
             samples = []
             for _ in range(20):
                 start = time.perf_counter()
                 execute("1 + 1")
                 samples.append((time.perf_counter() - start) * 1000)
             median = statistics.median(samples)
-            print(f"20 CLI round trips (ms): median={median:.3f} min={min(samples):.3f} max={max(samples):.3f}", flush=True)
+            print(f"20 CLI round trips, feedback off (ms): median={median:.3f} min={min(samples):.3f} max={max(samples):.3f}", flush=True)
             if sys.platform.startswith("linux"):
                 assert median < 10, samples
         finally:
@@ -231,6 +240,7 @@ len(mesh.vertices)
         fallback = execute("'x' in globals()")
         assert fallback["value"] == "False" and fallback["diff"]["snapshot"] is None, fallback
         call("session", "open", "--file", blend)
+        quiet()
         try:
             assert vertices() == 8
         finally:
@@ -238,6 +248,7 @@ len(mesh.vertices)
         call("session", "open", "--file", root / "absent.blend", ok=False)
         # A native call cannot be preempted; close still has a bounded forced-exit path.
         call("session", "open")
+        quiet()
         with connection(local_endpoint) as hung:
             request = {"id": 9300, "op": "exec", "code": "import time; time.sleep(30)"}
             hung.sendall((json.dumps(request) + "\n").encode())
@@ -245,6 +256,7 @@ len(mesh.vertices)
             assert call("session", "close")["forced"] is True
         assert not Path(endpoint).exists()
         crashed = call("session", "open")
+        quiet()
         autosave = root / ".blender-cli" / f'autosave-{crashed["session"]}.blend'
         first_write = wait_autosave(autosave)
         execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(); "
@@ -302,6 +314,7 @@ len(mesh.vertices)
             assert dead["error"]["type"] == "SessionError" and "exited unexpectedly" in dead["error"]["message"], dead
             assert dead["autosave"] == str(autosave), dead
         recovered = call("session", "open", "--file", autosave)
+        quiet()
         assert recovered["previous_autosave"] == str(autosave), recovered
         assert recovered["recovered_from"] == "autosave", recovered
         with autosave.with_suffix(".json").open() as stream:
@@ -330,6 +343,7 @@ len(mesh.vertices)
         cube, = call("inspect", "--file", autosave)["objects"]
         assert cube["name"] == "RecoveredCube", cube
         stale = call("session", "open")
+        quiet()
         stale_autosave = root / ".blender-cli" / f'autosave-{stale["session"]}.blend'
         wait_autosave(stale_autosave)
         execute("import os; os._exit(3)", ok=False)
@@ -341,10 +355,12 @@ len(mesh.vertices)
         assert not (root / ".blender-cli" / "session.pid").exists()
         assert not Path(endpoint).exists(), "Daemon cwd changes must not redirect endpoint cleanup"
         saved = call("session", "open", "--file", root / "explicit.blend")
+        quiet()
         saved_autosave = root / ".blender-cli" / f'autosave-{saved["session"]}.blend'
         wait_autosave(saved_autosave)
         execute("import os; os._exit(3)", ok=False)
         call("session", "open", "--file", saved_autosave)
+        quiet()
         with saved_autosave.with_suffix(".json").open() as stream:
             metadata = json.load(stream)
         assert metadata["filepath"] == str(root / "explicit.blend"), metadata
@@ -356,6 +372,7 @@ len(mesh.vertices)
 
         # Labels are synchronous disk checkpoints, survive stale close, and resolve newest-first.
         call("session", "open")
+        quiet()
         execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add()")
         first_label = call("session", "snapshot", "--label", "durable-fit")["snapshot"]
         execute("bpy.ops.object.delete(); bpy.ops.mesh.primitive_uv_sphere_add(); agent.snapshot('durable-fit')")
@@ -370,6 +387,7 @@ len(mesh.vertices)
         assert call("session", "close")["stale"]
         assert index_path.read_bytes() == index_before
         call("session", "open")
+        quiet()
         durable_history = [event for event in history() if event["label"] == "durable-fit"]
         assert [event["snapshot"] for event in durable_history] == [first_label, last_label]
         assert all(event["durable"] and event["bytes"] > 0 for event in durable_history)
@@ -385,6 +403,7 @@ len(mesh.vertices)
         assert index_path.read_bytes() == index_before
         if sys.platform != "win32":
             faulted = call("session", "open", "--file", saved_autosave)
+            quiet()
             assert faulted["previous_autosave"] == str(saved_autosave), faulted
             crash_script = root / "fault.py"
             crash_script.write_text("# checkpoint crash regression\nimport os, signal; os.kill(os.getpid(), signal.SIGSEGV)\n")
@@ -399,6 +418,7 @@ len(mesh.vertices)
         # The unpatched 128px and 512px paths both leak ~1810 VMAs per render and die at ~35.
         require_device(executable)
         call("session", "open")
+        quiet()
         try:
             result = execute("""
 bpy.ops.wm.read_factory_settings(use_empty=True)

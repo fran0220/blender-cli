@@ -29,6 +29,8 @@ DEFS = {
             "pass": {"type": "string", "default": "color", "doc": "Render pass of the image."},
             "size": {"type": "integer", "minimum": 1, "default": 256,
                      "doc": "Budget tile size in pixels."},
+            "samples": {"type": "integer", "minimum": 1, "default": 8,
+                        "doc": "Render samples for a feedback view; fewer than an observation."},
             "overlay": {"type": "boolean", "default": True,
                         "doc": "Emit a before/after overlay of the changed region."},
             "inline": {"type": "boolean", "default": False,

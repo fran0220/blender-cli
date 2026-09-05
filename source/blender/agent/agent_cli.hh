@@ -155,7 +155,8 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
       parsed.request["record"] = false;
     }
     else if (op == "exec" && arg == "--image") {
-      cli_assign(parsed.request, "feedback.image.mode", value("--image"));
+      /* A per-request `feedback` is an image policy, so the key is its `mode`. */
+      cli_assign(parsed.request, "feedback.mode", value("--image"));
     }
     else if (op == "inspect" && arg == "--object") {
       parsed.request["object"] = value("--object");

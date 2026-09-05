@@ -122,7 +122,8 @@ def check_value(where, spec, value):
     if kind is None:
         return
     if (isinstance(value, bool) != (kind == "boolean")) or not isinstance(value, TYPES[kind]):
-        raise ProtocolError(f"{where} must be a {kind}, not {type(value).__name__}")
+        article = "an" if kind[0] in "aeiou" else "a"
+        raise ProtocolError(f"{where} must be {article} {kind}, not {type(value).__name__}")
     if "enum" in spec and value not in spec["enum"]:
         raise ProtocolError(f"{where} must be one of: "
                             f"{', '.join(str(item) for item in spec['enum'])}")
@@ -515,7 +516,8 @@ def fresh_namespace():
 def default_feedback():
     return {"perception": True, "objective": True,
             "image": {"mode": "delta", "threshold": 0.002, "views": ["front"],
-                      "pass": "color", "size": 256, "overlay": True, "inline": False}}
+                      "pass": "color", "size": 256, "samples": 8, "overlay": True,
+                      "inline": False}}
 
 
 class LogStream(io.TextIOBase):

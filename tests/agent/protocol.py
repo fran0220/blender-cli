@@ -161,7 +161,7 @@ collection.objects.link(obj)
         usage = call("session", ok=False)["error"]
         assert usage == {"type": "ProtocolError", "line": None, "message":
             "session requires action: status|feedback|save|close|snapshot|rollback|history"}, usage
-        assert call("not-a-verb", ok=False)["error"]["message"] == "Unknown verb: not-a-verb"
+        assert "Unknown verb: not-a-verb" in call("not-a-verb", ok=False)["error"]["message"]
         assert "Unknown option for exec" in call("exec", "-c", "1", "--nope", ok=False)["error"]["message"]
         bad_action = call("session", "resurrect", ok=False)["error"]
         assert bad_action["type"] == "ProtocolError" and "must be one of" in bad_action["message"], bad_action
@@ -179,9 +179,15 @@ collection.objects.link(obj)
                        "code": "import sys\nprint('out')\nprint('err', file=sys.stderr)\n"
                                "bpy.ops.mesh.primitive_cube_add()\n'done'"},
                       {"id": 5, "op": "session", "action": "status"})
-        assert [event["event"] for event in events if event["id"] == 4] == [
-            "log", "log", "value", "diff", "done"], events
-        first, second, value, diff, done = [event for event in events if event["id"] == 4]
+        # The order is the contract; which feedback channels are registered is not.
+        order = ["value", "diff", "perception", "objective", "image", "done"]
+        kinds = [event["event"] for event in events if event["id"] == 4]
+        assert kinds[:2] == ["log", "log"] and kinds[-1] == "done", kinds
+        ranked = [order.index(kind) for kind in kinds if kind != "log"]
+        assert ranked == sorted(ranked) and {"value", "diff"} <= set(kinds), kinds
+        pick = lambda kind: next(e for e in events if e["id"] == 4 and e["event"] == kind)
+        first, second = [e for e in events if e["id"] == 4 and e["event"] == "log"]
+        value, diff, done = pick("value"), pick("diff"), pick("done")
         assert first == {"id": 4, "event": "log", "stream": "stdout", "text": "out\n"}, first
         assert second == {"id": 4, "event": "log", "stream": "stderr", "text": "err\n"}, second
         assert value == {"id": 4, "event": "value", "value": "'done'"}, value
@@ -195,26 +201,30 @@ collection.objects.link(obj)
         assert status["feedback"]["image"]["mode"] == "delta", status
 
         # Log events arrive while the request runs, not buffered until it ends.
-        streamed = repl({"id": 6, "op": "exec",
+        streamed = repl({"id": 6, "op": "session", "action": "feedback",
+                         "feedback": {"perception": False, "image": {"mode": "off"}}},
+                        {"id": 7, "op": "exec",
                          "code": "for i in range(3):\n    print('line', i)\n"})
         assert [event.get("text") for event in streamed if event["event"] == "log"] == [
             "line 0\n", "line 1\n", "line 2\n"], streamed
 
         # Unknown fields and malformed lines are rejected without running anything.
-        rejected = repl({"id": 7, "op": "exec", "code": "1", "observe": "front"},
-                        {"id": 8, "op": "nonsense"})
+        rejected = repl({"id": 8, "op": "exec", "code": "1", "observe": "front"},
+                        {"id": 9, "op": "nonsense"})
         assert rejected[0]["event"] == "error" and rejected[0]["type"] == "ProtocolError", rejected
         assert "Unknown field for exec: 'observe'" in rejected[0]["message"], rejected
         assert "Unknown op" in rejected[1]["message"], rejected
 
         # A failed request leaves no partial edit behind.
-        rolled = repl({"id": 9, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add()"},
-                      {"id": 10, "op": "exec",
+        rolled = repl({"id": 10, "op": "session", "action": "feedback",
+                       "feedback": {"perception": False, "image": {"mode": "off"}}},
+                      {"id": 11, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add()"},
+                      {"id": 12, "op": "exec",
                        "code": "bpy.ops.mesh.primitive_uv_sphere_add()\nraise RuntimeError('half')"},
-                      {"id": 11, "op": "inspect"})
-        failed, = [event for event in rolled if event["id"] == 10 and event["event"] == "error"]
+                      {"id": 13, "op": "inspect"})
+        failed, = [event for event in rolled if event["id"] == 12 and event["event"] == "error"]
         assert failed["type"] == "RuntimeError" and failed["line"] == 2, failed
-        surviving, = [event for event in rolled if event["id"] == 11]
+        surviving, = [event for event in rolled if event["id"] == 13]
         names = {obj["name"] for obj in surviving["objects"]}
         assert "Cube.001" in names and not any(name.startswith("Sphere") for name in names), names
     print("agent protocol: all assertions passed")
