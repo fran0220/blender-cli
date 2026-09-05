@@ -28,7 +28,9 @@ def smoke(executable, root, image, reference=None, gpu=True):
     call("session", "open")
     try:
         call("exec", "-c", "import bpy, agent, agent_runtime, agent_observe, agent_compare, agent_rna; "
-             "bpy.data.objects['Cube'].scale.x = 0.6")
+             "bpy.data.objects['Cube'].scale.x = 0.6; "
+             "bpy.context.scene.render.engine = 'CYCLES'; "
+             "bpy.context.scene.render.engine = 'BLENDER_EEVEE'")
         result = call("inspect", "--object", "Cube")
         assert result["objects"][0]["mesh"]["vertices"] == 8, result
         call("describe", "bpy.types.Object")

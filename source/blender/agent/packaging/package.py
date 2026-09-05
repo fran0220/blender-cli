@@ -120,6 +120,15 @@ def package(install, output, platform, archive):
             shutil.rmtree(path)
 
     addons = version_dir / "scripts" / "addons_core"
+    # These are imported unconditionally by upstream's factory startup, or
+    # register the retained Cycles engine. Preserve their original module names
+    # and code in the standard module search path, not the optional add-on tree.
+    report["relocated"] = []
+    for name in ("bl_pkg", "io_anim_bvh", "io_curve_svg", "io_mesh_uv_layout", "cycles", "pose_library"):
+        path = addons / name
+        destination = version_dir / "scripts" / "modules" / name
+        report["relocated"].append({"module": name, "bytes": size(path)})
+        shutil.move(str(path), destination)
     keep = {"io_scene_gltf2", "io_scene_fbx", "rigify"}
     for path in sorted(addons.iterdir()):
         if path.name not in keep:
@@ -129,6 +138,8 @@ def package(install, output, platform, archive):
     assert len(stdlibs) == 1, stdlibs
     for name in ("test", "idlelib", "tkinter", "ensurepip", "lib2to3", "turtledemo"):
         remove(stdlibs[0] / name)
+    for path in sorted(stdlibs[0].glob("config-*/*.a")):
+        remove(path)
     # Upstream's macOS/Windows Python install copies VFX SDK bindings even when
     # those engines are disabled. None are dependencies of the kept add-ons or
     # agent modules. Keep requests/zstandard used by upstream Python modules.
@@ -144,6 +155,13 @@ def package(install, output, platform, archive):
     for path in sorted((data / "fonts").iterdir()):
         if path.name != "Inter.woff2":
             remove(path)
+    # BLF initializes both filenames even in background mode. One font face,
+    # two names; ZIP cannot preserve links, so Windows carries a second copy.
+    mono = data / "fonts" / "DejaVuSansMono.woff2"
+    if platform == "windows-x64":
+        shutil.copy2(data / "fonts" / "Inter.woff2", mono)
+    else:
+        mono.symlink_to("Inter.woff2")
     for path in sorted((data / "studiolights").rglob("*")):
         if path.is_file() and path.relative_to(data / "studiolights").as_posix() != "studio/basic.sl":
             remove(path)
@@ -163,6 +181,22 @@ def package(install, output, platform, archive):
     # Compilation caches are regenerated when needed, never release content.
     for path in sorted(output.rglob("__pycache__")):
         if path.exists():
+            remove(path)
+    # Build helpers share bin/ with the default CMake install prefix. They are
+    # not runtime executables. Preserve licenses and the upstream engine itself.
+    for name in ("datatoc", "makesdna", "makesrna", "shader_tool", "zstd_compress",
+                 "blender-launcher", "blender.desktop", "blender.svg", "blender-symbolic.svg"):
+        for suffix in ("", ".exe") if platform == "windows-x64" else ("",):
+            remove(output / (name + suffix))
+    for path in sorted(output.glob("*.pdb")):
+        remove(path)
+    # Upstream bundles all precompiled shared libraries regardless of disabled
+    # profile options. These correspond to explicitly disabled engines/backends,
+    # whose separate Python bindings were removed above. Retain SYCL/UR: the
+    # pinned Embree dependency links them even with Cycles GPU devices disabled.
+    libraries = resources / "lib" if platform != "windows-x64" else output
+    for path in sorted(libraries.iterdir()):
+        if re.match(r"(?:lib)?(?:usd|osl|MaterialX|ceres|hiprt|openxr|SDL)", path.name):
             remove(path)
     result = subprocess.check_output([str(executable), "--version"], text=True)
     version = re.search(r"^blender-cli (\S+)$", result, re.M)[1]
