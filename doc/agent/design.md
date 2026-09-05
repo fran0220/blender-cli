@@ -146,13 +146,21 @@ function.
 {"perception": true,
  "objective":  true,
  "image": {"mode": "delta|full|off", "threshold": 0.002, "views": ["front"],
-           "pass": "color", "size": 256, "overlay": true}}
+           "pass": "color", "size": 256, "samples": 8, "overlay": true,
+           "inline": false}}
 ```
 
 Defaults are the values above. `threshold` is the fraction of changed
 pixels in the budget view below which no `image` event is sent. `exec` and
 `program` requests may carry `"feedback"` to override the image policy for
 one request; nothing else is per-request.
+
+`samples` is the budget render's EEVEE sample count, deliberately below
+observation's fixed 32: a delta is read for where the picture moved, not for
+its finish, and samples are what the render's cost is made of. Observation
+keeps 32 and stays byte-deterministic; the budget view is deterministic at
+its own sample count, so an unchanged scene still produces an identical
+buffer and a zero delta.
 
 ### Perception event
 
@@ -195,6 +203,12 @@ to the silhouette and is reported as `null` rather than the trivial 1.0
 (`front` measures x and z). Non-axis-aligned views (`persp`, `camera`)
 report `null` for all three. Perception costs no render beyond the budget
 views, whose buffers the image provider reuses.
+
+An action that changed no datablock and left the same snapshot cannot have
+changed the picture, so it costs no render at all: perception answers from
+the remembered buffers with zero deltas, and no image is sent. The snapshot
+is part of that test because a rollback inside the executed code moves
+`Main` without leaving a diff behind.
 
 `agent.perceive(view, size)` returns this payload without the `event` key
 and without advancing the remembered state, so an action's own

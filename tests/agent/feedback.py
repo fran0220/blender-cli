@@ -19,13 +19,18 @@ RENDER = """
 import time
 from agent_observe import render_budget
 _start = time.perf_counter()
-render_budget(['front'], 256)
+render_budget(['front'], 256, 8)
 (time.perf_counter() - _start) * 1000
 """
 
 SCENE = """
 bpy.ops.mesh.primitive_ico_sphere_add(radius=0.5, location=(-3, 0, 0))
 bpy.ops.mesh.primitive_ico_sphere_add(radius=0.5, location=(3, 0, 0))
+"""
+
+NUDGE = """
+bpy.data.objects['Cube'].location.x += 0.001
+bpy.data.objects['Cube'].location.x -= 0.001
 """
 
 
@@ -104,6 +109,7 @@ def main():
             assert defaults["image"]["size"] == 256, defaults
             assert defaults["image"]["overlay"] is True, defaults
             assert defaults["image"]["inline"] is False, defaults
+            assert defaults["image"]["samples"] == 8, defaults
 
             # An agent that has seen nothing gets a whole frame, and no delta to compare with.
             first = execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
@@ -137,7 +143,8 @@ def main():
             print("cube add images:", json.dumps(added["images"]), flush=True)
 
             # Anchors fix the automatic framing so a later move is a local change, not a rescale.
-            counts = execute(SCENE)["perception"]
+            anchored = execute(SCENE)
+            counts = anchored["perception"]
             state = call("inspect")
             assert counts["objects"] == len(state["objects"]), (counts, state["scene"])
             assert counts["verts"] == sum(obj["mesh"]["vertices"] for obj in state["objects"]), counts
@@ -150,13 +157,19 @@ def main():
             assert set(counts["changed"]["objects"]) == {"Icosphere", "Icosphere.001"}, counts
 
             # An action that changes nothing still reports perception, with zero deltas.
+            # It also cannot have changed the picture, so it reuses the buffers instead
+            # of rendering them again, and the facts it reports are the rendered ones.
             unchanged = execute("pass")
             same = unchanged["perception"]
             assert same["changed"] == {"objects": [], "view": "front", "region": None,
                                        "fraction": 0.0, "silhouette_delta": 0.0}, same
             assert "images" not in unchanged, unchanged
-            assert same["symmetry"] == counts["symmetry"], (same, counts)
+            assert ({key: value for key, value in same.items() if key != "changed"} ==
+                    {key: value for key, value in counts.items() if key != "changed"}), (same, counts)
+            assert unchanged["ms"] < anchored["ms"] / 10, (unchanged["ms"], anchored["ms"])
             print("unchanged perception:", json.dumps(same), flush=True)
+            print("settled action ms against the rendering one:", unchanged["ms"],
+                  anchored["ms"], flush=True)
 
             # Moving inside the anchors' bounds leaves the framing alone, so this is a
             # local change: the cube's old and new pixels, and nothing else.
@@ -245,15 +258,18 @@ def main():
             assert [event["kind"] for event in recovered["images"]] == ["delta", "overlay"], recovered
             assert execute("pass")["perception"]["changed"]["fraction"] == 0.0
 
-            costs = {"cube": [execute("pass")["ms"] for _ in range(3)],
-                     "cube render": ast.literal_eval(execute(RENDER)["value"])}
+            # NUDGE changes a datablock and returns it, so it renders but shows nothing.
+            costs = {"cube settled": [execute("pass")["ms"] for _ in range(3)],
+                     "cube rendered": [execute(NUDGE)["ms"] for _ in range(3)],
+                     "cube render only": ast.literal_eval(execute(RENDER)["value"])}
             grid = execute("bpy.ops.object.select_all(action='SELECT')\n"
                            "bpy.ops.object.delete(use_global=False)\n"
                            "bpy.ops.mesh.primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)\n"
                            "bpy.context.object.rotation_euler[0] = 0.6\n")
             assert grid["perception"]["verts"] == 1002001, grid["perception"]
-            costs["grid"] = [execute("pass")["ms"] for _ in range(3)]
-            costs["grid render"] = ast.literal_eval(execute(RENDER)["value"])
+            costs["grid settled"] = [execute("pass")["ms"] for _ in range(3)]
+            costs["grid rendered"] = [execute(NUDGE.replace("Cube", "Grid"))["ms"] for _ in range(3)]
+            costs["grid render only"] = ast.literal_eval(execute(RENDER)["value"])
             print("action ms including one feedback cycle:", json.dumps(costs), flush=True)
         finally:
             call("session", "close")

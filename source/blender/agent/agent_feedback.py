@@ -31,11 +31,18 @@ OVERLAY = {"before": (255, 0, 0), "after": (0, 255, 255),
            "both": (255, 255, 255), "neither": (32, 32, 32)}
 
 
+UNCHANGED = {"region": None, "fraction": 0.0, "silhouette_delta": 0.0}
+
+
 class State:
     """What the agent last saw, per view, plus this request's render."""
 
     def __init__(self):
         self.views = {}
+        self.framing = None
+        self.counts = None
+        self.snapshot = None
+        self.budget = None
         self.pending = None
 
 
@@ -109,22 +116,46 @@ def perception(session, view, tile, framing, counts, change):
             "framing": framing, "changed": changed, "symmetry": symmetry(tile)}
 
 
+def settled(session, views, budget):
+    """True when this request cannot have changed the picture the agent already has.
+
+    The picture is a function of Main. The diff provider has already established
+    whether any datablock changed and left the state it settled on in
+    `session.current`, so an action that changed nothing, at the same budget, is
+    answered from the buffers instead of rendering them again. The snapshot is
+    part of the test because an in-code rollback moves Main without leaving a diff.
+    """
+    return (session.last_diff is not None and not any(session.last_diff.values()) and
+            STATE.snapshot == session.current and STATE.budget == budget and
+            all(view in STATE.views for view in views))
+
+
 def sample(session):
-    """Render the budget views once for this request and advance the remembered state."""
+    """Answer this request's budget views, rendering them only if the picture can have moved."""
     if STATE.pending is not None:
         return STATE.pending
     policy = session.request_feedback
     views = list(dict.fromkeys(policy["image"]["views"]))
+    budget = (policy["image"]["size"], policy["image"]["samples"])
     previous = STATE.views
+    if settled(session, views, budget):
+        STATE.pending = {
+            "policy": policy, "views": views, "tiles": previous, "previous": previous,
+            "changes": {view: dict(UNCHANGED) for view in views},
+            "perception": perception(session, views[0], previous[views[0]], STATE.framing,
+                                     STATE.counts, dict(UNCHANGED)),
+        }
+        return STATE.pending
     try:
-        tiles, framing, counts = render_budget(views, policy["image"]["size"])
+        tiles, framing, counts = render_budget(views, *budget)
     except BaseException as error:
         STATE.pending = {"error": f"{type(error).__name__}: {error}", "policy": policy,
                          "views": views}
         raise
-    STATE.views = tiles
     changes = {view: difference(previous[view], tiles[view]) if comparable(previous, tiles, view)
                else None for view in views}
+    STATE.views, STATE.framing, STATE.counts = tiles, framing, counts
+    STATE.snapshot, STATE.budget = session.current, budget
     STATE.pending = {
         "policy": policy, "views": views, "tiles": tiles, "previous": previous, "changes": changes,
         "perception": perception(session, views[0], tiles[views[0]], framing, counts,
@@ -139,7 +170,7 @@ def perceive(session, view="front", size=256):
         raise ValueError(f"Unknown view: {view}")
     if not isinstance(size, int) or size < 1:
         raise ValueError("size must be a positive integer")
-    tiles, framing, counts = render_budget([view], size)
+    tiles, framing, counts = render_budget([view], size, session.request_feedback["image"]["samples"])
     change = (difference(STATE.views[view], tiles[view])
               if comparable(STATE.views, tiles, view) else None)
     return perception(session, view, tiles[view], framing, counts, change)
