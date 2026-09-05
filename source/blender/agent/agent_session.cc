@@ -17,6 +17,7 @@
 #include "BKE_undo_system.hh"
 #include "BKE_wm_runtime.hh"
 #include "BLI_listbase.hh"
+#include "BLI_string.hh"
 #include "BLI_timer.hh"
 #include "BLO_readfile.hh"
 #include "BLO_undofile.hh"
@@ -67,6 +68,8 @@ struct Session {
         BLI_addhead(&data->main->scenes, data->curscene);
       }
       BlendFileWriteParams write_params{};
+      /* Recovery is also opened as an ordinary --file, not just WM's recovery operator. */
+      write_params.remap_mode = BLO_WRITE_PATH_REMAP_ABSOLUTE;
       success = BLO_write_file(data->main,
                                autosave.string().c_str(),
                                G.fileflags | G_FILE_RECOVER_WRITE | G_FILE_COMPRESS,
@@ -121,6 +124,8 @@ static PyObject *snapshot_create(PyObject *self, PyObject *)
   ED_editors_flush_edits(CTX_data_main(state.context));
   /* Independent memfiles retain every branch without sharing chunk ownership with the UI stack. */
   auto *data = BKE_memfile_undo_encode(CTX_data_main(state.context), nullptr);
+  /* Upstream only fills this field for disk undo. Agent memfiles retain their source base path. */
+  STRNCPY(data->filepath, BKE_main_blendfile_path(CTX_data_main(state.context)));
   PyObject *hashlib = PyImport_ImportModule("hashlib");
   PyObject *hash = hashlib ? PyObject_CallMethod(hashlib, "sha256", nullptr) : nullptr;
   Py_XDECREF(hashlib);
@@ -293,11 +298,12 @@ int session_serve(
     Py_DECREF(agent);
   }
   Py_DECREF(runtime);
-  std::filesystem::remove(path);
-  std::filesystem::remove(directory / "session.pid");
-  std::filesystem::remove(directory / "session.lock");
   if (status == 0) {
+    std::filesystem::remove(path);
+    std::filesystem::remove(directory / "session.pid");
+    std::filesystem::remove(directory / "session.lock");
     std::filesystem::remove(state.autosave);
+    std::filesystem::remove(state.autosave.string() + "@");
   }
   return status;
 }

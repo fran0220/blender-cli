@@ -204,8 +204,8 @@ len(mesh.vertices)
         wait_autosave(autosave, first_write)
         assert execute("(bpy.data.filepath, bpy.data.is_dirty) == saved_state and held.location.x == 9")["value"] == "True"
         # Rollback itself dirties the autosave, even without another successful exec.
-        call("session", "rollback", "~1")
         stamp = autosave.stat().st_mtime_ns
+        call("session", "rollback", "~1")
         wait_autosave(autosave, stamp)
         if sys.platform == "win32":
             import ctypes
