@@ -16,7 +16,7 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 | GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
 | Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
-| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | doing — native gate launched in [run 33964004642](https://github.com/fran0220/blender-cli/actions/runs/33964004642); configure/build conclusions pending |
+| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | done — [run 33964004642](https://github.com/fran0220/blender-cli/actions/runs/33964004642): AppleClang 17.0.0 and MSVC 19.44.35228 configure and build bf_agent + blender-cli successfully, with target-local fatal warnings |
 
 ## Phase 1 — a process that answers
 
@@ -129,7 +129,7 @@ macOS arm64 and Windows x64.
 
 | Item | Status |
 |---|---|
-| Configure and build the agent profile on macOS arm64 and Windows x64 | doing — two-tier Actions workflow landed; native gate in progress, full build pending |
+| Configure and build the agent profile on macOS arm64 and Windows x64 | doing — native gates green; [full run 33965180310](https://github.com/fran0220/blender-cli/actions/runs/33965180310) dispatched for full build, tests and packaging |
 | Per-component size measurement; adjust the profile from numbers, not guesses | doing — supervised Linux install build in progress |
 | Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | unverified — copy-only packaging and six-verb before/after test landed; awaiting install to prove removals and Standard byte equality |
 | Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | unverified — archive stage landed; macOS uses plain bin/ + Resources/ preserving upstream relative lookup; unsigned, no notarization |
@@ -142,9 +142,15 @@ macOS arm64 and Windows x64.
 - An MCP adapter is added only when a shell-less host is actually in use.
   Recording that host here comes before any adapter code.
 
-## Open decisions
+## Resolved decisions
 
-- Whether `WITH_OPENVDB` stays in the profile (voxel remesh needs it; it is
-  large). Default: stays until Phase 5 numbers say otherwise.
-- Whether Cycles CPU stays for baking or Phase 5 shows EEVEE baking covers
-  the need. Default: stays.
+- `WITH_OPENVDB` stays: voxel remesh is required. Its separately shipped Python
+  SDK is trimmed, not the modelling implementation. Measurements and reasoning
+  are in `doc/agent/build-profile.md`.
+- Cycles CPU and Embree stay: EEVEE does not replace object/texture baking.
+  Correct the profile's stale option spelling to upstream's `WITH_EMBREE`.
+  Preserve Cycles' Python engine registration during packaging.
+- Packaging retains factory-required Python modules outside `addons_core`, a
+  monospaced filename alias for one font face, and the real startup AgX transform
+  beside Standard. Literal deletion broke one-shot JSON or engine registration;
+  do not patch upstream Python or disguise AgX as Standard to satisfy a size goal.
