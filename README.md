@@ -8,7 +8,8 @@ See 'release/text/readme.html' for the end user read-me.
 ## blender-cli agent builds
 
 This fork serves Python requests through six CLI verbs, not the Blender GUI.
-See [the CLI contract](doc/agent/design.md) and [build and packaging details](doc/agent/build-profile.md).
+Start with [the agent quick start](doc/agent/usage.md); see
+[the CLI contract](doc/agent/design.md) and [build and packaging details](doc/agent/build-profile.md).
 Product artifacts are `blender-cli-<version>-macos-arm64.tar.zst` and
 `blender-cli-<version>-windows-x64.zip`; Linux archives are development evidence only.
 Check [PLAN.md](PLAN.md) for which platforms have actually passed verification.
