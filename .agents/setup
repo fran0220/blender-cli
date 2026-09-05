@@ -14,7 +14,8 @@ echo '[setup] Checking Debian build prerequisites'
 packages=(build-essential clang-19 clang-format-19 clangd-19 lld-19 cmake ninja-build
   ccache curl ca-certificates git-lfs pkg-config python3 libx11-dev libxxf86vm-dev libxcursor-dev
   libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev
-  wayland-protocols libdbus-1-dev libgl-dev libegl-dev)
+  wayland-protocols libdbus-1-dev libgl-dev libegl-dev
+  libgl1-mesa-dri libegl-mesa0 mesa-vulkan-drivers)
 missing=()
 for package in "${packages[@]}"; do
   if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then

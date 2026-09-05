@@ -40,8 +40,11 @@ failed build repeatedly. Read `build/orb/build.log` and service logs for status.
 does not depend on shell-variable expansion by the service manager.
 Compilation can be expensive; 12 jobs fits a 16-core / 31 GB orb.
 Run selected tests with `ctest --test-dir build/orb --output-on-failure -R PATTERN`.
-The tracked `tests/files` LFS fixtures are included. GPU execution requires GPU
-hardware and is not provided by setup.
+The tracked `tests/files` LFS fixtures are included. Setup explicitly installs
+`libgl1-mesa-dri`, `libegl-mesa0`, and `mesa-vulkan-drivers`: background EEVEE
+can render using Mesa lavapipe's software Vulkan device without physical GPU
+hardware. This is Linux development evidence, not Metal/macOS or real-GPU
+Vulkan/Windows verification.
 
 ## Setup verification
 
