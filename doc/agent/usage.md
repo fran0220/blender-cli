@@ -126,7 +126,9 @@ blender-cli session close --json
 ```
 
 Recovery restores the last completed autosave, not the failed call or Python
-variables. If no autosave is reported, reopen an explicit save, or discard the
+variables. Keep its adjacent `.json` sidecar: session recovery uses it to restore
+the original live filepath and dirty state, not adopt the autosave as a save
+destination. If no autosave is reported, reopen an explicit save, or discard the
 dead session with `session close`. Closing a dead session keeps its crash file;
 a clean close removes the new live session's autosave, not older crash files.
 

@@ -249,6 +249,11 @@ len(mesh.vertices)
             assert dead["autosave"] == str(autosave), dead
         recovered = call("session", "open", "--file", autosave)
         assert recovered["previous_autosave"] == str(autosave), recovered
+        with autosave.with_suffix(".json").open() as stream:
+            metadata = json.load(stream)
+        assert metadata["filepath"] == "", metadata
+        assert execute(f"(bpy.data.filepath, bpy.data.is_dirty) == {metadata['filepath'], metadata['dirty']!r}")["value"] == "True"
+        call("session", "save", ok=False)  # Must not overwrite the recovery file.
         cube, = call("inspect")["objects"]
         assert cube["name"] == "RecoveredCube" and cube["location"][0] == 0, cube
         new_autosave = root / ".blender-cli" / f'autosave-{recovered["session"]}.blend'
@@ -280,6 +285,19 @@ len(mesh.vertices)
         assert not (root / ".blender-cli" / "session.lock").exists()
         assert not (root / ".blender-cli" / "session.pid").exists()
         assert not Path(endpoint).exists(), "Daemon cwd changes must not redirect endpoint cleanup"
+        saved = call("session", "open", "--file", root / "explicit.blend")
+        saved_autosave = root / ".blender-cli" / f'autosave-{saved["session"]}.blend'
+        wait_autosave(saved_autosave)
+        execute("import os; os._exit(3)", ok=False)
+        call("session", "open", "--file", saved_autosave)
+        with saved_autosave.with_suffix(".json").open() as stream:
+            metadata = json.load(stream)
+        assert metadata["filepath"] == str(root / "explicit.blend"), metadata
+        assert metadata["dirty"] is False, metadata
+        assert execute(f"(bpy.data.filepath, bpy.data.is_dirty) == {metadata['filepath'], False!r}")["value"] == "True"
+        assert call("session", "save")["file"] == metadata["filepath"]
+        call("session", "close")
+        assert saved_autosave.exists() and saved_autosave.with_suffix(".json").exists()
     print("agent session: all assertions passed")
 
 

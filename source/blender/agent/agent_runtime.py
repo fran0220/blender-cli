@@ -332,6 +332,11 @@ class Session:
             if not os.path.isfile(path):
                 raise FileNotFoundError(path)
             bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
+            metadata_path = os.path.splitext(path)[0] + ".json"
+            if os.path.basename(path).startswith("autosave-") and os.path.isfile(metadata_path):
+                with open(metadata_path, encoding="utf-8") as stream:
+                    metadata = json.load(stream)
+                native["restore_metadata"](metadata["filepath"], metadata["dirty"])
         self.id_state, self.fields, self.native = id_state, fields, native
         self.namespace = fresh_namespace()
         self.history = []

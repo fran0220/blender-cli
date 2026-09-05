@@ -326,6 +326,12 @@ decodes its retained memfile into an isolated Main using an empty old Main and
 replaces live Main, or changes live filepath/dirty state or Python references.
 External paths are made absolute in the isolated write so ordinary `--file`
 loading from the recovery directory still finds the snapshot's assets.
+The adjacent `autosave-<pid>.json` records the snapshot's original `filepath`
+and `dirty` state. Session recovery restores those values after loading, before
+creating its initial snapshot; an originally unsaved session still requires
+`session save --file`, rather than overwriting its recovery file. Preserve this
+sidecar together with the blend file. Clean close removes both files for the
+current session only. One-shot loading remains ordinary file loading.
 The active snapshot scene is placed first for loading without saved UI.
 Non-memfile-undo data (UI and brushes) is not recovered; linked libraries are
 reloaded from their files, and ordinary blend-save orphan rules apply. Python

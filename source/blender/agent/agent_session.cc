@@ -7,6 +7,7 @@
 #include "agent_transport.hh"
 
 #include <filesystem>
+#include <fstream>
 #include <unordered_map>
 
 #include "BKE_blender_undo.hh"
@@ -16,6 +17,7 @@
 #include "BKE_main.hh"
 #include "BKE_undo_system.hh"
 #include "BKE_wm_runtime.hh"
+#include "BLI_fileops.hh"
 #include "BLI_listbase.hh"
 #include "BLI_string.hh"
 #include "BLI_timer.hh"
@@ -38,6 +40,7 @@ struct Session {
   bContext *context;
   Transport *transport = nullptr;
   std::unordered_map<std::string, MemFileUndoData *> snapshots;
+  std::unordered_map<std::string, bool> snapshot_dirty;
   std::deque<std::string> order;
   size_t bytes = 0;
   static constexpr size_t budget = 256 * 1024 * 1024;
@@ -78,6 +81,21 @@ struct Session {
     }
     if (data) {
       BLO_blendfiledata_free(data);
+    }
+    if (success) {
+      const auto metadata = autosave.parent_path() / (autosave.stem().string() + ".json");
+      const auto temporary = metadata.string() + "@";
+      std::ofstream stream(temporary);
+      stream << nlohmann::json(
+                    {{"filepath", snapshot->filepath}, {"dirty", snapshot_dirty.at(current)}})
+                    .dump();
+      stream.close();
+      if (stream) {
+        success = BLI_rename_overwrite(temporary.c_str(), metadata.string().c_str()) == 0;
+      }
+      else {
+        success = false;
+      }
     }
     last_write = Clock::now();
     dirty = !success;
@@ -120,6 +138,7 @@ static Session &session(PyObject *self)
 static PyObject *snapshot_create(PyObject *self, PyObject *)
 {
   Session &state = session(self);
+  const bool dirty = !CTX_wm_manager(state.context)->file_saved;
   state.init_undo(false);
   ED_editors_flush_edits(CTX_data_main(state.context));
   /* Independent memfiles retain every branch without sharing chunk ownership with the UI stack. */
@@ -168,11 +187,13 @@ static PyObject *snapshot_create(PyObject *self, PyObject *)
       state.bytes -= old->undo_size;
       BKE_memfile_undo_free(old);
       state.snapshots.erase(oldest);
+      state.snapshot_dirty.erase(oldest);
     }
     state.bytes += data->undo_size;
     state.snapshots.emplace(id, data);
     state.order.push_back(id);
   }
+  state.snapshot_dirty[id] = dirty;
   auto *stack = CTX_wm_manager(state.context)->runtime->undo_stack;
   BKE_undosys_step_push_with_type(
       stack, state.context, "Agent snapshot", UndoEncodeHints::None, BKE_UNDOSYS_TYPE_MEMFILE);
@@ -214,10 +235,27 @@ static PyObject *cancelled(PyObject *self, PyObject *)
   return PyBool_FromLong(G.is_break);
 }
 
+static PyObject *restore_metadata(PyObject *self, PyObject *args)
+{
+  const char *filepath;
+  int dirty;
+  if (!PyArg_ParseTuple(args, "sp", &filepath, &dirty)) {
+    return nullptr;
+  }
+  Session &state = session(self);
+  STRNCPY(CTX_data_main(state.context)->filepath, filepath);
+  CTX_wm_manager(state.context)->file_saved = !dirty;
+  context_ensure(state.context);
+  BPY_context_set(state.context);
+  state.init_undo(true);
+  Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
     {"snapshot", snapshot_create, METH_NOARGS, nullptr},
     {"rollback", snapshot_restore, METH_O, nullptr},
     {"cancelled", cancelled, METH_NOARGS, nullptr},
+    {"restore_metadata", restore_metadata, METH_VARARGS, nullptr},
 };
 
 int session_serve(
@@ -317,6 +355,10 @@ int session_serve(
     std::filesystem::remove(directory / "session.lock");
     std::filesystem::remove(state.autosave);
     std::filesystem::remove(state.autosave.string() + "@");
+    const auto metadata = state.autosave.parent_path() /
+                          (state.autosave.stem().string() + ".json");
+    std::filesystem::remove(metadata);
+    std::filesystem::remove(metadata.string() + "@");
   }
   return status;
 }
