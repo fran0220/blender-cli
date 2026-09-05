@@ -402,13 +402,3 @@ def error_fields(error, code, filename):
         if fixed:
             result["fix"] = {"code": fixed, "reason": fix["reason"]}
     return result or None
-
-
-def error_context(error, code, filename):
-    """Transitional: the current runtime reads only `rna`.
-
-    Deleted in the commit that switches to workstream K's dispatch, which merges
-    every field of `error_fields` into the error object.
-    """
-    fields = error_fields(error, code, filename)
-    return fields.get("rna") if fields else None

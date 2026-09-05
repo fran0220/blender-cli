@@ -168,8 +168,9 @@ the file).
 
 Done when: `describe channel` returns the request and event set with field
 types; `describe schema` returns a JSON-schema projection of every request
-suitable for a tool catalog; an `exec` with a misspelled property whose
-nearest match has similarity ≥ 0.85 carries `error.fix.code` that runs
+suitable for a tool catalog; an `exec` whose misspelling has one certain
+correction — the only candidate above difflib's 0.6 cutoff, or 0.85 with
+more than 0.05 over the runner-up — carries `error.fix.code` that runs
 successfully as-is; and ambiguous misspellings carry no `fix`.
 
 Owns: `agent_rna.py`, `tests/agent/describe.py` (new; the RNA portions of
@@ -178,7 +179,7 @@ Owns: `agent_rna.py`, `tests/agent/describe.py` (new; the RNA portions of
 | Item | Status |
 |---|---|
 | `describe channel` and `describe schema` generated from the request table K exposes | done on Linux — read from K's `agent_runtime.REQUESTS`/`EVENTS`/`DEFS`, never a second copy; nine ops, nine events; each op's schema is a self-contained draft 2020-12 document whose `$defs` hold only the shapes it reaches, and every op's `example` validates against it. `mutates` is dispatch policy and is not projected. Both exclusive choices the contract makes — `exec` code-or-script and `fit_param` name-or-path — are declared as `exactly_one_of` in K's table and project to `oneOf`, and the test asserts the projection is exactly as strict as the table, never stricter |
-| `fix` on unambiguous attribute, enum and operator-keyword errors; never on ambiguous ones | done in `agent_rna.error_fields`, unverified on the wire — the current runtime still copies only `rna`, so `error.fix` reaches the envelope when K merges `error_fields`. Proven against real RNA in `tests/agent/describe.py`: `locaton`→`location` (0.93), `type='MESHES'`→`'MESH'` (0.80, sole candidate), `bevel_dept`→`data.bevel_depth` (0.95), each rewritten statement re-executed successfully; `rotation_mode='XYZY'` ties `XYZ` and `XZY` at 0.857 and carries no `fix` |
+| `fix` on unambiguous attribute, enum and operator-keyword errors; never on ambiguous ones | done on Linux — `error_fields` contributes `rna` and `fix` to the real `error` event. `tests/agent/describe.py` fails a statement through the binary, then re-executes the `fix.code` it answers with: `locaton`→`location` (0.93), operator enum `type='MESHES'`→`'MESH'` (0.80, sole candidate), operator keyword `sise`→`size` (0.75, sole candidate), `bevel_dept`→`data.bevel_depth` (0.95) through the one-hop `data.` search, and a multibyte source line proving the rewrite is a UTF-8 byte edit at the failing position. `rotation_mode='XYZY'` scores 0.857 against both `XYZ` and `XZY` and carries no `fix`; neither does an identifier with no candidate at all |
 | `describe` records for the new `agent` helpers | done on Linux — `describe agent` answers for all twelve helpers now present (`compare`, `describe`, `diff`, `fit`, `history`, `objective`, `observe`, `perceive`, `program`, `register_provider`, `rollback`, `snapshot`), each with a signature, docstring and parameter defaults from `inspect.signature`. The test asserts every record is well formed rather than a fixed list, so later helpers are covered without editing it |
 
 ### W — CLI projections, documentation, removal of the comparison verb

@@ -206,20 +206,9 @@ def main():
             assert "data.bevel_depth" in error["rna"]["nearest"], error
 
         # --- corrective fixes, proven by running the correction the process proposes ---
-        harness = """
-import json, agent_rna
-code = {!r}
-try:
-    exec(compile(code, "<fix>", "exec"), globals())
-except BaseException as error:
-    print(json.dumps(agent_rna.error_fields(error, code, "<fix>")))
-else:
-    raise AssertionError("statement did not fail")
-"""
-
         def fields(code):
-            result = run(harness.format(code))
-            return json.loads(result["stdout"])
+            """The error object the failing statement really produces on the wire."""
+            return run(code, ok=False)["error"]
 
         unambiguous = {
             "attribute": "bpy.context.object.locaton = (1, 0, 0)",
