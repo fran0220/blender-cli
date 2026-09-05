@@ -43,6 +43,10 @@ fi
 
 echo '[setup] Hydrating source assets and pinned Linux libraries'
 git lfs install --local
+# Match Blender's make_update.py fallback for forks without their own LFS data.
+git config --local remote.lfs-fallback.url https://projects.blender.org/blender/blender.git
+git config --local remote.lfs-fallback.pushurl no_push
+git config --local lfs.remote.searchall true
 git lfs pull
 # Override update=none for this invocation only; never update Blender's branch.
 GIT_LFS_SKIP_SMUDGE=1 git -c submodule.lib/linux_x64.update=checkout \
