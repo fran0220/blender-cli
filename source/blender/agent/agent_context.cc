@@ -90,6 +90,11 @@ static PyObject *render_scene(PyObject *self, PyObject *name)
   return render(context(self), name);
 }
 
+static PyObject *recalc_guard(PyObject *self, PyObject *)
+{
+  return preserve_recalc(context(self));
+}
+
 static bool viewport_required(bContext *C)
 {
   CTX_wm_operator_poll_msg_set(
@@ -114,6 +119,7 @@ PyObject *native_api(bContext *C)
       {"context", ensure, METH_NOARGS, nullptr},
       {"flush", flush, METH_NOARGS, nullptr},
       {"render", render_scene, METH_O, nullptr},
+      {"preserve_recalc", recalc_guard, METH_NOARGS, nullptr},
   };
   PyObject *capsule = PyCapsule_New(C, "agent.context", nullptr);
   PyObject *result = PyDict_New();

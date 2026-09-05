@@ -361,6 +361,13 @@ not edited. All temporary IDs are removed even on failure. Render, frame and
 depsgraph Python callbacks are suspended and restored, so observation does
 not run user code that could mutate Main. Observation is not a snapshot or
 rollback operation and does not invalidate the agent's RNA references.
+Temporary ID creation/deletion invalidates unrelated dependency tags in
+upstream. The observation boundary preserves and restores the pending recalc
+masks of both top-level and embedded IDs (notably the scene master collection),
+after completing deferred view-layer synchronization/evaluation. It preserves
+real edits made before `agent.observe()` rather than blindly clearing tags.
+Sessions evaluate at open and exec completion so snapshots describe settled
+geometry; no memfile hash normalization or cached-snapshot substitution is used.
 
 Axis cameras look toward the bounds center: front from −Y, back +Y, left −X,
 right +X, top +Z, bottom −Z; `side` aliases **right**. All six are orthographic.

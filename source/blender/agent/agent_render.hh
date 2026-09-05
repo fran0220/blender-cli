@@ -10,5 +10,6 @@ namespace blender {
 struct bContext;
 namespace agent {
 PyObject *render(bContext *C, PyObject *scene_name);
+PyObject *preserve_recalc(bContext *C);
 }  // namespace agent
 }  // namespace blender

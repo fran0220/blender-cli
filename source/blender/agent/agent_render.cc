@@ -4,9 +4,12 @@
 
 #include "agent_render.hh"
 
+#include <vector>
+
 #include "BKE_context.hh"
 #include "BKE_global.hh"
 #include "BKE_layer.hh"
+#include "BKE_lib_query.hh"
 #include "BKE_main.hh"
 #include "BLI_listbase.hh"
 #include "BLI_utildefines.hh"
@@ -15,6 +18,53 @@
 #include "RE_pipeline.h"
 
 namespace blender::agent {
+
+struct RecalcState {
+  ID *id;
+  unsigned int recalc, before_undo, after_undo;
+};
+
+PyObject *preserve_recalc(bContext *C)
+{
+  /* Temporary ID linking/deletion tags *all* scenes, collections and materials.
+   * Preserve the user's pending tags, rather than treating observation's bookkeeping
+   * as an edit or clearing a real edit made before agent.observe() inside exec. */
+  auto *saved = new std::vector<RecalcState>();
+  auto save = [&](ID *id) {
+    saved->push_back({id, id->recalc, id->recalc_up_to_undo_push, id->recalc_after_undo_push});
+  };
+  ID *id;
+  FOREACH_MAIN_ID_BEGIN (CTX_data_main(C), id) {
+    save(id);
+    BKE_library_foreach_ID_link(
+        CTX_data_main(C),
+        id,
+        [&](LibraryIDLinkCallbackData *data) {
+          if ((data->cb_flag & IDWALK_CB_EMBEDDED) && *data->id_pointer) {
+            save(*data->id_pointer);
+          }
+          return IDWALK_RET_NOP;
+        },
+        nullptr,
+        IDWALK_READONLY);
+  }
+  FOREACH_MAIN_ID_END;
+  PyObject *capsule = PyCapsule_New(saved, "agent.recalc", [](PyObject *capsule) {
+    auto *saved = static_cast<std::vector<RecalcState> *>(
+        PyCapsule_GetPointer(capsule, "agent.recalc"));
+    /* Deletion defers view-layer synchronization; finish it before restoring tags,
+     * otherwise the next memfile writer would perform it and see a false edit. */
+    BKE_main_view_layers_synced_ensure(static_cast<Main *>(PyCapsule_GetContext(capsule)));
+    for (const RecalcState &state : *saved) {
+      state.id->recalc = state.recalc;
+      state.id->recalc_up_to_undo_push = state.before_undo;
+      state.id->recalc_after_undo_push = state.after_undo;
+    }
+    delete saved;
+  });
+  PyCapsule_SetContext(capsule, CTX_data_main(C));
+  return capsule;
+}
 
 PyObject *render(bContext *C, PyObject *scene_name)
 {

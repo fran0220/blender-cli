@@ -234,6 +234,7 @@ def execute(args, snapshot, fields, session=None):
         sys.settrace(previous_trace)
         # Keep edit mode active, but make Mesh RNA, inspection and saving current.
         agent._native["flush"]()
+        bpy.context.view_layer.update()
     elapsed = (time.perf_counter() - start) * 1000
     return {"ok": True, "value": value, "diff": id_diff(before, snapshot(False), fields), "ms": elapsed}
 
@@ -309,6 +310,7 @@ class Session:
         self.current = None
         self.closing = False
         agent._native["context"]()
+        bpy.context.view_layer.update()
         self.before = id_state(True)
         self.snapshot(None, "open")
         agent._session = self

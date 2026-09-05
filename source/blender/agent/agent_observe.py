@@ -68,12 +68,13 @@ def resize(rgb, width, height):
 @contextlib.contextmanager
 def isolated_data():
     # Delete only IDs created by this operation, even if setup/render/composition fails.
+    recalc = agent._native["preserve_recalc"]()
     groups = [getattr(bpy.data, prop.identifier) for prop in bpy.data.bl_rna.properties
               if prop.type == "COLLECTION"]
     before = {item.as_pointer() for group in groups for item in group}
     # Observation does not execute user render/frame/depsgraph handlers. They may mutate Main.
     handler_names = ("render_init", "render_pre", "render_post", "render_write", "render_complete",
-                     "render_cancel", "frame_change_pre", "frame_change_post",
+                     "render_cancel", "render_stats", "frame_change_pre", "frame_change_post",
                      "depsgraph_update_pre", "depsgraph_update_post")
     handlers = [(getattr(bpy.app.handlers, name), list(getattr(bpy.app.handlers, name)))
                 for name in handler_names]
@@ -85,8 +86,10 @@ def isolated_data():
         added = [item for group in groups for item in group if item.as_pointer() not in before]
         if added:
             bpy.data.batch_remove(added)
+        bpy.context.view_layer.update()
         for callbacks, original in handlers:
             callbacks[:] = original
+        del recalc
 
 
 def render_scene(source, size, frame):
