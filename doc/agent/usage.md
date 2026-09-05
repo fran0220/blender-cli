@@ -112,7 +112,8 @@ Snapshot hashes are process-local, not geometry identifiers you can use after a
 restart. Save important milestones explicitly.
 
 If native code terminates a session, the killed request reports `SessionError`.
-The next command names the dead PID and, if available, an autosave:
+That request names the dead PID and, if available, an autosave; subsequent
+commands report the same recovery information:
 
 ```sh
 blender-cli exec -c '42' --json

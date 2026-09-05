@@ -225,14 +225,23 @@ len(mesh.vertices)
             process = kernel.OpenProcess(0x00100000, False, int(crashed["session"]))  # SYNCHRONIZE
             assert process, "Could not open daemon process for exit synchronization"
             try:
-                execute("import os; os._exit(0)", ok=False)
+                killed = execute("import os; os._exit(0)", ok=False)
                 # Socket EOF can precede process teardown completion on Windows.
                 assert kernel.WaitForSingleObject(process, 10000) == 0, "Daemon did not exit"
             finally:
                 kernel.CloseHandle(process)
         else:
             killed = execute("import os; os._exit(3)", ok=False)
-            assert killed["error"]["type"] == "SessionError", killed
+        assert killed["error"]["type"] == "SessionError", killed
+        assert killed["autosave"] == str(autosave), killed
+        assert "exited unexpectedly" in killed["error"]["message"], killed
+        assert "session open --file" in killed["error"]["message"], killed
+        assert "session.log" in killed["error"]["message"], killed
+        logged = [json.loads(line.removeprefix("Agent request: "))
+                  for line in (root / ".blender-cli/session.log").read_text().splitlines()
+                  if line.startswith("Agent request: ")]
+        assert logged[-1]["id"] and logged[-1]["verb"] == "exec", logged[-1]
+        assert "os._exit" in logged[-1]["args"]["argv"][1], logged[-1]
         # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
         for args in (("exec", "-c", "42"), ("session", "history")):
             dead = call(*args, ok=False)

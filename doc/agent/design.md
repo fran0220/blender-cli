@@ -240,6 +240,9 @@ autosave?: path}` for every verb except open/close. The message identifies the
 PID, `.blender-cli/session.log`, `session open --file <autosave>` and
 `session close`. A live PID with an unavailable endpoint also reports an error,
 never edits a different scene. `autosave` is present only for an existing file.
+If a connection drops during a request, the launcher waits at most two seconds
+for process teardown and returns this same recovery error on the killed request
+itself. A still-live process retains the disconnection error instead.
 Common `--json` and human output
 remain compact/indented JSON respectively. Session result objects without an
 `ok` field and the history array are successful; `ok: false` exits 1.

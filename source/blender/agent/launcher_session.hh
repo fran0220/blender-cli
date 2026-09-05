@@ -251,6 +251,14 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     }
     catch (...) {
       socket_close(fd);
+      /* EOF can precede OS process teardown, particularly on Windows. Report
+       * recovery on the request that died, not only on its successor. */
+      for (int i = 0; i < 200 && process_alive(pid); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      if (!process_alive(pid)) {
+        return dead_session();
+      }
       throw;
     }
     socket_close(fd);

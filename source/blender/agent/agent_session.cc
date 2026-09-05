@@ -254,6 +254,19 @@ int session_serve(
       {
         G.is_break = false;
         const std::string message = request.message.dump();
+        auto summary = request.message;
+        if (summary.contains("args") && summary["args"].is_object() &&
+            summary["args"].contains("argv") && summary["args"]["argv"].is_array())
+        {
+          for (auto &arg : summary["args"]["argv"]) {
+            if (arg.is_string()) {
+              const auto text = arg.get<std::string>();
+              arg = text.substr(0, std::min(text.find('\n'), size_t(512)));
+            }
+          }
+        }
+        fprintf(stderr, "Agent request: %s\n", summary.dump().c_str());
+        fflush(stderr);
         PyObject *answer = PyObject_CallMethod(runtime, "dispatch", "s", message.c_str());
         nlohmann::json result;
         if (answer) {
