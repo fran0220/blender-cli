@@ -55,7 +55,11 @@ doc/agent/
 source/blender/agent/
 build_files/cmake/config/blender_agent.cmake
 tests/agent/
+.github/workflows/
 ```
+
+The workflow directory owns the fork's native compiler gate and full-build CI;
+it does not modify upstream's buildbot integration.
 
 ## Versioning
 
