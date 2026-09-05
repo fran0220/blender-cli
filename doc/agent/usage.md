@@ -202,6 +202,70 @@ hash prefix; `program rollback` takes it as its argument, the way
 `exec --no-record` skips one statement — use them for the throwaway probes that
 should not become part of the model.
 
+## From `repl` to a fitted model
+
+Everything above composes into the loop this process exists for: register what
+the model should look like, let every action say how far it is, and hand the
+numeric part to the process. Start with a reference image bound to a view:
+
+```sh
+blender-cli target set front --ref reference.png --view front --metrics iou,chamfer --json
+# {"ok":true,"name":"front","view":"front","mask":"auto","fit":"bbox","metrics":["iou","chamfer"],
+#  "ref":"/tmp/fit/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
+#  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
+#  "objective":{"targets":{"front":{"iou":0.7012100026888949,"chamfer":11.675981348770343,"delta":null,
+#    "worst":{"region":[64,64,128,128],"iou":0.5487231182795699,"missing":0.0,"extra":1.0}}},
+#   "best":{"front":{"iou":0.7012100026888949,"snapshot":"sha256:43600a3f…","step":1}}}}
+```
+
+Registering already scores: `iou` 0.70, and the worst 4×4 cell is the
+bottom-right quadrant with `extra: 1.0` — every pixel wrong there is model that
+the reference does not have. From here every action that changes data carries an
+`objective` with the deltas:
+
+```sh
+blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
+# {"ok":true,…,"objective":{"targets":{"front":{"iou":0.8148220570981619,"chamfer":6.888223595125254,
+#   "delta":{"iou":-0.16003911654734315,"chamfer":5.46266995445313},
+#   "worst":{"region":[64,64,128,128],"iou":0.6360015929908402,"missing":0.03938730853391685,"extra":0.9606126914660832}}},
+#  "best":{"front":{"iou":0.9748611736455051,"snapshot":"sha256:fd2651a5…","step":2}}}}
+```
+
+That move cost 0.16 of `iou`, and `best` still names the snapshot that scored
+0.97, so returning to it is `session rollback 'sha256:fd2651a5…'` — no
+bookkeeping of your own.
+
+The numeric part is `fit`. Name the program parameters to search, the objective
+to optimise and a budget, and the search runs inside the process:
+
+```sh
+blender-cli fit --params '[{"name": "height", "min": 1.0, "max": 4.0}]' \
+                --objective '{"target": "front", "metric": "iou"}' \
+                --budget '{"evals": 12}' --json
+# {"ok":true,"method":"coordinate","evals":12,"failed":0,"cancelled":false,"applied":true,
+#  "best":{"params":{"height":2.97265625},"score":0.9789726644638029,"snapshot":"sha256:fd2651a5…"},
+#  "curve":[[1,0.6950339558573854],[2,0.9118549511854951],[4,0.9192771084337349],[6,0.9766606822262118],
+#           [9,0.9780714929408231],[11,0.978391356542617],[12,0.9789726644638029]],
+#  "error_map":{"target":"front","view":"front","image":"…/.blender-cli/fit/ae1f384d….png","region":[32,32,64,64],"size":[128,128]},
+#  "objective":{"metric":"iou","targets":["front"],"weights":[1.0]},
+#  "diff":{…,"snapshot":"sha256:fd2651a5…","step":2},"ms":27221.57925099964}
+```
+
+Twelve evaluations, 27 s, `iou` 0.695 → 0.979, and the answer is a number the
+agent never had to guess: the model was built with `height` 2.0 and the
+reference was rendered from 3.0. The best parameters are applied to the live
+scene and written into the program's `P` block, so `program get` now reports
+`{"height": 2.97265625, "radius": 0.4}` and the program still reproduces the
+scene. `curve` is the improvement per evaluation — a flat tail says the budget
+was enough — and `error_map` is a picture of what is still wrong, at the region
+that contributes most of it.
+
+`--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
+0.5, "max": 2}`) for values that are not program parameters, `--objective` takes
+several targets with weights or a `code` expression, and `--method` is
+`coordinate`, `nelder-mead` or `random`. A long search streams `progress`
+events on the channel and `cancel` stops it while keeping the best state.
+
 ## Checkpoints and rollback
 
 Rollback is the only control this process has; there is no confirmation step
@@ -260,13 +324,17 @@ Closing a dead session discards it and keeps its crash file.
 
 ## Looking at the scene
 
-`observe` renders offscreen with fixed cameras, a fixed light rig and fixed
-colour management; the same scene state always produces the same PNG. It is
-deterministic, not fast — a 512 px pair on a software Vulkan device took 7.7 s:
+Pictures arrive on their own, at budget size and cropped to what moved.
+`observe` is for the times that is not what you need: a bigger frame, another
+view, a different pass, or a file to feed back as a reference. It renders
+offscreen with fixed cameras, a fixed light rig and fixed colour management, so
+the same scene state always produces the same PNG — the two runs behind this
+page, in different directories, wrote the same `060bef51…` bytes. It is
+deterministic, not fast: a 512 px pair on a software Vulkan device took 5.2 s.
 
 ```sh
 blender-cli observe --views front,persp --json
-# {"image":"/tmp/usage/.blender-cli/observe/060bef51….png","views":["front","persp"],"passes":["color"],"size":[516,1032],"ms":7737.266684999668,"ok":true,
+# {"image":"/tmp/u3/.blender-cli/observe/060bef51….png","views":["front","persp"],"passes":["color"],"size":[516,1032],"ms":5181.582458999401,"ok":true,
 #  "framing":{"bounds":{"low":[-0.64,-0.64,-1.5],"high":[0.64,0.64,2.14]},"center":[0.0,0.0,0.32],"objects":["Handle","Knob"],"occupancy":0.9090909090909091,"radius":2.032633603644515}}
 ```
 
@@ -305,9 +373,13 @@ what you want to know before writing, not for repairing a typo.
 Inside `exec` the same answers are one call away: the `agent` module is
 preloaded beside `bpy`, `bmesh`, `mathutils` and `math`, and `describe agent`
 lists it. Every helper returns the dict its request or event carries, so
-`agent.program()["version"]` and `agent.history()[-1]["op"]` read what
-`program get` and `session history` return. Keeping a loop inside one `exec`
-costs one round trip instead of one per iteration.
+`agent.objective()["targets"]["front"]` has the same `iou`, `chamfer`, `delta`
+and `worst` the event does, `agent.perceive()` the same counts, bounds,
+framing, changed region and symmetry, and `agent.program()["version"]` and
+`agent.history()[-1]["op"]` read what `program get` and `session history`
+return. Keeping a loop inside one `exec` — score, adjust, score again — costs
+one round trip instead of one per iteration, which is the same reason `fit`
+exists as a request.
 
 ## Blender gotchas worth knowing before you hit them
 
@@ -327,8 +399,16 @@ costs one round trip instead of one per iteration.
   `bpy.context.view_layer.update()` or the next evaluation. Update first, then
   read; never fit against a stale dimension.
 - A reference image only compares usefully against a view that frames the same
-  way. Observation centres geometry at occupancy `1/1.1`, which removes
-  reference margins but not a different viewpoint or perspective.
+  way. `target set --fit bbox` (the default) centres the reference's foreground
+  at observation's occupancy `1/1.1`, which removes reference margins but not a
+  different viewpoint or perspective.
+- Automatic framing removes uniform scale, so a `fit` over a parameter that only
+  scales the whole model measures nothing. Search a proportion, or fix the
+  framing with `--frame OBJECT` or a scene camera.
+- `--mask auto` is deterministic classic CV, not segmentation: it can fail on a
+  textured background, on foreground touching the border, or on shading close to
+  the background colour. `target set` writes the silhouette it derived beside
+  the reference — look at it before trusting a bad score.
 
 ### Rigify ships disabled
 
