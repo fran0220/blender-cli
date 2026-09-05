@@ -5,12 +5,32 @@ See 'release/text/readme.html' for the end user read-me.
 -->
 
 <!-- blender-cli -->
-## blender-cli agent builds
+## blender-cli
 
-This fork serves Python requests through six CLI verbs, not the Blender GUI.
-Start with [the agent quick start](doc/agent/usage.md); see
-[the CLI contract](doc/agent/design.md) and [build and packaging details](doc/agent/build-profile.md).
-Product artifacts are `blender-cli-<version>-macos-arm64.tar.zst` and
+blender-cli is Blender with its GUI entry replaced by a request loop. One
+process holds the scene, the Python namespace, offscreen rendering, the
+comparison metrics and the parameter search; an agent holds one channel to it,
+sends one statement at a time, and gets that statement's consequences back as a
+stream of events — what changed in the data, what changed in the picture, and
+how far the scene now is from its target.
+
+```sh
+blender-cli repl                       # the channel: JSON-line requests in, events out
+blender-cli session open               # or a daemon, and one verb per request
+blender-cli exec -c 'bpy.ops.mesh.primitive_cube_add()' --json
+blender-cli --help                     # every verb with every flag
+```
+
+The Python API is upstream's `bpy`, unwrapped: there is no DSL, no operator
+wrapper layer and no typed tool catalog. What the fork adds around it is the
+persistent channel, feedback pushed with every action, a re-executable program
+as the record of the scene, in-process parameter search, self-description from
+live RNA, and errors that name the nearest valid identifier.
+
+Start with [the working recipe](doc/agent/usage.md); the contract is
+[design.md](doc/agent/design.md), the constraints are [AGENTS.md](AGENTS.md),
+and [build and packaging details](doc/agent/build-profile.md) cover the build
+profile. Product artifacts are `blender-cli-<version>-macos-arm64.tar.zst` and
 `blender-cli-<version>-windows-x64.zip`; Linux archives are development evidence only.
 Check [PLAN.md](PLAN.md) for which platforms have actually passed verification.
 

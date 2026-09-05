@@ -651,9 +651,10 @@ budget binds before the time budget.
 ## Describe and corrective errors
 
 `describe channel` returns the request/event registry as records;
-`describe schema` (CLI `describe --schema`) returns the same as JSON Schema
-for a function-calling host. `describe agent`, `describe agent.<fn>` and
-`bpy.*` paths behave as in the RNA contract below.
+`describe schema` returns the same as JSON Schema for a function-calling host.
+Both are ordinary `describe` paths, on the channel and on the CLI alike.
+`describe agent`, `describe agent.<fn>` and `bpy.*` paths behave as in the
+RNA contract below.
 
 Both are **generated from the request table** the runtime validates against
 (`REQUESTS`, `EVENTS` and the shared `DEFS` it references); neither is
@@ -748,12 +749,45 @@ exactly one JSON document on stdout; human output is the default. Images are
 files whose paths appear in the JSON, or inline base64 with `--inline`. Exit
 code 0 is success; non-zero carries an `error` object.
 
+A verb is a request and its flags are that request's fields, so the flag table
+is generated from the request table rather than written a second time:
+`agent_cli_gen.py` reads `REQUESTS` at build time and emits the table
+`agent_cli.hh` parses with, which is why the launcher (talking to a session)
+and the in-process one-shot verb build byte-identical requests. A field added
+to the contract therefore arrives with its flag, and `blender-cli --help`
+lists it, without a hand-written line anywhere. The naming rule is:
+
+| Field | Flag |
+|---|---|
+| boolean, default true | `--no-<field>` clears it |
+| boolean, otherwise | `--<field>` sets it |
+| array of strings | `--<field> A,B` |
+| number or integer | `--<field> N`, the enum values when bounded |
+| string | `--<field> V`, the enum values when bounded |
+| anything structured | `--<field> JSON` |
+
+The projections that this rule does not produce are `exec -c CODE` and its
+`SCRIPT.py` argument, `--image` for the per-request feedback override, and the
+action of `session`, `program` and `target` with its argument, which read as
+words rather than flags (`session rollback ~1`, not `session --action
+rollback --snapshot ~1`). They are listed in one place, `IRREGULAR` in
+`agent_cli_gen.py`, and nothing else deviates.
+
+Wherever a value is a statement, a program or a policy rather than a word, it
+may name its source instead: `@FILE` is that file's contents and `-` is stdin,
+so `exec -c @edit.py` and `program set --text @model.py` do not depend on
+shell quoting. A value that must begin with an at sign is written `@@`.
+
+`cancel` has no CLI projection: it stops a request that is still running, which
+needs the channel. `repl` and `session open` are the reverse — the launcher
+answers them itself, so they are the only verbs that are not requests.
+
 ### `session`
 
 ```
 session open  [--file F]        start daemon for cwd; answers {"session": id, "socket": path}
 session status                  {"session", "file", "dirty", "step", "snapshot", "feedback", "targets"}
-session feedback [--json-file F | KEY=VALUE…]   set the feedback policy; answers the policy
+session feedback [KEY=VALUE…]   merge those settings into the policy; answers the policy
 session save  [--file F]        write the .blend
 session close                   write nothing, stop the daemon
 session snapshot [--label L]    {"snapshot": "sha256:…", "label": L}
@@ -769,10 +803,18 @@ recovery reloads the indexed file, with the newest occurrence of a label winning
 `rollback` never asks; it restores. Every request that changes `Main`
 advances `step` and produces a `diff` event carrying the new snapshot.
 
+A setting is a dotted path into the policy and its value is JSON when it parses
+as JSON, so `session feedback image.mode=off image.size=128
+image.views='["front","persp"]'` sets three of them in one request. Settings
+merge into the policy in force; the answer is the whole policy, which is also
+what `session status` reports. `session open` is the launcher's own verb —
+there is no session to ask yet — and every other action is one request to a
+live one.
+
 ### `exec`
 
 ```
-exec -c CODE | exec FILE.py [--no-record] [--timeout S] [--image delta|full|off]
+exec -c CODE | exec SCRIPT.py [--no-record] [--timeout S] [--image delta|full|off]
 ```
 
 Runs the code, then pushes feedback: a `diff` event (added/changed/removed
@@ -938,16 +980,19 @@ Common `--json` and human output
 remain compact/indented JSON respectively. Session result objects without an
 `ok` field and the history array are successful; `ok: false` exits 1.
 
-The wire mapping is deliberately argv-based: `verb` is the first CLI word;
-`args.argv` is the remaining string array, without shell re-parsing. Script
-paths resolve in the session's original working directory. Thus Python's
-existing argument parser is the source of truth in both modes. Raw clients
-must use distinct numeric request IDs across outstanding requests in the
-session. Each line has one matching response. Requests queue by completed-line
-arrival at the transport reader; simultaneously ready connections have no
-cross-connection ordering guarantee. Closing abandons later queued requests.
-Partial lines over 16 MiB disconnect. The endpoint is local trusted-code
-access, not a sandbox or a multi-user authentication boundary.
+A CLI verb reaches the endpoint as the request object *Channel protocol*
+defines, byte for byte the same one `repl` and a raw client send; there is no
+argv on the wire and no second parser. Script paths are absolute by the time
+they leave the launcher, and any other relative path in a request resolves in
+the session's original working directory.
+
+The endpoint adds what a socket needs and nothing else. A raw client must use
+distinct request IDs across its outstanding requests. Requests queue by
+completed-line arrival at the transport reader; simultaneously ready
+connections have no cross-connection ordering guarantee, and closing abandons
+requests still queued behind the running one. A partial line over 16 MiB
+disconnects. The endpoint is local trusted-code access, not a sandbox or a
+multi-user authentication boundary.
 
 `cancel` is an ordinary request, normally sent on a **second connection**
 while the first is busy (the same connection is also accepted). It is
@@ -970,11 +1015,11 @@ While idle it pumps timers at roughly 10 ms intervals, releasing the GIL
 while waiting for transport. Timers never run Blender API code on a transport
 thread. A long-running request delays timers until it returns.
 
-The persistent namespace preloads `bpy`, `bmesh`, `mathutils`, `math`, and
-`agent`; one-shot namespaces now also preload `agent`. `agent.snapshot`,
-`rollback`, `diff`, and `history` require a session. `observe`, `compare`, and
-`describe` work in both modes (their contracts are below); no verb remains a
-`NotImplemented` placeholder.
+Session and one-shot namespaces both preload `bpy`, `bmesh`, `mathutils`,
+`math` and `agent`. `agent.snapshot`, `rollback`, `diff`, `history`,
+`program`, `objective` and `fit` require a session, since they read or move
+state that only a session keeps; `observe`, `compare`, `perceive` and
+`describe` work in both.
 
 Snapshots restore Blender Main data, **not Python variables or external
 files**. Reacquire RNA references from `bpy.data` after rollback: saved Python
@@ -1034,9 +1079,11 @@ reloaded from their files, and ordinary blend-save orphan rules apply. Python
 variables and unlabelled history do not survive a process crash. Both `session open
 --file` and one-shot `--file` can load the autosave.
 
-A missing required field is a contract violation, not a value error: `session`
-without an action returns `ProtocolError` in both modes, with the message the
-request table generates,
+A request that omits a required field, names a field its op does not declare,
+or gives one a value outside its declared type or enum is rejected before any
+of it runs, by the request table itself. That is a contract violation, not a
+value error: `session` without an action returns `ProtocolError` in both
+modes, with the message the table generates,
 `session requires action: status|feedback|save|close|snapshot|rollback|history`.
 
 The content-addressed store retains independent upstream memfiles, not a
@@ -1108,6 +1155,30 @@ are independent of it, so operator undo cannot invalidate stored hashes.
 Rollback decodes with old-Main reuse disabled, tears down/reinitializes editor
 data, and resets the WM undo stack to the restored Main. No upstream file
 changes are needed.
+
+### `program`
+
+```
+program get                        {"text", "params", "steps", "version", "base",
+                                    "record", "digest", "reproducible"}
+program set   --text @model.py     replace the program and re-execute from the first change
+program patch --old OLD --new NEW  replace text matching exactly once, then re-execute
+program run                        re-execute from the longest cached prefix
+program history                    {"versions": [{"version", "parent", "label", "at",
+                                    "steps", "reproducible"}], "current"}
+program rollback <version|label>   check out a version and re-execute
+program record on|off              stop or resume recording executed statements
+```
+
+The program is the record of the scene and *Program model* above defines it:
+what a step is, how a prefix is cached, when a version is written, and what
+`reproducible` means. Only the projection is here. `--text` and the two patch
+sides are text, so `@FILE` and `-` read them from a file or stdin rather than
+from a shell word. `--label L` names the version that `set`, `patch`, `run` or
+`rollback` creates. Those four change `Main`, so they answer with the same
+`diff`, `perception`, `objective` and `image` events an `exec` does, and with
+`ran`, `cached`, `from_step` and the content `digest` that proves a prefix-cached
+re-execution landed where a full run would.
 
 ### `inspect`
 
@@ -1314,8 +1385,9 @@ second request.
 
 `agent.compare` accepts `size=512, frame=None, debug=False, fit="bbox",
 mask="auto"`, `frame` meaning bounds, not timeline frame, exactly as observe;
-`debug=True` selects a new temporary directory, or a path chooses the directory
-(`target set --debug-out DIR` for the CLI). Only requested
+`debug=True` selects a new temporary directory, or a path chooses the
+directory. The debug directory is a helper argument, not a request field, so
+it has no flag. Only requested
 metric keys, `view`, and `reference: {bbox: [x0,y0,x1,y1], occupancy: number,
 fit: "bbox"|"none"}` are returned (CLI adds `ok`). The bbox is the final
 foreground's tile-pixel bounds, top-left origin and exclusive high coordinates;
@@ -1401,10 +1473,28 @@ dominant cost. Automatic framing removes uniform scale, so fit loops must vary
 an identifiable parameter (e.g. cube X scale with fixed Z extent), use a fixed
 `frame` object's bounds, or use the `camera` view.
 
+### `fit`
+
+```
+fit --params JSON [--objective JSON] [--budget JSON] [--method coordinate|nelder-mead|random]
+```
+
+*Targets and `fit`* above defines the search: what a parameter is, what an
+objective may be, how a budget bounds it, what `progress` carries and what
+cancellation keeps. Only the projection is here. The three structured fields
+are JSON, so `--params @params.json` reads one from a file:
+
+```sh
+blender-cli fit --params '[{"name": "handle_x", "min": 0.2, "max": 0.6}]' \
+                --objective '{"target": "front", "metric": "iou"}' \
+                --budget '{"evals": 40}' --json
+```
+
 ### `describe`
 
 ```
 describe bpy.ops.mesh.bevel | describe bpy.types.Object.location | describe Modifier
+describe agent.compare | describe channel | describe schema
 ```
 
 Answers from live RNA: signature, properties with types, ranges, enum items

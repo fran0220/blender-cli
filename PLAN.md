@@ -197,16 +197,17 @@ describe only the current surface; and a fresh orb can follow
 `usage.md` from `repl` to a fitted model without consulting anything else.
 
 Owns: `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` (request
-sections only; K owns *Channel protocol*), `tests/agent/compare.py`
-(deletion), CLI argument tables in `agent_command.cc` help text (in
-coordination with K).
+sections only; K owns *Channel protocol*), `source/blender/agent/agent_cli.hh`,
+`source/blender/agent/agent_cli_gen.py`, the codegen wiring in
+`source/blender/agent/CMakeLists.txt`, `tests/agent/cli.py`.
 
 | Item | Status |
 |---|---|
-| Remove `compare` verb, its parser and tests; `target set` is the only CLI entry to metrics | todo |
-| `target`, `fit`, `program`, `repl`, `session status/feedback` CLI projections and help | todo |
-| `usage.md` rewritten around the channel loop: repl, feedback budgets, targets, fit, program, recovery | todo |
-| `README.md` reflects the current surface and quick start | todo |
+| Remove `compare` verb, its parser and tests; `target set` is the only CLI entry to metrics | done — no `compare` verb, parser entry or test remains; `tests/agent/package.py` scores through `agent.compare` inside `exec` |
+| Every request field has exactly one CLI projection, generated from `REQUESTS` | done on Linux — `agent_cli_gen.py` reads `agent_contract.py` at build time and emits `agent_cli_table.hh`; `agent_cli.hh` parses and prints `--help` from it. P's `from_step` field produced `--from-step` with no C++ edit. `tests/agent/cli.py` (47 s) checks the built binary's `describe channel` against the generated projection, that `--help` shows every flag, and that each flag reaches its field |
+| `target`, `fit`, `program`, `repl`, `session status/feedback` CLI projections and help | done on Linux — `--help` is generated; `program rollback <version>` and `session rollback <id>` are both positional, `session feedback KEY=VALUE…`, `describe schema` (no `--schema`), `exec --no-record/--timeout/--image`, and `@FILE`/`-`/`@@` value sources |
+| `usage.md` rewritten around the channel loop: repl, feedback budgets, targets, fit, program, recovery | doing — repl transcript, one-shot verbs, feedback budgets, program editing, checkpoints, crash recovery, observe, describe and the verified gotchas are written from real runs; the targets, `fit` and pushed-feedback sections wait on T and F, since `target`, `fit`, `agent.perceive()` and `agent.objective()` all answer `NotImplemented` in this build |
+| `README.md` reflects the current surface and quick start | done |
 
 ### L — loop evidence
 
