@@ -5,6 +5,7 @@
 """Pushed feedback on real scenes: perception fields, delta images, budgets and cost."""
 
 import ast
+import base64
 import json
 from pathlib import Path
 import subprocess
@@ -83,11 +84,14 @@ def main():
             return events
 
         def picture(event):
-            width, height, _ = read_png(Path(event["path"]).read_bytes())
+            assert ("path" in event) != ("inline" in event), event
+            data = (base64.b64decode(event["inline"]) if "inline" in event
+                    else Path(event["path"]).read_bytes())
+            width, height, _ = read_png(data)
             assert event["size"] == [width, height], event
             x0, y0, x1, y1 = event["region"]
             assert [width, height] == [x1 - x0, y1 - y0], event
-            return Path(event["path"]).read_bytes()
+            return data
 
         call("session", "open")
         try:
@@ -99,6 +103,7 @@ def main():
             assert defaults["image"]["pass"] == "color", defaults
             assert defaults["image"]["size"] == 256, defaults
             assert defaults["image"]["overlay"] is True, defaults
+            assert defaults["image"]["inline"] is False, defaults
 
             # An agent that has seen nothing gets a whole frame, and no delta to compare with.
             first = execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
@@ -202,6 +207,17 @@ def main():
                                                                 "done"], asked
             picture(frame)
             assert call("session", "status")["feedback"]["image"]["mode"] == "delta"
+
+            # A host without a shared filesystem takes the bytes instead of a path.
+            written = set((root / ".blender-cli" / "feedback").iterdir())
+            carried = stream({"id": 32, "op": "exec", "feedback": {"inline": True},
+                              "code": "bpy.data.objects['Cube'].location.z += 0.5"})
+            crop, blend = [event for event in carried if event["event"] == "image"]
+            assert (crop["kind"], blend["kind"]) == ("delta", "overlay"), carried
+            assert "path" not in crop and "inline" in crop, crop
+            assert picture(crop) != picture(blend)
+            assert set((root / ".blender-cli" / "feedback").iterdir()) == written, \
+                "an inline image must not also write a file"
 
             # agent.perceive() samples without advancing what the agent last saw.
             paired = execute("bpy.ops.mesh.primitive_cone_add(radius1=0.4, location=(0, 0, 1))\n"

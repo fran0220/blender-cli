@@ -133,9 +133,8 @@ def sample(session):
     return STATE.pending
 
 
-def perceive(view="front", size=256):
+def perceive(session, view="front", size=256):
     """Return the perception payload for one view without advancing the remembered state."""
-    session = agent._active()
     if view not in VIEWS:
         raise ValueError(f"Unknown view: {view}")
     if not isinstance(size, int) or size < 1:
@@ -169,7 +168,7 @@ def emit_image(kind, view, rgb, region, policy):
     data = png(np.ascontiguousarray(rgb))
     event = {"event": "image", "kind": kind, "view": view, "pass": policy["pass"],
              "size": [rgb.shape[1], rgb.shape[0]], "region": region}
-    if policy.get("inline"):
+    if policy["inline"]:
         # An inline image crosses the boundary instead of a file, never beside one.
         return {**event, "inline": base64.b64encode(data).decode("ascii")}
     directory = (Path.cwd() / ".blender-cli" / "feedback" if agent._session
