@@ -523,7 +523,7 @@ Vulkan evidence cannot establish either.
 ### `compare`
 
 ```
-compare --ref IMG --view V [--metric M,…] [--mask auto|none] [--fit bbox|none]
+compare --ref IMG --view V [--metrics M,…] [--mask auto|none] [--fit bbox|none]
 ```
 
 Metrics: `iou` (silhouette intersection-over-union), `chamfer` (edge

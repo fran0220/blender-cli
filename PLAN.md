@@ -77,7 +77,7 @@ Metal/macOS and real-GPU Vulkan/Windows remain **unverified**.
 |---|---|
 | Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | done — real subdivide/bevel/extrude/translate, retained edit-mode flush, fallback layout, rollback and explicit GPU-selection error pass |
 | Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | done on Linux — native full render, byte equality, unchanged memfile snapshots and empty helper diff pass; product platforms unverified |
-| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | done — all presets, right-side alias, named framing, empty scene and missing-camera error pass |
+| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | doing — converted-geometry bounds and public framing metadata implemented; bevelled-curve/Array+Displace conversion equality regressions awaiting Linux build |
 | Geometry Nodes mesh instances retain evaluated geometry, materials and framing | done on Linux — 12 red ico instances; front white/red pixels 19,415/15,597 versus 0/0 before; temporary bounds agree with mesh vertices within 1e-5; named framing, unchanged snapshots and visually inspected front/perspective renders pass. Existing byte-identity hash remains `84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`; all four final CTests pass (278.09s) |
 | Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | done — fixed three-SUN rig and Standard/sRGB; all three tile sizes pass |
 | Passes: color, wireframe, silhouette, normal, depth | done — 2580×516 five-pass sheet, nonempty tiles, binary silhouette checks and visual inspection of beveled cube/sphere pass |
@@ -118,10 +118,10 @@ mask limitations and resizing policy are defined only in `doc/agent/design.md`.
 
 | Item | Status |
 |---|---|
-| `compare --ref --view [--metric]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | done — self/wrong references, 20-candidate numeric fit, requested-only metrics, all sizes and named framing pass |
-| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | done — colored-background IoU 1, debug mask visually inspected, alpha/luminance policies, portrait centering and PNG/JPEG/WebP pass |
-| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | done — instance/type/module typos, enum descriptions, integer overflow ranges, wrong array type and unknown operator keyword pass; unrelated errors have no RNA block |
-| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | done — operator/property/struct/instance/module and helper pass; bevel poll false in object mode, true in edit mode, GPU-selection poll includes upstream reason |
+| `compare --ref --view [--metrics]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | doing — plural CLI option (no alias) and reference metadata implemented; full Linux regression pending |
+| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | doing — default bbox fitting shares observe occupancy; 20%-margin regression and explicit fit=none exact self-comparison awaiting Linux build |
+| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | doing — one-hop data.bevel_depth hints implemented with Object receiver regressions; Linux run pending |
+| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | doing — public agent module/function signatures, defaults and docstrings; unresolved paths produce ValueError without internal CLI line numbers; Linux run pending |
 
 ## Phase 5 — size, packaging, platforms
 

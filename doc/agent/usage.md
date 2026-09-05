@@ -65,7 +65,7 @@ For exact **silhouette** self-comparison, take the front silhouette file path
 from `images`, then use it with `--mask none`; do not compare a multi-tile sheet:
 
 ```sh
-blender-cli compare --ref refs/front-silhouette.png --view front --metric iou,chamfer --mask none --json
+blender-cli compare --ref refs/front-silhouette.png --view front --metrics iou,chamfer --mask none --fit none --json
 # {"ok":true,"view":"front","iou":1.0,"chamfer":0.0}
 ```
 
@@ -74,6 +74,20 @@ references are useful for appearance metrics, but thresholded antialiased color
 does not exactly equal native silhouette coverage. `--mask auto` can miss dark
 shading near the background color; inspect `--debug-out masks` before trusting a
 bad score. Thin features and foreground touching the border also need care.
+
+References must show a silhouette comparable to the chosen view. Default
+`--fit bbox` removes reference margins and centers the foreground at observe's
+occupancy `1 / 1.1 = 0.9090909090909091`; it does not correct viewpoint or
+perspective differences. `--fit none` preserves reference framing, including
+for the exact self-comparison above. Compare returns `reference.bbox` (exclusive
+pixel bounds), measured `reference.occupancy` and `reference.fit`; observe returns
+world-space `framing` bounds, center, radius, contributing names and occupancy.
+The 512-pixel raster can cover 466 pixels (0.91015625) despite the continuous
+fit constant. Curves and modifiers are framed from their converted geometry
+automatically; there is no need to run `object.convert` before observe.
+
+CLI lists use plural names: `--views`, `--passes`, `--metrics`. Inside Python,
+`agent.compare(..., metrics=("iou", "ssim"))` takes a tuple/list of metric names.
 
 Keep a parameter search inside one `exec` instead of launching for every trial:
 
@@ -109,7 +123,8 @@ blender-cli session rollback '~1' --json
 Copy an actual hash from history. Rollback replaces Blender data, so reacquire
 `cube = bpy.data.objects["Cube"]` afterwards; old held RNA references are invalid.
 Snapshot hashes are process-local, not geometry identifiers you can use after a
-restart. Save important milestones explicitly.
+restart. Use `session save --file milestone.blend` at each important milestone
+as a durable checkpoint.
 
 If native code terminates a session, the killed request reports `SessionError`.
 That request names the dead PID and, if available, an autosave; subsequent
@@ -146,6 +161,9 @@ a clean close removes the new live session's autosave, not older crash files.
 - Set `rotation_mode` **before** assigning `rotation_euler`. For example,
   assigning Euler values while in `QUATERNION` mode and then switching to `XYZ`
   converts from the quaternion and can reset those Euler values to zero.
+- After `o.scale = ...`, `o.dimensions` can be stale until
+  `bpy.context.view_layer.update()` or dependency-graph evaluation. In fit loops,
+  update first, then read dimensions back; do not fit against stale values.
 
 ### Rigify is shipped, not enabled
 

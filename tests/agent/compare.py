@@ -33,7 +33,7 @@ def main():
             return call("exec", "-c", code, *args, **kwargs)
 
         def compare(ref, *args, **kwargs):
-            return call("compare", "--ref", ref, "--view", "front", "--metric", "iou,chamfer,ssim,hist",
+            return call("compare", "--ref", ref, "--view", "front", "--metrics", "iou,chamfer,ssim,hist",
                         *args, **kwargs)
 
         blend, ref, wrong, colored = (root / name for name in ("scene.blend", "ref.png", "wrong.png", "colored.png"))
@@ -213,7 +213,8 @@ with isolated_data():
             assert module["kind"] == "module" and module["operators"]["bevel"], module
             assert ast.literal_eval(execute("agent.describe('bpy.types.Object.location')")["value"])["array_length"] == 3
             call("describe", "__import__('os').getcwd()", ok=False)
-            for extra in (("--size", "256"), ("--mask", "bad"), ("--metric", "bad"), ("--fit", "bad")):
+            for extra in (("--size", "256"), ("--mask", "bad"), ("--metrics", "bad"), ("--fit", "bad"),
+                          ("--metric", "iou")):
                 call("compare", "--ref", ref, "--view", "front", *extra, ok=False)
             compare(root / "missing.png", ok=False)
         finally:
