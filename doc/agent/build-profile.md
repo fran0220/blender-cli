@@ -121,7 +121,7 @@ The push gate compiles `bf_agent` and `blender-cli` on AppleClang/MSVC, includin
 their unavoidable generated DNA/shader dependency closure (3,806/3,761 Ninja
 edges in the first native gates). It does not link Blender. Fatal warnings are
 target-local (`-Werror` or `/WX`), never global. Linux builds and tests the full
-profile within a 360-minute job. Each platform caches pinned libraries and a
+profile with a 360-minute job budget. Each platform caches pinned libraries and a
 2 GiB sccache store. The dispatch/tag workflow builds, installs, tests and
 archives. Native device absence returns CTest skip code 77 with an explicit
 Metal/Vulkan reason; render errors are never converted to skips. A skipped
@@ -137,6 +137,141 @@ install; those caches are removed from archives.
 
 The untrimmed install compressed with `tar -I 'zstd -19' -cf - -C build/orb/bin .
 | wc -c` is **238,784,479 bytes**. No macOS/Windows size is inferred from this.
+
+### Installed components (`du -sh build/orb/bin/*`)
+
+| Component | Allocated size |
+|---|---:|
+| `5.3` | 447 MiB (437 MiB before Python startup caches) |
+| `blender` | 185 MiB |
+| `lib` | 336 MiB |
+| `makesrna` | 3.3 MiB |
+| `shader_tool` | 2.6 MiB |
+| `zstd_compress` | 516 KiB |
+| `license` | 412 KiB |
+| `makesdna` | 252 KiB |
+| `blender-cli` | 188 KiB |
+| `datatoc` | 28 KiB |
+| `blender.desktop`, `readme.html` | 8 KiB each |
+| `blender-launcher`, `blender-symbolic.svg`, `blender-system-info.sh`, `blender.svg` | 4 KiB each |
+
+### Python stdlib top 20
+
+Command: `du -sh build/orb/bin/5.3/python/lib/python3.*/* | sort -rh | head -20`.
+
+| Component | Allocated size |
+|---|---:|
+| site-packages | 140 MiB |
+| config-3.13-x86_64-linux-gnu | 81 MiB |
+| lib-dynload | 22 MiB |
+| __pycache__ | 2.1 MiB |
+| ensurepip | 1.8 MiB |
+| encodings | 1.8 MiB |
+| email | 704 KiB |
+| asyncio | 573 KiB |
+| pydoc_data | 544 KiB |
+| urllib | 364 KiB |
+| xml | 349 KiB |
+| multiprocessing | 336 KiB |
+| importlib | 312 KiB |
+| http | 300 KiB |
+| logging | 288 KiB |
+| unittest | 280 KiB |
+| _pyrepl | 240 KiB |
+| zipfile | 237 KiB |
+| _pydecimal.py | 224 KiB |
+| re | 220 KiB |
+
+The separate `python/lib/libpython3.13.a` duplicates the 84,181,888-byte archive
+inside `config-*`. Neither is a runtime dependency. The standalone Python
+executable is 40,029,432 bytes and remains. Within site-packages, the largest
+items are USD `pxr` 64 MiB, NumPy 29 MiB warm, Cython 12 MiB, MaterialX 7.4 MiB,
+pip 6.2 MiB, OpenVDB binding 4.9 MiB, PyOpenColorIO 4.4 MiB, setuptools 3.9 MiB,
+docutils 2.5 MiB and OpenImageIO 2.0 MiB. NumPy stays for the measured comparison
+implementation; build/SDK bindings go, small general Python tooling remains.
+
+### Add-ons and datafiles
+
+Commands: `du -sh build/orb/bin/5.3/scripts/addons_core/*` and
+`du -sh build/orb/bin/5.3/datafiles/*`.
+
+| Add-on | Allocated size | Action |
+|---|---:|---|
+| bl_pkg | 1.2 MiB | relocate required runtime |
+| cycles | 3.7 MiB warm | relocate required engine registration |
+| hydra_storm | 20 KiB | remove |
+| io_anim_bvh | 72 KiB | relocate required runtime |
+| io_curve_svg | 88 KiB | relocate required runtime |
+| io_mesh_uv_layout | 40 KiB | relocate required runtime |
+| io_scene_fbx | 584 KiB | keep |
+| io_scene_gltf2 | 1.9 MiB | keep |
+| node_wrangler | 273 KiB | remove |
+| pose_library | 136 KiB | relocate required runtime |
+| rigify | 1.9 MiB | keep |
+| ui_translate | 52 KiB | remove |
+| viewport_vr_preview | 340 KiB | remove |
+
+| Datafiles | Allocated size | Action |
+|---|---:|---|
+| assets | 12 MiB | keep sculpt brush assets |
+| colormanagement | 20 MiB | Standard + factory AgX only |
+| fonts | 15 MiB | Inter face + required filename alias |
+| icons | 660 KiB | remove |
+| studiolights | 4.0 MiB | retain basic.sl |
+
+### Installed binary and shared libraries, descending
+
+Command: `du -sh build/orb/bin/blender build/orb/bin/lib/* | sort -rh`.
+Zero-byte symlink aliases are omitted; each actual library is counted once.
+
+| File (version suffix shortened) | Allocated size | Action |
+|---|---:|---|
+| blender | 185 MiB | keep |
+| libusd_ms | 76 MiB | remove |
+| liboslexec | 61 MiB | remove |
+| libopenvdb | 56 MiB | keep voxel remesh |
+| liboslcomp | 48 MiB | remove |
+| libembree4 | 27 MiB | keep CPU BVH |
+| libur_loader | 17 MiB | required by pinned SYCL |
+| libOpenImageIO | 17 MiB | keep image IO |
+| libOpenColorIO | 6.9 MiB | keep color management |
+| libceres | 5.4 MiB | remove tracking dependency |
+| libsycl | 3.9 MiB | required by pinned Embree |
+| libSDL3 | 2.8 MiB | remove |
+| libdraco | 2.0 MiB | keep glTF |
+| libhiprt0200564 | 1.7 MiB | remove |
+| libur_adapter_level_zero_v2 | 1.4 MiB | retain pinned UR runtime adapter |
+| libOpenEXR | 1.3 MiB | keep image IO dependency |
+| libMaterialXCore | 1.2 MiB | remove |
+| libOpenImageIO_Util | 1.1 MiB | keep |
+| libMaterialXGenShader | 904 KiB | remove |
+| libosdCPU | 820 KiB | keep subdivision |
+| libosdGPU | 816 KiB | keep subdivision |
+| libopenxr_loader | 772 KiB | remove |
+| libMaterialXRender | 584 KiB | remove |
+| libvulkan | 552 KiB | keep observation backend |
+| libIex | 520 KiB | keep image IO dependency |
+| libopenjph | 492 KiB | keep image IO dependency |
+| libMaterialXRenderGlsl | 420 KiB | remove |
+| libMaterialXGenMdl | 416 KiB | remove |
+| libMaterialXGenGlsl | 408 KiB | remove |
+| libOpenEXRCore | 396 KiB | keep |
+| libMaterialXFormat | 320 KiB | remove |
+| libImath | 308 KiB | keep |
+| libMaterialXGenMsl | 300 KiB | remove |
+| libtbb | 292 KiB | keep threading |
+| liboslquery | 228 KiB | remove |
+| libOpenEXRUtil | 208 KiB | keep |
+| libMaterialXGenOsl | 184 KiB | remove |
+| libmeshoptimizer | 152 KiB | keep glTF |
+| libtbbmalloc | 136 KiB | keep allocator |
+| libMaterialXRenderOsl | 92 KiB | remove |
+| libbf_intern_draco_bridge | 72 KiB | keep glTF runtime bridge |
+| liboslnoise | 52 KiB | remove |
+| libIlmThread | 48 KiB | keep |
+| libtbbmalloc_proxy | 28 KiB | keep |
+| libMaterialXRenderHw | 20 KiB | remove |
+| libblender_cpu_check, libbf_intern_meshopt_bridge | 16 KiB each | keep |
 
 ## Measuring
 

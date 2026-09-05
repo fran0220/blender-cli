@@ -62,7 +62,7 @@ tests/agent/
 The workflow directory owns the fork's native compiler gate and full-build CI;
 it does not modify upstream's buildbot integration.
 `source/blender/agent/packaging/` owns install-copy trimming, component accounting,
-Standard-only color configuration extraction and archive creation. It is inside
+observation/startup color configuration extraction and archive creation. It is inside
 the existing agent-owned subtree; upstream install rules remain untouched.
 
 ## Versioning
