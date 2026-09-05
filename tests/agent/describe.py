@@ -156,14 +156,22 @@ def main():
                        {"id": 1, "op": "target", "action": "add"}):
             document = schema["requests"][broken["op"]]
             assert validate(document, broken, document), broken
+        # An exclusive choice the table declares is projected, so a host cannot build a
+        # request the validator then rejects: exec needs code or script, never both.
+        exec_schema = schema["requests"]["exec"]
+        for broken in ({"id": 1, "op": "exec"},
+                       {"id": 1, "op": "exec", "code": "pass", "script": "/tmp/a.py"}):
+            assert validate(exec_schema, broken, exec_schema), broken
         fit_schema = schema["requests"]["fit"]
-        assert validate(fit_schema, {"id": 1, "op": "fit", "params": [{"name": "a", "min": 0}]}, fit_schema)
+        for params in ([{"min": 0, "max": 1}],
+                       [{"name": "a", "path": "b", "min": 0, "max": 1}],
+                       [{"name": "a", "min": 0}]):
+            broken = {"id": 1, "op": "fit", "params": params}
+            assert validate(fit_schema, broken, fit_schema), params
         assert not validate(fit_schema, {"id": 1, "op": "fit",
                                          "params": [{"path": "objects[\"C\"].scale[0]", "min": 0.5, "max": 2}]},
                             fit_schema)
-        # The projection is exactly as strict as the table: an exclusive choice appears
-        # as oneOf when, and only when, the table declares it. `exec`'s code/script XOR
-        # is still enforced only by the runtime validator, so the schema does not claim it.
+        # The projection is exactly as strict as the table, never stricter.
         for op, document in schema["requests"].items():
             assert ("oneOf" in document) == ("exactly_one_of" in requests[op]), op
 
@@ -187,9 +195,8 @@ def main():
             assert error["type"] == "ValueError", error
             assert "describe resolves bpy.* and agent.*" in error["message"], error
             assert "channel and schema" in error["message"], error
-            # A describe path error is an argument error, so design.md requires `line`
-            # to be null. The kernel's error assembly currently reports agent_rna's own
-            # line; the assertion returns here when that is fixed.
+            # An argument error names no user-code line, and never an agent module's own.
+            assert error["line"] is None, error
 
         # --- nearest identifiers, including the one-hop data. search ---
         for receiver in ("bpy.context.object", "bpy.data.objects['Handle']"):
