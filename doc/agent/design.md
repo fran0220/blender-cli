@@ -103,7 +103,7 @@ Result:
   "value": <repr of the last expression, if any>,
   "diff": {
     "added":   [{"type": "OBJECT", "name": "Cube"}, …],
-    "changed": [{"type": "MESH", "name": "Cube", "fields": ["vertices", "polygons"]}],
+    "changed": [{"type": "MESH", "name": "Cube", "fields": ["geometry", "copy_on_eval"]}],
     "removed": []
   },
   "snapshot": "sha256:…",
@@ -130,6 +130,81 @@ On exception:
 The namespace persists across `exec` calls in a session. It is preloaded
 with `bpy`, `bmesh`, `mathutils`, `math` and the `agent` helper module.
 
+#### Phase 1 one-shot contract
+
+Only `exec` and `inspect` are implemented; the other four verbs answer
+`NotImplemented` and exit 1. Session snapshots, observations and RNA error
+suggestions are absent, not placeholder fields. One-shot namespaces are fresh
+and preload `bpy`, `bmesh`, `mathutils`, `math`; `agent` arrives with Phase 2.
+`value` is a string containing the final expression's `repr`, or JSON null if
+there is no final expression. Both AST pieces compile before either executes.
+`ms` measures compilation and execution, excluding file load/save and ID diff.
+Python stdout/stderr are captured, including on `BaseException` (for example
+`SystemExit`). Error `line` is the innermost user-code line, syntax-error line,
+or null for argument/file errors. Native Blender reports go to process stderr.
+C++ owns the command entry, GIL/context and response stream; the installed
+`scripts/modules/agent_runtime.py` uses the Python C API's compiler/evaluator
+and RNA through `bpy`, without wrapping or modifying `bpy`.
+
+`--timeout S` is a positive, finite, cooperative wall-clock deadline checked
+at Python trace events and after execution. Native calls cannot be forcibly
+interrupted; an overdue call raises `TimeoutError` after returning to Python.
+It is not a security sandbox: arbitrary code can disable tracing or terminate
+the process. No file is saved after a failed verb.
+
+The launcher locates its sibling from `/proc/self/exe`, `_NSGetExecutablePath`
+or `GetModuleFileNameW` (with an `argv[0]` fallback on POSIX), then passes
+`--factory-startup --disable-autoexec --command agent`. POSIX replaces itself
+with `execv`; Windows uses Unicode `CreateProcessW`, CRT argument quoting and
+exit-code propagation. `--file F` requires an existing file and loads without
+UI or embedded-script execution. `--save F` creates/writes F; bare `--save`
+writes the `--file` path. Neither creates missing parent directories. Without
+`--file`, the scene is Blender's factory startup, including its default cube.
+To create a cube named `Cube`, start from a saved empty scene or delete the
+default object and mesh first. Human output is indented JSON; `--json` is one
+compact JSON document. No inspection arrays are truncated.
+
+ID diff compares Main's top-level ID lists by `session_uid`; `type` is the
+uppercased upstream ID-type name (for example `OBJECT`, `MESH`, `NODETREE`).
+Added/removed entries contain only type/name; surviving tagged IDs are changed.
+The initial view layer is evaluated before the boundary. C++ samples original
+`ID.recalc` at both boundaries and resets `recalc_after_undo_push` at the start;
+the final mask is accumulated tags OR newly pending recalc bits. This retains
+explicit update tags even when an operator evaluates and clears `ID.recalc`.
+Renames are detected by comparing names and add the `name` group. Entries sort
+by type/name. These are real depsgraph update categories, not property names or
+byte-level equality: tagging an unchanged value may count, and untagged raw
+memory edits do not. Embedded IDs are not separate Main-list entries. Explicit
+undo pushes/restores inside arbitrary code can reset the accumulator; Phase 1
+does not promise a mutation journal across those boundaries.
+
+The exact flag mapping (prefix `ID_RECALC_`) is:
+
+| Flags | Field group |
+|---|---|
+| `TRANSFORM` | `transform` |
+| `GEOMETRY` | `geometry` |
+| `ANIMATION` | `animation` |
+| `PSYS_REDO`, `PSYS_RESET`, `PSYS_CHILD`, `PSYS_PHYS` | `particles` |
+| `SHADING` | `shading` |
+| `SELECT` | `selection` |
+| `BASE_FLAGS` | `base_flags` |
+| `POINT_CACHE` | `point_cache` |
+| `EDITORS` | `editors` |
+| `SYNC_TO_EVAL` (upstream's current copy-on-evaluation flag) | `copy_on_eval` |
+| `SEQUENCER_STRIPS` | `sequencer` |
+| `FRAME_CHANGE` | `frame_change` |
+| `AUDIO_FPS`, `AUDIO_VOLUME`, `AUDIO_MUTE`, `AUDIO_LISTENER`, `AUDIO` | `audio` |
+| `PARAMETERS` | `parameters` |
+| `SOURCE` | `source` |
+| `TAG_FOR_UNDO` | `undo` |
+| `NTREE_OUTPUT` | `node_output` |
+| `HIERARCHY` | `hierarchy` |
+| `COMPOSITOR` | `compositor` |
+
+Reserved/provision bits do not name field groups. Combined upstream masks map
+to each constituent group.
+
 ### `inspect`
 
 ```
@@ -141,6 +216,20 @@ modifiers, materials, vertex/edge/face counts, UV layers), materials
 (node tree summary), armatures (bones), cameras, lights, collections.
 `--full` expands node trees and modifier settings. `--select` takes RNA
 paths for a targeted read. Never truncated.
+
+The Phase 1 response is `{ok, scene, objects, materials, armatures, cameras,
+lights, collections}`. Object `type` is RNA's object type (`MESH`, not ID type
+`OBJECT`); `mesh` contains `vertices`, `edges`, `faces` counts and UV layer names.
+Transforms include all rotation representations, world matrix and dimensions;
+`bounds` are the eight local-space bounding-box corners. Parent/data/material
+references use names. `--object` filters the objects array only; other datablock
+arrays still describe the file. Node-tree summaries include node names/types
+and a link count; `--full` supplies links with socket identifiers, socket default
+values, and all RNA node/modifier settings. Pointer settings use typed name
+references rather than recursively following cyclic graphs. Arrays/collections
+are complete; non-finite RNA floats are strings (`nan`, `inf`, `-inf`) so JSON
+remains valid. `--select` paths resolve relative to `bpy.data` (not `eval`) and
+replace the scene response with `{ok: true, selected: {path: value, ...}}`.
 
 ### `observe`
 
