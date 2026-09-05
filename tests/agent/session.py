@@ -49,8 +49,8 @@ def main():
     ):
         root = Path(directory).resolve()
 
-        def call(*args, ok=True):
-            process = subprocess.run([executable, *map(str, args), "--json"], cwd=root,
+        def call(*args, ok=True, cwd=root):
+            process = subprocess.run([executable, *map(str, args), "--json"], cwd=cwd,
                                      capture_output=True, text=True, timeout=30)
             assert process.returncode == (0 if ok else 1), (args, process.stdout, process.stderr)
             result = json.loads(process.stdout)
@@ -202,11 +202,19 @@ len(mesh.vertices)
         # A failed edit must not contaminate the pending successful snapshot.
         execute("held.location.x = 9; raise RuntimeError('not a snapshot')", ok=False)
         wait_autosave(autosave, first_write)
+        reader = root / "one-shot-reader"
+        reader.mkdir()
+        saved_cube, = call("inspect", "--file", autosave, cwd=reader)["objects"]
+        assert saved_cube["name"] == "RecoveredCube" and saved_cube["location"][0] == 0, saved_cube
         assert execute("(bpy.data.filepath, bpy.data.is_dirty) == saved_state and held.location.x == 9")["value"] == "True"
         # Rollback itself dirties the autosave, even without another successful exec.
         stamp = autosave.stat().st_mtime_ns
         call("session", "rollback", "~1")
         wait_autosave(autosave, stamp)
+        stamp = autosave.stat().st_mtime_ns
+        call("session", "save", "--file", root / "explicit.blend")
+        time.sleep(1.1)
+        assert autosave.stat().st_mtime_ns == stamp, "Explicit save must not dirty the autosave"
         if sys.platform == "win32":
             import ctypes
 
