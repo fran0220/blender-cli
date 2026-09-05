@@ -58,6 +58,8 @@ roles:
   aces_interchange: ACES2065-1
   cie_xyz_d65_interchange: Linear CIE-XYZ D65
   default: Linear Rec.709
+  color_timing: ACEScc
+  compositing_log: ACEScc
 displays:
   sRGB:
     - !<View> {name: Standard, view_transform: Standard, display_colorspace: sRGB}
@@ -70,7 +72,7 @@ active_views: [Standard, Raw]
             block("display_colorspaces", "ColorSpace", "sRGB") + "view_transforms:\n" +
             block("view_transforms", "ViewTransform", "Standard") + "colorspaces:\n" +
             "".join(block("colorspaces", "ColorSpace", name)
-                    for name in ("Linear Rec.709", "ACES2065-1", "Non-Color")))
+                    for name in ("Linear Rec.709", "ACES2065-1", "Non-Color", "ACEScc")))
 
 
 def package(install, output, platform, archive):
