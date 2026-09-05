@@ -595,13 +595,6 @@ class Program:
             self.cache[self.key(len(self.steps))] = after
         return version
 
-    def step(self, code):
-        """Execute `code` as the next step: the recording path without an `exec` request."""
-        before = self.session.current
-        self._run_code(code, f"step {len(self.steps) + 1}")
-        after = self.session.snapshot(None, "program")
-        return self.record_exec(code, before, after)
-
 
 def session_root(session):
     """The session's `.blender-cli` directory, fixed at open before any `os.chdir`."""
@@ -657,11 +650,17 @@ def helper(session=None):
 def request(session, action, **fields):
     """The `program` request: get, set, patch, run, history, rollback, record."""
     program = attach(session)
-    accepted = {"get": (), "set": ("text",), "patch": ("old", "new"), "run": ("from_step",),
-                "history": (), "rollback": ("version",), "record": ("on",)}
+    # Per action: the fields it requires, then the fields it also accepts.
+    accepted = {"get": ((), ()), "set": (("text",), ()), "patch": (("old", "new"), ()),
+                "run": ((), ("from_step",)), "history": ((), ()),
+                "rollback": (("version",), ()), "record": (("on",), ())}
     if action not in accepted:
         raise ValueError("program requires an action: " + "|".join(accepted))
-    unexpected = sorted(set(fields) - set(accepted[action]))
+    required, optional = accepted[action]
+    missing = [name for name in required if name not in fields]
+    if missing:
+        raise ValueError(f"program {action} requires {', '.join(missing)}")
+    unexpected = sorted(set(fields) - set(required) - set(optional))
     if unexpected:
         raise ValueError(f"program {action} does not accept {', '.join(unexpected)}")
     if action == "get":

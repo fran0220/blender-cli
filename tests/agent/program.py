@@ -175,6 +175,14 @@ def main():
             assert full["digest"] == partial, (full["digest"], partial)
             # Memfile IDs are process-local identities, so they do not compare.
             assert full["snapshot"] != edited["snapshot"], full
+            # A second full run of the same version reaches the same content, so the
+            # dynamic reproducibility check does not fire.
+            again = marked("_program = agent_program.attach(agent._session)\n"
+                           "_program.cache.clear()\n"
+                           "_result = _program.run()\n")
+            assert again["digest"] == full["digest"] and again["reproducible"] is True, again
+            assert again["snapshot"] != full["snapshot"], again
+            steps_ran()
             print(f"re-execution: 2 of 3 steps {partial_ms:.1f} ms, "
                   f"3 of 3 steps from the base {full['ms']:.1f} ms", flush=True)
             print(f'program set transcript: ran={edited["ran"]} from_step={edited["from_step"]} '
@@ -217,6 +225,11 @@ def main():
             assert "3 found" in ambiguous["error"]["message"], ambiguous
             absent = program("patch", ok=False, old="not in the program", new="x")
             assert "no match" in absent["error"]["message"], absent
+            # Every action rejects missing and unknown fields.
+            assert "program set requires text" in program("set", ok=False)["error"]["message"]
+            assert "requires an action" in program("nonsense", ok=False)["error"]["message"]
+            unknown = program("get", ok=False, text="x")["error"]["message"]
+            assert "program get does not accept text" in unknown, unknown
             patched = program("patch", old="depth=1.0", new="depth=3.0")
             assert patched["ran"] == [1, 2, 3] and steps_ran() == [1, 2, 3], patched
             assert "depth=3.0" in program("get")["text"]

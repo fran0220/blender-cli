@@ -242,6 +242,11 @@ K lands and finishes after F/T/P/D. L runs on the first build where W is
 - The program is the source of truth for reproducibility; the memfile
   snapshot chain is the source of truth for rollback speed. Both exist; the
   program is not derived from undo and undo is not derived from the program.
+- Memfile snapshot IDs are process-local identities, not content hashes:
+  measured on Linux, three identical full runs of one program produce three
+  different IDs. Anything that must decide whether two states are the same
+  scene uses `agent_program.digest()`, a sha256 over Main's content. Snapshot
+  IDs remain the rollback handle and nothing else.
 - Upstream exceptions beyond registration and build wiring are limited to the
   Vulkan descriptor-pool rollover and the crash-dump path hook, both recorded
   in `doc/agent/upstream.md`.
