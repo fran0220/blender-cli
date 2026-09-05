@@ -43,7 +43,11 @@ Run selected tests with `ctest --test-dir build/orb --output-on-failure -R PATTE
 The tracked `tests/files` LFS fixtures are included. Setup explicitly installs
 `libgl1-mesa-dri`, `libegl-mesa0`, and `mesa-vulkan-drivers`: background EEVEE
 can render using Mesa lavapipe's software Vulkan device without physical GPU
-hardware. This is Linux development evidence, not Metal/macOS or real-GPU
+hardware. Mesa 22.3.6 supports Combined but crashes in `libvulkan_lvp.so` when
+the native EEVEE Z pass is enabled (also reproduced with upstream's render
+operator). Setup upgrades older Mesa to bookworm-backports, verified with
+25.0.7, rather than adding a renderer workaround or changing Blender's pinned
+libraries. This is Linux development evidence, not Metal/macOS or real-GPU
 Vulkan/Windows verification.
 
 ## Setup verification

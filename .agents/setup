@@ -28,6 +28,24 @@ if ((${#missing[@]})); then
 fi
 echo "[setup] System packages ready (${SECONDS}s)"
 
+echo '[setup] Checking Mesa software Vulkan data-pass support'
+# Bookworm's Mesa 22.3.6 renders Combined but crashes in lavapipe on EEVEE's Z pass.
+# Keep Blender's pinned precompiled libraries unchanged; upgrade the system driver.
+mesa_version="$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)"
+if dpkg --compare-versions "$mesa_version" lt 25.0.7; then
+  sudo tee /etc/apt/sources.list.d/blender-mesa.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: bookworm-backports
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+  sudo apt-get update -qq
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    -t bookworm-backports libgl1-mesa-dri libegl-mesa0 mesa-vulkan-drivers
+fi
+echo "[setup] Mesa ready (${SECONDS}s)"
+
 echo '[setup] Checking xPack GCC 14.3.0 and its runtime'
 # Upstream requires GCC >= 14. Debian 12's libstdc++ also cannot compile its
 # constexpr std::string with Clang; xPack uses the existing system sysroot.
