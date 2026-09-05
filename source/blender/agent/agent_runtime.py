@@ -173,7 +173,8 @@ def id_diff(before, after, fields):
             groups.append("name")
         if groups:
             changed.append({**identity(item), "fields": groups})
-    order = lambda item: (item["type"], item["name"])
+
+    def order(item): return (item["type"], item["name"])
     return {"added": sorted(added, key=order), "changed": sorted(changed, key=order),
             "removed": sorted(removed, key=order)}
 
