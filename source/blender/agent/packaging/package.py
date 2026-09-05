@@ -106,7 +106,7 @@ def package(install, output, platform, archive):
     report = {"platform": platform, "installed_bytes": size(install),
               "before": components(resources), "removed": []}
     report["components"] = {}
-    for pattern in ("lib/*", "*.dll", "*.exe", version_dir.name + "/datafiles/*",
+    for pattern in ("lib/*", "blender.shared/*", "*.dll", "*.exe", version_dir.name + "/datafiles/*",
                     version_dir.name + "/scripts/addons_core/*",
                     version_dir.name + "/python/lib/python3.*/*",
                     version_dir.name + "/python/lib/*"):
@@ -200,10 +200,24 @@ def package(install, output, platform, archive):
     # profile options. These correspond to explicitly disabled engines/backends,
     # whose separate Python bindings were removed above. Retain SYCL/UR: the
     # pinned Embree dependency links them even with Cycles GPU devices disabled.
-    libraries = resources / "lib" if platform != "windows-x64" else output
+    libraries = resources / ("blender.shared" if platform == "windows-x64" else "lib")
+    removed_libraries = set()
     for path in sorted(libraries.iterdir()):
-        if re.match(r"(?:lib)?(?:usd|osl|MaterialX|ceres|hiprt|openxr|SDL)", path.name):
+        if re.match(r"(?:lib)?(?:usd|osl|MaterialX|ceres|hiprt|openxr|SDL|OpenImageDenoise|"
+                    r"avcodec|avformat|avdevice|avutil|avfilter|swscale|swresample|sndfile|OpenAL)", path.name):
+            removed_libraries.add(path.name)
             remove(path)
+    if platform == "windows-x64":
+        # Keep upstream's side-by-side assembly identity and runtime layout,
+        # but do not declare DLLs that were removed from this copied package.
+        manifest = libraries / "blender.shared.manifest"
+        previous = size(manifest)
+        text = manifest.read_text(encoding="utf-8")
+        text = re.sub(r'^[^\S\n]*<file name="([^"]+)"/>[^\S\n]*\n',
+                      lambda match: "" if match[1] in removed_libraries else match[0], text, flags=re.M)
+        manifest.write_text(text, encoding="utf-8")
+        report["removed"].append({"path": str(manifest.relative_to(output)),
+                                  "bytes": previous - size(manifest), "present": True})
     result = subprocess.check_output([str(executable), "--version"], text=True)
     version = re.search(r"^blender-cli (\S+)$", result, re.M)[1]
     # The version probe also initializes Python. Remove caches after that last
