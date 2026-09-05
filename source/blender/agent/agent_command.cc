@@ -122,7 +122,15 @@ class AgentCommand : public CommandHandler {
       return 0;
     }
     if (STREQ(argv[0], "--version")) {
-      printf("Blender %s-agent.1\n", BKE_blender_version_string());
+      const char *cycle = STRINGIFY(BLENDER_VERSION_CYCLE);
+      const bool release = STREQ(cycle, "release");
+      printf("Blender %s\nblender-cli %d.%d.%d%s%s-agent.1\n",
+             BKE_blender_version_string(),
+             BLENDER_VERSION / 100,
+             BLENDER_VERSION % 100,
+             BLENDER_VERSION_PATCH,
+             release ? "" : "-",
+             release ? "" : cycle);
       return 0;
     }
     /* Keep Blender's native reports and shutdown output off the protocol stream. */

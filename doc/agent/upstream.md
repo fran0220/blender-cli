@@ -64,9 +64,10 @@ version string of the merged base (for example `5.3.0-alpha`) and `N`
 increments per release. `BKE_blender_version.h` is not modified;
 `blender-cli --version` reports both numbers.
 
-The first implementation reports `-agent.1` appended to upstream's runtime
-version string. This identifies the fork revision series, not a claim that a
-release artifact has been published.
+The first implementation reports upstream's human-readable runtime version and
+a second line `blender-cli 5.3.0-alpha-agent.1`, constructed from the unmodified
+upstream version macros. The cycle suffix is absent for a release base. This
+identifies the fork revision series, not a claim that an artifact was published.
 
 ## Precompiled libraries
 

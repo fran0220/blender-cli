@@ -33,7 +33,7 @@ def main():
         help_result = raw("--help")
         assert help_result.returncode == 0 and "exec" in help_result.stdout, help_result
         version = raw("--version")
-        assert version.returncode == 0 and "-agent.1" in version.stdout, version
+        assert version.returncode == 0 and "blender-cli 5.3.0-alpha-agent.1" in version.stdout, version
 
         # Factory startup really contains Blender's default scene, not an invented empty one.
         startup = call("inspect")
@@ -122,6 +122,7 @@ bpy.ops.object.light_add(type='AREA')
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
         for verb in ("session", "observe", "compare", "describe"):
             assert call(verb, ok=False)["error"]["type"] == "NotImplemented"
+        assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"
         human = raw("exec", "-c", "42")
         assert human.returncode == 0 and json.loads(human.stdout)["value"] == "42", human
     print("agent protocol: all assertions passed")

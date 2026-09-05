@@ -37,8 +37,10 @@ def parse(arguments):
     parser.add_argument("--save", nargs="?", const="")
     parser.add_argument("--json", action="store_true")
     # Later-phase verbs must report NotImplemented even with their future arguments.
-    if arguments[0] not in {"exec", "inspect"}:
+    if arguments[0] in {"session", "observe", "compare", "describe"}:
         raise NotImplemented(f"{arguments[0]} is not implemented in Phase 1")
+    if arguments[0] not in {"exec", "inspect"}:
+        raise ValueError(f"Unknown verb: {arguments[0]}")
     if arguments[0] == "exec":
         parser.add_argument("-c", dest="code")
         parser.add_argument("script", nargs="?")
@@ -64,6 +66,8 @@ def serialize(value):
     """RNA pointers are references, not recursively expanded graphs (which contain cycles)."""
     if value is None or isinstance(value, (str, bool, int)):
         return value
+    if isinstance(value, dict):
+        return {key: serialize(item) for key, item in value.items()}
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, bpy.types.bpy_struct):
@@ -237,6 +241,6 @@ def run(arguments, snapshot, fields):
             result = {"ok": False, "error": {"type": type(error).__name__, "message": str(error), "line": line}}
     if arguments[0] == "exec" or not result["ok"]:
         result.update(stdout=stdout.getvalue(), stderr=stderr.getvalue())
-    text = json.dumps(result, ensure_ascii=True, allow_nan=False,
+    text = json.dumps(serialize(result), ensure_ascii=True, allow_nan=False,
                       indent=None if "--json" in arguments else 2)
     return text, 0 if result["ok"] else 1
