@@ -6,10 +6,15 @@ if(NOT WITH_PYTHON OR WITH_PYTHON_MODULE OR NOT WITH_BLENDER)
   message(FATAL_ERROR "WITH_AGENT requires the Blender executable with embedded Python")
 endif()
 
-set(INC . ../python)
+set(INC . ../python ../makesrna)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
 set(SRC agent_command.cc AGENT_command.hh)
-set(LIB PRIVATE bf::blenkernel PRIVATE bf::blenlib PRIVATE bf::dna)
+set(LIB
+  PRIVATE bf::blenkernel
+  PRIVATE bf::blenlib
+  PRIVATE bf::dna
+  PRIVATE bf::intern::guardedalloc
+)
 blender_add_lib(bf_agent "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
 
 add_executable(blender-cli launcher.cc)
