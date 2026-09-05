@@ -132,8 +132,8 @@ def error_context(error, code, filename):
         pos = instruction.positions
         nodes = [node for node in ast.walk(ast.parse(code)) if isinstance(node, (ast.Attribute, ast.Call))
                  and node.lineno <= tb.tb_lineno <= node.end_lineno
-                 and (node.lineno, node.col_offset) >= (pos.lineno, pos.col_offset)
-                 and (node.end_lineno, node.end_col_offset) <= (pos.end_lineno, pos.end_col_offset)]
+                 and (node.lineno, node.col_offset) == (pos.lineno, pos.col_offset)
+                 and (node.end_lineno, node.end_col_offset) == (pos.end_lineno, pos.end_col_offset)]
         namespace = {**tb.tb_frame.f_globals, **tb.tb_frame.f_locals}
         # Only the failing expression's receiver is read; no user call is re-executed.
         for node in nodes:

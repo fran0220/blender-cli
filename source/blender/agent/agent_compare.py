@@ -76,7 +76,10 @@ def reference(ref, size, policy):
         mask = morphology(morphology(mask, False), True)  # 3x3 opening.
         mask = morphology(morphology(mask, True), False)  # 3x3 closing.
     else:
-        mask = a >= 0.5 if image.channels == 4 else (rgb @ np.array((0.2126, 0.7152, 0.0722))) >= 0.5
+        # `channels` describes storage (usually RGBA even for RGB files); depth uses
+        # ImBuf's source color mode and distinguishes an actual alpha channel.
+        has_alpha = image.depth in (16, 32, 64, 128)
+        mask = a >= 0.5 if has_alpha else (rgb @ np.array((0.2126, 0.7152, 0.0722))) >= 0.5
     tile = np.full((size, size, 3), BACKGROUND, dtype=np.float64)
     silhouette = np.zeros((size, size), dtype=bool)
     x, y = (size - rw) // 2, (size - rh) // 2
