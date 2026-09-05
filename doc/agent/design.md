@@ -273,9 +273,9 @@ thread. A long-running request delays timers until it returns.
 
 The persistent namespace preloads `bpy`, `bmesh`, `mathutils`, `math`, and
 `agent`; one-shot namespaces now also preload `agent`. `agent.snapshot`,
-`rollback`, `diff`, and `history` require a session. Phase 3 implements
-`observe` in both modes. `compare` still raises `NotImplementedError` naming
-Phase 4; `describe` remains unimplemented.
+`rollback`, `diff`, and `history` require a session. `observe`, `compare`, and
+`describe` work in both modes (their contracts are below); no verb remains a
+`NotImplemented` placeholder.
 
 Snapshots restore Blender Main data, **not Python variables or external
 files**. Reacquire RNA references from `bpy.data` after rollback: saved Python
@@ -305,6 +305,8 @@ decodes its retained memfile into an isolated Main using an empty old Main and
 `BLO_READ_SKIP_UNDO_OLD_MAIN`, recomputes user counts, then uses upstream's
 `BLO_write_file` recovery/compression path. It never saves through an operator,
 replaces live Main, or changes live filepath/dirty state or Python references.
+External paths are made absolute in the isolated write so ordinary `--file`
+loading from the recovery directory still finds the snapshot's assets.
 The active snapshot scene is placed first for loading without saved UI.
 Non-memfile-undo data (UI and brushes) is not recovered; linked libraries are
 reloaded from their files, and ordinary blend-save orphan rules apply. Python

@@ -244,6 +244,17 @@ len(mesh.vertices)
         assert cube["name"] == "RecoveredCube" and cube["location"][0] == 0, cube
         new_autosave = root / ".blender-cli" / f'autosave-{recovered["session"]}.blend'
         wait_autosave(new_autosave)
+        call("session", "save", "--file", root / "with-texture.blend")
+        stamp = new_autosave.stat().st_mtime_ns
+        execute("image = bpy.data.images.new('Texture', width=2, height=2); "
+                "image.filepath_raw = '//texture.png'; image.file_format = 'PNG'; image.save(); "
+                "bpy.data.images.remove(image); image = bpy.data.images.load(bpy.path.abspath('//texture.png')); "
+                "image.name = 'Texture'; image.filepath = '//texture.png'; image.use_fake_user = True; "
+                "saved_state = (bpy.data.filepath, bpy.data.is_dirty)")
+        wait_autosave(new_autosave, stamp)
+        selected = call("inspect", "--file", new_autosave, "--select", 'images["Texture"].filepath', cwd=reader)
+        assert selected["selected"]['images["Texture"].filepath'] == str(root / "texture.png"), selected
+        assert execute("image.filepath == '//texture.png' and (bpy.data.filepath, bpy.data.is_dirty) == saved_state")["value"] == "True"
         execute("import os; os.chdir('..')")
         call("session", "close")
         assert not new_autosave.exists() and autosave.exists()
