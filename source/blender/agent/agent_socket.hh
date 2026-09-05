@@ -9,8 +9,12 @@
 #include <string>
 
 #ifdef _WIN32
-#  include <afunix.h>
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
 #  include <winsock2.h>
+
+#  include <afunix.h>
 #else
 #  include <sys/socket.h>
 #  include <sys/un.h>

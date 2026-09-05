@@ -5,7 +5,6 @@
 """Real installed CLI/AF_UNIX session, memfile restoration and latency checks."""
 
 import json
-import os
 from pathlib import Path
 import socket
 import statistics
@@ -98,6 +97,17 @@ len(mesh.vertices)
                 response = json.loads(running.makefile("rb").readline())
                 assert response["id"] == 9001 and response["result"]["error"]["type"] == "Cancelled", response
             assert execute("x")["value"] == "9"
+            # Multiple complete lines on one connection retain order and matching IDs.
+            with socket.socket(socket.AF_UNIX) as pipeline:
+                pipeline.settimeout(10)
+                pipeline.connect(endpoint)
+                for index, code in enumerate(("queued = 40", "queued += 2; queued")):
+                    message = {"id": 9100 + index, "verb": "exec", "args": {"argv": ["-c", code]}}
+                    pipeline.sendall((json.dumps(message) + "\n").encode())
+                stream = pipeline.makefile("rb")
+                first, second = (json.loads(stream.readline()) for _ in range(2))
+                assert first["id"] == 9100 and second["id"] == 9101
+                assert second["result"]["value"] == "42", second
             failed = execute("raise RuntimeError('intentional')", ok=False)
             assert "snapshot" not in failed
             before_count = len(call("session", "history"))
@@ -129,6 +139,21 @@ len(mesh.vertices)
         finally:
             call("session", "close")
         call("session", "open", "--file", root / "absent.blend", ok=False)
+        # A native call cannot be preempted; close still has a bounded forced-exit path.
+        call("session", "open")
+        with socket.socket(socket.AF_UNIX) as hung:
+            hung.connect(endpoint)
+            request = {"id": 9200, "verb": "exec",
+                       "args": {"argv": ["-c", "import time; time.sleep(30)"]}}
+            hung.sendall((json.dumps(request) + "\n").encode())
+            time.sleep(0.1)
+            assert call("session", "close")["forced"] is True
+        assert not Path(endpoint).exists()
+        call("session", "open")
+        execute("import os; os._exit(0)", ok=False)
+        # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
+        call("session", "open")
+        call("session", "close")
     print("agent session: all assertions passed")
 
 
