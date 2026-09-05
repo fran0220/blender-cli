@@ -1,4 +1,4 @@
-# blender-agent build profile
+# blender-cli build profile
 
 Owner of: what the agent build compiles in, what it trims, and how size is
 measured. The profile itself is

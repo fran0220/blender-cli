@@ -1,4 +1,4 @@
-# blender-agent design
+# blender-cli design
 
 Owner of: the process model, the six verbs, their wire shapes, the session
 protocol, observation determinism and the comparison metrics. Constraints
@@ -11,7 +11,7 @@ write `bpy` code, execute it, look at the result, compare with the
 reference, repeat. Every layer between "write code" and "look at the result"
 is cost. `blender-mcp` pays for an MCP server, a socket, a GUI Blender, an
 add-on timer polling every 50 ms, and a viewport screenshot that depends on
-GUI state. blender-agent removes all of it:
+GUI state. blender-cli removes all of it:
 
 ```
 agent ──(code)──▶ one process: Python namespace + Main + eval + offscreen
@@ -31,7 +31,7 @@ Two further cuts shorten the loop more than anything else:
 ## Process model
 
 ```
-┌───────────────────────── blender-agent process ─────────────────────────┐
+┌───────────────────────── blender-cli process ─────────────────────────┐
 │ transport thread(s)      main thread                                     │
 │  AF_UNIX / stdio  ─────▶ queue ─▶ execute ─▶ BLI_timer_execute ─▶ answer │
 │                                     │                                    │
@@ -44,7 +44,7 @@ Two further cuts shorten the loop more than anything else:
   `BKE_blender_cli_command_register` from `creator.cc`. `--command`
   already forces background mode, runs after full initialization and only
   calls `WM_exit` when the handler returns, so a long-lived loop is an
-  ordinary command. `blender-agent` is a launcher for that invocation.
+  ordinary command. `blender-cli` is a launcher for that invocation.
 - Everything that touches `bpy`, RNA or `Main` runs on the main thread.
   Transport threads only move bytes. One request is in flight per session;
   a second request waits in arrival order in memory and is dropped with the
@@ -57,10 +57,10 @@ Two further cuts shorten the loop more than anything else:
 
 ## Modes
 
-- **One-shot**: `blender-agent <verb> … [--file scene.blend] [--save]`.
+- **One-shot**: `blender-cli <verb> … [--file scene.blend] [--save]`.
   Loads, runs, optionally writes, exits. State lives in the `.blend` file.
-- **Session**: `blender-agent session open [--file scene.blend]` starts a
-  daemon bound to `<cwd>/.blender-agent/session.sock`. Any verb run in that
+- **Session**: `blender-cli session open [--file scene.blend]` starts a
+  daemon bound to `<cwd>/.blender-cli/session.sock`. Any verb run in that
   directory connects to it; without a session the verb runs one-shot. State
   lives in the process; `session save` writes the `.blend`.
 

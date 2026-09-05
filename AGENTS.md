@@ -1,6 +1,6 @@
-# blender-agent repository guidance
+# blender-cli repository guidance
 
-blender-agent is a fork of Blender that runs as a **headless, agent-serving
+blender-cli is a fork of Blender that runs as a **headless, agent-serving
 process**: an agent sends Python code in, and gets JSON and one image out. It
 is not a Blender add-on, not an MCP server, not an asset pipeline and not a
 smaller Blender. It is Blender with its GUI entry replaced by a request loop
@@ -78,7 +78,7 @@ until July 2028).
   `build_files/cmake/config/blender_agent.cmake`, its docs under `doc/agent/`
   and its tests under `tests/agent/`. Touches to upstream files are limited
   to the list in `doc/agent/upstream.md`, each marked with a
-  `/* blender-agent */` comment, and kept to registration and build wiring.
+  `/* blender-cli */` comment, and kept to registration and build wiring.
 - **Upstream is merged, never rebased.** `main` is published; upstream
   release tags are merged forward (`git merge v5.2.x`). The fork never
   carries a version shim, dual code path or "legacy" branch for an upstream

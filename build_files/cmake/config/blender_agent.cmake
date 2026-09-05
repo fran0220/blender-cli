@@ -1,8 +1,8 @@
-# SPDX-FileCopyrightText: 2026 blender-agent Authors
+# SPDX-FileCopyrightText: 2026 blender-cli Authors
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# blender-agent: headless, agent-serving build.
+# blender-cli: headless, agent-serving build.
 #
 # Keeps what an agent modelling by code needs: Python, EEVEE offscreen
 # rendering, Cycles CPU for baking, remesh/retopology, booleans, subdivision,

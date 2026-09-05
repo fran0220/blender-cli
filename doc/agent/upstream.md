@@ -30,7 +30,7 @@ fork in `source/blender/agent/`. A merge commit is an ordinary checkpoint.
 
 ## Touched upstream files
 
-Every touch is marked `/* blender-agent */` (or `# blender-agent` in
+Every touch is marked `/* blender-cli */` (or `# blender-cli` in
 CMake/Python) on the line or block it adds. The full list:
 
 | File | Touch |
@@ -59,7 +59,7 @@ tests/agent/
 
 Releases are tagged `v5.2.1-agent.N` where `5.2.1` is the upstream base and
 `N` increments per release. `BKE_blender_version.h` is not modified;
-`blender-agent --version` reports both numbers.
+`blender-cli --version` reports both numbers.
 
 ## Precompiled libraries
 
