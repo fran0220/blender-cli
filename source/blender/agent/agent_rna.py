@@ -7,6 +7,7 @@
 import ast
 import difflib
 import dis
+import inspect
 import types
 
 import bpy
@@ -58,17 +59,31 @@ def operator_module(value):
 
 
 def describe(path):
-    node = ast.parse(path, mode="eval").body
-    namespace = {"bpy": bpy}
-    if isinstance(node, ast.Name):
-        namespace[node.id] = getattr(bpy.types, node.id)
-    if isinstance(node, ast.Attribute):
-        parent = resolve(node.value, namespace)
-        rna = getattr(parent, "bl_rna", None)
-        if isinstance(rna, bpy.types.Struct) and node.attr in rna.properties:
-            return {"kind": "property", "struct": rna.identifier,
-                    **property_info(rna.properties[node.attr])}
-    value = resolve(node, namespace)
+    invalid = f"describe resolves bpy.* and agent.* paths; got {path!r}"
+    try:
+        node = ast.parse(path, mode="eval").body
+        namespace = {"bpy": bpy, "agent": agent}
+        if isinstance(node, ast.Name) and node.id not in namespace:
+            namespace[node.id] = getattr(bpy.types, node.id)
+        if isinstance(node, ast.Attribute):
+            parent = resolve(node.value, namespace)
+            rna = getattr(parent, "bl_rna", None)
+            if isinstance(rna, bpy.types.Struct) and node.attr in rna.properties:
+                return {"kind": "property", "struct": rna.identifier,
+                        **property_info(rna.properties[node.attr])}
+        value = resolve(node, namespace)
+    except (AttributeError, KeyError, IndexError, SyntaxError, ValueError, TypeError):
+        raise ValueError(invalid) from None
+    if value is agent:
+        return {"kind": "module", "path": path, "doc": inspect.getdoc(value), "functions": {
+            name: describe("agent." + name) for name, function in inspect.getmembers(agent, inspect.isfunction)
+            if not name.startswith("_")}}
+    if inspect.isfunction(value) and value.__module__ == "agent":
+        signature = inspect.signature(value)
+        return {"kind": "function", "signature": path + str(signature), "doc": inspect.getdoc(value),
+                "parameters": [{"name": parameter.name,
+                                "default": None if parameter.default is inspect.Parameter.empty
+                                else repr(parameter.default)} for parameter in signature.parameters.values()]}
     if operator_module(value):
         return {"kind": "module", "path": path, "operators": {
             name: getattr(value, name).get_rna_type().description for name in sorted(dir(value))}}
@@ -85,7 +100,7 @@ def describe(path):
         return result
     if hasattr(value, "bl_rna"):
         return {"kind": "struct", **struct_info(value.bl_rna)}
-    raise ValueError("Path does not identify an RNA struct, property, operator or operator module")
+    raise ValueError(invalid)
 
 
 def attribute_context(parent, name):
@@ -103,6 +118,12 @@ def attribute_context(parent, name):
     else:
         return None
     result["nearest"] = difflib.get_close_matches(name, sorted(identifiers), n=5, cutoff=0.6)
+    if rna and not result["nearest"]:
+        data_rna = getattr(getattr(parent, "data", None), "bl_rna", None)
+        if isinstance(data_rna, bpy.types.Struct):
+            matches = difflib.get_close_matches(
+                name, sorted(set(data_rna.properties.keys()) | set(data_rna.functions.keys())), n=5, cutoff=0.6)
+            result["nearest"] = ["data." + match for match in matches]
     if rna and result["nearest"] and result["nearest"][0] in rna.properties:
         prop = rna.properties[result["nearest"][0]]
         result["type"] = prop.type.lower() + (f"[{prop.array_length}]" if getattr(prop, "is_array", False) else "")

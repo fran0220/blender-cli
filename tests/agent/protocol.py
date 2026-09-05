@@ -132,6 +132,20 @@ collection.objects.link(obj)
         assert call("compare", ok=False)["error"]["type"] == "ValueError"
         described = call("describe", "bpy.types.Object.location")
         assert described["type"] == "float" and described["array_length"] == 3, described
+        helper = call("describe", "agent.compare")
+        assert helper["kind"] == "function" and "fit='bbox'" in helper["signature"], helper
+        assert helper["doc"] and {p["name"]: p["default"] for p in helper["parameters"]}["metrics"] == "('iou',)"
+        module = call("describe", "agent")
+        assert set(module["functions"]) == {"observe", "compare", "describe", "snapshot", "rollback", "diff", "history"}
+        assert all(function["doc"] for function in module["functions"].values()), module
+        for path in ("foo", "agent.no_such_helper", "bpy.types.NoSuchStruct", "__import__('os')"):
+            error = call("describe", path, ok=False)["error"]
+            assert error["type"] == "ValueError" and "describe resolves bpy.* and agent.*" in error["message"], error
+            assert "line" not in error, error
+        for receiver in ("bpy.context.object", "bpy.data.objects['Handle']"):
+            error = call("exec", "-c", "bpy.ops.curve.primitive_bezier_circle_add(); "
+                         "bpy.context.object.name = 'Handle'; " + receiver + ".bevel_dept", ok=False)["error"]
+            assert "data.bevel_depth" in error["rna"]["nearest"], error
         separate_inline = call("observe", "--layout", "separate", "--inline", ok=False)
         assert "one image" in separate_inline["error"]["message"], separate_inline
         assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"

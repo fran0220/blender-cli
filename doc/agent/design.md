@@ -640,8 +640,15 @@ context satisfies.
 
 `describe` and `agent.describe(path)` resolve public attributes and literal
 string/integer subscripts, never calls or arbitrary expressions. A bare name
-is relative to `bpy.types`. Instance paths return the instance's live struct.
-Results have `kind: property|struct|operator|module`; CLI adds `ok: true`.
+is relative to `bpy.types` (except `agent`). Instance paths return the instance's live struct.
+Results have `kind: property|struct|operator|module|function`; CLI adds `ok: true`.
+`describe agent.compare` and other public helpers use Python `inspect.signature`
+and docstrings: `{kind: "function", signature: "agent.compare(...)", doc: string,
+parameters: [{name: string, default: string|null}, ...]}`. Defaults are Python
+repr strings; null means a required parameter. `describe agent` returns
+`{kind: "module", path: "agent", doc: string, functions: {name: function_record}}`.
+Unresolvable paths raise `ValueError` naming the supported `bpy.*`/`agent.*`
+roots and supplied path. CLI describe errors never include internal `line` fields.
 Structs include `struct`, `description`, `base` (nullable), and `properties`
 keyed by identifier. Property records include identifier, description, lowercase
 type, subtype, animatable, readonly, and where applicable array_length, default,
@@ -656,7 +663,10 @@ Exec errors retain their original type/message/line. Attribute failures on RNA
 instances/types and operator modules add `error.rna.struct` and up to five
 `nearest` identifiers, ranked by Python difflib SequenceMatcher similarity
 (cutoff 0.6, sorted candidate names for deterministic ties). Candidates come
-from live properties/functions or module operators. A nearest property also
+from live properties/functions or module operators. If the struct has no near
+match, its `data` pointer's live RNA properties/functions are searched one hop
+and hints are prefixed with `data.`, e.g. `data.bevel_depth` on a curve Object.
+A nearest property also
 supplies compact type, e.g. `float[3]`. Property assignment TypeError/ValueError
 adds the live property record (including enum descriptions and numeric ranges).
 Operator argument failures add the operator struct's complete valid properties.

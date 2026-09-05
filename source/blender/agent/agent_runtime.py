@@ -302,6 +302,8 @@ def run(arguments, snapshot, fields, session=None):
             user_frames = [frame for frame in frames if frame.filename != __file__]
             line = getattr(error, "lineno", None) or (user_frames[-1].lineno if user_frames else None)
             result = {"ok": False, "error": {"type": type(error).__name__, "message": str(error), "line": line}}
+            if arguments[0] == "describe":
+                result["error"].pop("line")
             if getattr(error, "_agent_rna", None):
                 result["error"]["rna"] = error._agent_rna
     if arguments[0] == "exec" or not result["ok"]:
