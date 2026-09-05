@@ -230,15 +230,18 @@ region's silhouettes before and after (before red, after cyan, agreement
 white, neither RGB 32); `error` is the target's silhouette error map
 (missing red, extra blue) for the worst region, or, when the feedback render
 itself failed, a `message` and no image at all; `full` is a whole frame at
-budget size. `inline` is present on the `repl` and socket transports; `path`
-on all transports.
+budget size.
 
 The image provider sends one image per budget view per action, and nothing
 when the view's changed fraction is below `threshold`. A view the agent has
 never seen has nothing to be a delta against and is sent `full`; `mode:
 "full"` sends whole frames thereafter, `mode: "delta"` sends the crop and,
-with `overlay` on, the overlay beside it. Files are written under
-`.blender-cli/feedback/`, named by the content hash of the PNG.
+with `overlay` on, the overlay beside it. An image event carries `path` or
+`inline`, never both: by default the PNG is written under
+`.blender-cli/feedback/` and named by its content hash, and with the image
+policy's `inline` set the base64 payload replaces it. The policy is per
+session and per request, so a host without a shared filesystem asks for
+inline once and a host with one never pays for base64.
 
 ## Feedback provider registry
 

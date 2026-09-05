@@ -5,7 +5,6 @@
 """Pushed feedback on real scenes: perception fields, delta images, budgets and cost."""
 
 import ast
-import base64
 import json
 from pathlib import Path
 import subprocess
@@ -15,28 +14,18 @@ import tempfile
 from gpu import require_device
 from observe import read_png
 
-# Every step reports the events one action produces and what producing them cost.
-DRIVE = """
-import json as _json, time as _time, agent_feedback as _feedback
-_start = _time.perf_counter()
-_events = _feedback.run({request})
-_json.dumps({{"ms": (_time.perf_counter() - _start) * 1000, "events": _events}})
+RENDER = """
+import time
+from agent_observe import render_budget
+_start = time.perf_counter()
+render_budget(['front'], 256)
+(time.perf_counter() - _start) * 1000
 """
 
 SCENE = """
 bpy.ops.mesh.primitive_ico_sphere_add(radius=0.5, location=(-3, 0, 0))
 bpy.ops.mesh.primitive_ico_sphere_add(radius=0.5, location=(3, 0, 0))
 """
-
-
-def images(payload):
-    return [event for event in payload["events"] if event["event"] == "image"]
-
-
-def sole(payload, name):
-    matches = [event for event in payload["events"] if event["event"] == name]
-    assert len(matches) == 1, (name, payload["events"])
-    return matches[0]
 
 
 def covers(outer, inner, slack=0):
@@ -68,43 +57,66 @@ def main():
                                      capture_output=True, text=True, timeout=900)
             assert process.returncode == (0 if ok else 1), (args, process.returncode,
                                                             process.stdout, process.stderr)
-            result = json.loads(process.stdout)
-            assert result.get("ok", True) == ok, result
-            return result
+            envelope = json.loads(process.stdout)
+            assert envelope.get("ok", True) == ok, envelope
+            return envelope
 
-        def drive(code, request="None"):
-            result = call("exec", "-c", "import agent_feedback\n" + code +
-                          DRIVE.format(request=request))
-            return json.loads(ast.literal_eval(result["value"]))
+        def execute(code, *args, ok=True):
+            return call("exec", "-c", code, *args, ok=ok)
+
+        def stream(request):
+            """One request over `repl`, answered as the event stream itself."""
+            process = subprocess.Popen([executable, "repl"], cwd=root, text=True,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            events = []
+            try:
+                process.stdin.write(json.dumps(request) + "\n")
+                process.stdin.flush()
+                for line in process.stdout:
+                    events.append(json.loads(line))
+                    if events[-1]["event"] in ("done", "error"):
+                        break
+            finally:
+                process.stdin.close()
+                process.wait(timeout=120)
+            assert all(event["id"] == request["id"] for event in events), events
+            return events
 
         def picture(event):
-            data = (base64.b64decode(event["inline"]) if "inline" in event
-                    else Path(event["path"]).read_bytes())
-            width, height, _ = read_png(data)
+            width, height, _ = read_png(Path(event["path"]).read_bytes())
             assert event["size"] == [width, height], event
             x0, y0, x1, y1 = event["region"]
             assert [width, height] == [x1 - x0, y1 - y0], event
-            return data
+            return Path(event["path"]).read_bytes()
 
         call("session", "open")
         try:
+            defaults = call("session", "status")["feedback"]
+            assert (defaults["perception"], defaults["objective"]) == (True, True), defaults
+            assert defaults["image"]["mode"] == "delta", defaults
+            assert defaults["image"]["threshold"] == 0.002, defaults
+            assert defaults["image"]["views"] == ["front"], defaults
+            assert defaults["image"]["pass"] == "color", defaults
+            assert defaults["image"]["size"] == 256, defaults
+            assert defaults["image"]["overlay"] is True, defaults
+
             # An agent that has seen nothing gets a whole frame, and no delta to compare with.
-            first = drive("bpy.ops.wm.read_factory_settings(use_empty=True)")
-            empty = sole(first, "perception")
+            first = execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
+            empty = first["perception"]
             assert empty["changed"] is None, empty
             assert (empty["objects"], empty["verts"], empty["faces"]) == (0, 0, 0), empty
             assert empty["bounds"] == {"low": [-1, -1, -1], "high": [1, 1, 1]}, empty
             assert empty["dims"] == [2, 2, 2], empty
             assert empty["framing"]["objects"] == [], empty
             assert empty["symmetry"] == {"x": 1.0, "y": None, "z": 1.0}, empty
-            whole = sole(first, "image")
+            whole, = first["images"]
             assert (whole["kind"], whole["view"], whole["pass"]) == ("full", "front", "color"), whole
             assert whole["region"] == [0, 0, 256, 256] and whole["size"] == [256, 256], whole
             assert Path(whole["path"]).parent == root / ".blender-cli" / "feedback", whole
             picture(whole)
 
-            added = drive("bpy.ops.mesh.primitive_cube_add(size=1)")
-            cube = sole(added, "perception")
+            added = execute("bpy.ops.mesh.primitive_cube_add(size=1)")
+            cube = added["perception"]
             assert (cube["objects"], cube["verts"], cube["faces"]) == (1, 8, 6), cube
             assert cube["bounds"] == {"low": [-0.5, -0.5, -0.5], "high": [0.5, 0.5, 0.5]}, cube
             assert cube["framing"]["objects"] == ["Cube"], cube
@@ -115,14 +127,13 @@ def main():
             assert cube["changed"]["silhouette_delta"] == 1.0, cube
             assert cube["symmetry"]["x"] > 0.999 and cube["symmetry"]["z"] > 0.999, cube
             assert cube["symmetry"]["y"] is None, cube
-            assert [event["kind"] for event in images(added)] == ["delta", "overlay"], added
-            print("cube add:", json.dumps(cube), flush=True)
-            print("cube add images:", json.dumps(images(added)), flush=True)
+            assert [event["kind"] for event in added["images"]] == ["delta", "overlay"], added
+            print("cube add perception:", json.dumps(cube), flush=True)
+            print("cube add images:", json.dumps(added["images"]), flush=True)
 
             # Anchors fix the automatic framing so a later move is a local change, not a rescale.
-            anchored = drive(SCENE)
+            counts = execute(SCENE)["perception"]
             state = call("inspect")
-            counts = sole(anchored, "perception")
             assert counts["objects"] == len(state["objects"]), (counts, state["scene"])
             assert counts["verts"] == sum(obj["mesh"]["vertices"] for obj in state["objects"]), counts
             assert counts["faces"] == sum(obj["mesh"]["faces"] for obj in state["objects"]), counts
@@ -134,18 +145,18 @@ def main():
             assert set(counts["changed"]["objects"]) == {"Icosphere", "Icosphere.001"}, counts
 
             # An action that changes nothing still reports perception, with zero deltas.
-            unchanged = drive("pass")
-            same = sole(unchanged, "perception")
+            unchanged = execute("pass")
+            same = unchanged["perception"]
             assert same["changed"] == {"objects": [], "view": "front", "region": None,
                                        "fraction": 0.0, "silhouette_delta": 0.0}, same
-            assert images(unchanged) == [], unchanged
+            assert "images" not in unchanged, unchanged
             assert same["symmetry"] == counts["symmetry"], (same, counts)
             print("unchanged perception:", json.dumps(same), flush=True)
 
             # Moving inside the anchors' bounds leaves the framing alone, so this is a
             # local change: the cube's old and new pixels, and nothing else.
-            moved = drive("bpy.data.objects['Cube'].location.x += 0.5")
-            shifted = sole(moved, "perception")
+            moved = execute("bpy.data.objects['Cube'].location.x += 0.5")
+            shifted = moved["perception"]
             assert shifted["changed"]["objects"] == ["Cube"], shifted
             assert shifted["bounds"] == counts["bounds"], shifted
             assert 0.002 < shifted["changed"]["fraction"] < 0.2, shifted
@@ -154,72 +165,80 @@ def main():
             region = shifted["changed"]["region"]
             assert covers(region, union, slack=3), (region, union)
             assert covers(union, region, slack=3), (region, union)
-            delta, overlay = images(moved)
-            assert delta["kind"] == "delta" and overlay["kind"] == "overlay", images(moved)
+            delta, overlay = moved["images"]
+            assert delta["kind"] == "delta" and overlay["kind"] == "overlay", moved["images"]
             assert covers(delta["region"], region), (delta, region)
             assert covers(delta["region"], union, slack=3), (delta, union)
             assert delta["region"] == overlay["region"], (delta, overlay)
             assert delta["size"][0] < 256 and delta["size"][1] < 256, delta
             assert picture(delta) != picture(overlay)
-            print("cube move:", json.dumps(shifted), flush=True)
-            print("cube move images:", json.dumps(images(moved)), flush=True)
+            print("cube move perception:", json.dumps(shifted), flush=True)
+            print("cube move images:", json.dumps(moved["images"]), flush=True)
             print("cube pixels before and after the move:", [round(value, 1) for value in union],
                   flush=True)
 
             # A change under the threshold is a perception number, not an image.
-            quiet = drive("agent_feedback.configure({'image': {'threshold': 0.5}})\n"
-                          "bpy.data.objects['Cube'].location.x -= 0.5")
-            assert sole(quiet, "perception")["changed"]["fraction"] > 0.002, quiet
-            assert images(quiet) == [], quiet
+            call("session", "feedback", "image.threshold=0.5")
+            quiet = execute("bpy.data.objects['Cube'].location.x -= 0.5")
+            assert quiet["perception"]["changed"]["fraction"] > 0.002, quiet
+            assert "images" not in quiet, quiet
 
-            silent = drive("agent_feedback.configure({'image': {'threshold': 0.002, 'mode': 'off'}})\n"
-                           "bpy.data.objects['Cube'].location.z += 0.5")
-            assert sole(silent, "perception")["changed"]["fraction"] > 0.002, silent
-            assert images(silent) == [], silent
+            call("session", "feedback", "image.threshold=0.002")
+            policy = call("session", "feedback", "image.mode=off")
+            assert policy["feedback"]["image"]["mode"] == "off", policy
+            assert policy["feedback"]["image"]["threshold"] == 0.002, policy
+            silent = execute("bpy.data.objects['Cube'].location.z += 0.5")
+            assert silent["perception"]["changed"]["fraction"] > 0.002, silent
+            assert "images" not in silent, silent
+            call("session", "feedback", "image.mode=delta")
 
-            # One request may ask for more picture than the session policy pushes.
-            asked = drive("agent_feedback.configure({'image': {'mode': 'delta'}})\n"
-                          "bpy.data.objects['Cube'].location.z -= 0.5",
-                          request="{'feedback': {'image': {'mode': 'full'}}, 'inline': True}")
-            frame = sole(asked, "image")
+            # One request may ask for more picture than the session policy pushes,
+            # over the channel the policy override is defined on.
+            asked = stream({"id": 31, "op": "exec", "feedback": {"mode": "full"},
+                            "code": "bpy.data.objects['Cube'].location.z -= 0.5"})
+            frame, = [event for event in asked if event["event"] == "image"]
             assert frame["kind"] == "full" and frame["size"] == [256, 256], frame
-            assert base64.b64decode(frame["inline"]) == Path(frame["path"]).read_bytes(), frame
+            assert [event["event"] for event in asked[-4:]] == ["diff", "perception", "image",
+                                                                "done"], asked
             picture(frame)
+            assert call("session", "status")["feedback"]["image"]["mode"] == "delta"
 
-            # agent_feedback.perceive() samples without advancing what the agent last saw.
-            paired = drive("bpy.ops.mesh.primitive_cone_add(radius1=0.4, location=(0, 0, 1))\n"
-                           "SAMPLE = agent_feedback.perceive()")
-            sample = json.loads(ast.literal_eval(call(
-                "exec", "-c", "import json; json.dumps(SAMPLE)")["value"]))
-            event = sole(paired, "perception")
-            assert sample == {key: value for key, value in event.items() if key != "event"}, \
-                (sample, event)
-            print("perceive matches the event:", json.dumps(sample["changed"]), flush=True)
+            # agent.perceive() samples without advancing what the agent last saw.
+            paired = execute("bpy.ops.mesh.primitive_cone_add(radius1=0.4, location=(0, 0, 1))\n"
+                             "import json; json.dumps(agent.perceive())")
+            assert json.loads(ast.literal_eval(paired["value"])) == paired["perception"], paired
+            print("perceive matches the event:", json.dumps(paired["perception"]["changed"]),
+                  flush=True)
 
             # A budget view the scene cannot render is an image event, never a failed request.
-            broken = drive("agent_feedback.configure({'image': {'views': ['camera']}})")
-            failure = sole(broken, "image")
+            call("session", "feedback", 'image.views=["camera"]')
+            broken = execute("bpy.data.objects['Cube'].location.x += 0.25")
+            failure, = broken["images"]
             assert failure["kind"] == "error" and failure["view"] == "camera", failure
             assert "scene.camera" in failure["message"], failure
             assert "path" not in failure and "region" not in failure, failure
-            log = sole(broken, "log")
-            assert log["stream"] == "stderr" and "perception" in log["text"], log
-            assert not [event for event in broken["events"] if event["event"] == "perception"], broken
-            print("render failure:", json.dumps([failure, log]), flush=True)
+            assert "perception" not in broken, broken
+            assert "provider perception" in broken["stderr"], broken
+            print("render failure:", json.dumps(failure), broken["stderr"].strip(), flush=True)
 
-            recovered = drive("agent_feedback.configure({'image': {'views': ['front']}})")
-            assert sole(recovered, "perception")["changed"]["fraction"] == 0.0, recovered
+            # A failed render never advanced the baseline, so the next one reports the
+            # change the agent was not shown, rather than losing it.
+            call("session", "feedback", 'image.views=["front"]')
+            recovered = execute("pass")
+            assert recovered["perception"]["changed"]["fraction"] > 0.002, recovered
+            assert [event["kind"] for event in recovered["images"]] == ["delta", "overlay"], recovered
+            assert execute("pass")["perception"]["changed"]["fraction"] == 0.0
 
-            costs = {"cube": [drive("pass")["ms"] for _ in range(3)]}
-            grid = drive("bpy.ops.object.select_all(action='SELECT')\n"
-                         "bpy.ops.object.delete(use_global=False)\n"
-                         "bpy.ops.mesh.primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)\n"
-                         "bpy.context.object.rotation_euler[0] = 0.6\n")
-            million = sole(grid, "perception")
-            assert million["verts"] == 1002001, million
-            costs["grid"] = [drive("pass")["ms"] for _ in range(3)]
-            print("feedback cycle ms (1,002,001-vertex grid add):", grid["ms"], flush=True)
-            print("feedback cycle ms:", json.dumps(costs), flush=True)
+            costs = {"cube": [execute("pass")["ms"] for _ in range(3)],
+                     "cube render": ast.literal_eval(execute(RENDER)["value"])}
+            grid = execute("bpy.ops.object.select_all(action='SELECT')\n"
+                           "bpy.ops.object.delete(use_global=False)\n"
+                           "bpy.ops.mesh.primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)\n"
+                           "bpy.context.object.rotation_euler[0] = 0.6\n")
+            assert grid["perception"]["verts"] == 1002001, grid["perception"]
+            costs["grid"] = [execute("pass")["ms"] for _ in range(3)]
+            costs["grid render"] = ast.literal_eval(execute(RENDER)["value"])
+            print("action ms including one feedback cycle:", json.dumps(costs), flush=True)
         finally:
             call("session", "close")
     print("agent feedback: all assertions passed", flush=True)

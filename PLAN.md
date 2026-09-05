@@ -81,38 +81,43 @@ rendering; the renderer's determinism and `framing` contract are frozen).
 
 | Item | Status |
 |---|---|
-| Perception provider: counts, bounds, framing, changed region/fraction, silhouette delta, symmetry, at 256 px front view by default | done on Linux — `agent_feedback.Perception`, proven by `tests/agent/feedback.py` |
-| Image provider: delta/overlay/full/error kinds, threshold, budget views/pass/size, region crop; overlay against the previous state | done on Linux — `agent_feedback.Image`; a failed budget render is an `error` image event, never a failed request |
-| Perception caches the previous feedback render per view so deltas cost one render per action | done on Linux — one action costs exactly one budget render; see the measurements below |
-| `agent.perceive()` helper; provider registration at session start | unverified — `agent_feedback.perceive()` works and equals the event; it becomes `agent.perceive` and the providers are registered when K's registry lands, replacing the interim `agent_feedback.run()` driver |
+| Perception provider: counts, bounds, framing, changed region/fraction, silhouette delta, symmetry, at 256 px front view by default | done on Linux — `agent_feedback.Perception`, order 200, proven by `tests/agent/feedback.py` |
+| Image provider: delta/overlay/full/error kinds, threshold, budget views/pass/size, region crop; overlay against the previous state | done on Linux — `agent_feedback.Image`, order 400; a failed budget render is an `error` image event carrying its message, never a failed request |
+| Perception caches the previous feedback render per view so deltas cost one render per action | done on Linux — an action costs exactly one budget render; see the measurements below |
+| `agent.perceive()` helper; provider registration at session start | done on Linux — `agent_feedback.register(session)` runs from K's `PROVIDER_MODULES` and installs both providers and the `perceive` helper; `agent.perceive()` equals the request's own perception event |
+| `inline` image payloads on the repl and socket transports | todo — the provider emits `inline` and omits `path` when `image.inline` is set; the policy field itself is K's `DEFS["image_policy"]` |
 
-Feedback cycle cost, Linux orb (Release, xPack GCC 14.3.0, software Vulkan
-`lavapipe`), one action at the default 256 px front budget view, measured as
-the whole provider cycle and as the budget render alone inside it:
+Feedback cycle cost, Linux orb at `origin/main` ≥ 7f47e733 (Release, xPack GCC
+14.3.0, software Vulkan `lavapipe`, stock `vm.max_map_count` 65530), one action
+at the default 256 px front budget view. "Action" is the `done` event's `ms`
+for an `exec` that runs `pass`, so it is the feedback cycle plus a trivial
+statement; "render" times `render_budget` alone inside the same session:
 
-| Scene | Cycle (ms) | Budget render alone (ms) |
+| Scene | Action (ms) | Budget render alone (ms) |
 |---|---|---|
-| Cube, 8 vertices | 2742.6, 2685.7, 2639.0 | 2555.5, 2761.4, 2751.5 |
-| `primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)` — 1,002,001 vertices | 30987.2, 29141.5, 29536.4 | 30753.0, 29435.8, 29737.7 |
+| Cube and two anchors, 92 vertices | 2435.4, 2417.5, 2296.6 | 2480.4 |
+| `primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)` — 1,002,001 vertices | 24926.6, 25015.9, 24993.7 | 29651.6 |
 
 The cycle is the render. Everything the providers add — the changed-region
 scan, IoU, symmetry, the crops and the PNGs — stays inside the render's own
-run-to-run variance; the only measurable addition is about 100 ms to encode a
-whole 256 px frame on an action's first image. The render cost is the
-observation renderer's, not the feedback channel's, and it is not resolution
-bound on this device: 512 px costs 3.36 s where 256 px costs 2.54 s. Two
-levers exist, both needing product-platform evidence before they are taken:
+run-to-run variance. The cost is the observation renderer's, not the feedback
+channel's, and on this device it is bound by EEVEE samples rather than by
+pixels: at 32 samples the cube's budget render costs 2633.9/2708.6 ms at
+256 px and 3395.4 ms at 512 px. Two levers exist, both needing
+product-platform evidence before they are taken:
 
 - EEVEE samples. The budget render inherits observation's 32 samples. On the
-  cube, 32 samples cost 2537.9/2682.4 ms, 8 samples 858.2/857.5 ms and 1
-  sample 335.9 ms. This is a decision for the objective provider too, which
-  scores targets from the same buffers.
+  cube: 32 samples 2633.9/2708.6 ms, 8 samples 818.1/780.0 ms, 1 sample
+  455.5/329.1 ms. On the grid: 32 samples 25356.5/23760.9 ms, 8 samples
+  9708.5 ms. This is a decision for the objective provider too, which scores
+  targets from the same buffers.
 - Skipping the render when Main did not change. The grid's remaining cost is
-  `render_scene` 3.8 s (per-action Python conversion and the framing point
-  list) and `aim` 1.3 s (1,002,001 `mathutils` projections) before EEVEE's
-  24 s. An action whose memfile hash is unchanged cannot have changed the
-  picture; that test needs K's post-request snapshot, and the ID diff is not
-  a safe substitute because an in-code rollback resets its accumulator.
+  `render_scene` 3.3 s (per-action Python conversion and the framing point
+  list) and `aim` 1.2 s (1,002,001 `mathutils` projections) before EEVEE.
+  An action whose memfile hash is unchanged cannot have changed the picture;
+  that test needs the post-request snapshot to be taken before the perception
+  provider runs, and the ID diff is not a safe substitute because an in-code
+  rollback resets its accumulator.
 
 ### T — targets, objective and `fit`
 
