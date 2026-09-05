@@ -122,7 +122,12 @@ inline bool socket_would_block()
 #ifdef _WIN32
   return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
-  return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+#  if EAGAIN != EWOULDBLOCK
+  if (errno == EWOULDBLOCK) {
+    return true;
+  }
+#  endif
+  return errno == EAGAIN || errno == EINTR;
 #endif
 }
 }  // namespace blender::agent
