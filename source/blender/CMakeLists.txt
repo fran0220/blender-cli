@@ -170,3 +170,8 @@ endif()
 if(WITH_CPU_CHECK)
   add_subdirectory(cpucheck)
 endif()
+
+# blender-cli
+if(WITH_AGENT)
+  add_subdirectory(agent)
+endif()

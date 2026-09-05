@@ -180,6 +180,9 @@ set(CMAKE_OPTIMIZE_DEPENDENCIES ON CACHE INTERNAL "")
 # -----------------------------------------------------------------------------
 # Declare Options
 
+# blender-cli
+option(WITH_AGENT "Build the agent command and blender-cli launcher" OFF)
+
 # Blender internal features
 option(WITH_BLENDER "Build Blender (disable to build only Cycles stand-alone)." ON)
 mark_as_advanced(WITH_BLENDER)

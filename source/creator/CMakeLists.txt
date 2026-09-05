@@ -26,6 +26,13 @@ set(LIB
   PRIVATE bf::dependencies::opencolorio
 )
 
+# blender-cli
+if(WITH_AGENT)
+  list(APPEND LIB PRIVATE bf_agent)
+  list(APPEND INC ../blender/agent)
+  add_definitions(-DWITH_AGENT)
+endif()
+
 if(HAVE_FEENABLEEXCEPT)
   add_definitions(-DHAVE_FEENABLEEXCEPT)
 endif()

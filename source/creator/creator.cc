@@ -58,6 +58,11 @@
 #include "BKE_vfont.hh"
 #include "BKE_volume.hh"
 
+/* blender-cli */
+#ifdef WITH_AGENT
+#  include "AGENT_command.hh"
+#endif
+
 #ifndef WITH_PYTHON_MODULE
 #  include "BLI_args.hh"
 #endif
@@ -610,6 +615,11 @@ int main(int argc,
 #endif
 
   WM_init(C, argc, argv);
+
+  /* blender-cli */
+#ifdef WITH_AGENT
+  blender::agent::command_register();
+#endif
 
 #ifndef WITH_PYTHON
   fprintf(stderr,
