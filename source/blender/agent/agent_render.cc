@@ -6,6 +6,7 @@
 
 #include "BKE_context.hh"
 #include "BKE_global.hh"
+#include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BLI_listbase.hh"
 #include "BLI_utildefines.hh"
@@ -31,6 +32,9 @@ PyObject *render(bContext *C, PyObject *scene_name)
   }
   if (!scene) {
     return PyErr_Format(PyExc_KeyError, "No observation scene: %s", name);
+  }
+  for (ViewLayer &layer : scene->view_layers) {
+    BKE_view_layer_synced_ensure(*bmain, scene, &layer);
   }
   /* The full engine path owns lazy WM_init_gpu_offscreen and GPU context enable/disable.
    * Unlike the render operator, this does not create a Render Result Image in Main,
