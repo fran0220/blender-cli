@@ -432,8 +432,9 @@ other geometry data is copied. Existing materials are retained for color.
 Mesh instances copy evaluated `object.data`, including its material slots:
 `new_from_object(..., preserve_all_data_layers=True)` can re-evaluate a temporary
 Geometry Nodes object's instancer instead of its instance mesh. Framing uses
-the instance transform and instance mesh bounds; real objects still use mesh
-conversion so modifiers and curve tessellation remain applied.
+the vertices of the actual converted/copied geometry, transformed by the
+instance matrix, for all objects; only data without vertices falls back to
+evaluated bounds. Modifiers and curve tessellation therefore frame as rendered.
 The original scene's camera, world, render/color settings and object data are
 not edited. All temporary IDs are removed even on failure. Render, frame and
 depsgraph Python callbacks are suspended and restored, so observation does
@@ -451,7 +452,8 @@ Axis cameras look toward the bounds center: front from −Y, back +Y, left −X,
 right +X, top +Z, bottom −Z; `side` aliases **right**. All six are orthographic.
 `persp` looks from normalized (1, −1, 0.8), azimuth −45° and elevation
 approximately 29.5°, with a 50 mm lens and 36 mm sensor. Auto-framing uses
-world-space evaluated bounds with a 10% margin; perspective fits their
+world-space geometry bounds with occupancy `1 / 1.1 = 0.9090909090909091`
+(the longest orthographic extent, before pixel rounding); perspective fits their
 bounding sphere. `--frame OBJECT` selects bounds, not rendered membership.
 An empty scene uses bounds [−1, 1]³ and renders background. `camera` copies the
 evaluated `scene.camera` projection/transform, disables depth of field, and
@@ -501,6 +503,14 @@ one-image boundary. All results include `ok: true`,
 requested views/passes and actual output dimensions. `exec --observe VIEWS`
 attaches this result as `observe`; `agent.observe(views, passes, size, ref)`
 uses the same implementation and returns the dict directly.
+
+Every observation also returns `framing: {bounds: {low: [x,y,z], high: [x,y,z]},
+center: [x,y,z], radius: number, objects: [name,...], occupancy: number}`.
+Bounds/center/radius are world-space, radius is half the bounds diagonal
+(minimum 0.01), and contributing original object names are sorted and unique.
+Empty scenes report the fallback bounds and no objects. Occupancy is the preset
+fit constant, not a measured pixel fraction; perspective, scene cameras,
+asymmetric geometry and raster rounding need not attain it.
 
 PNG output has only IHDR, IDAT and IEND chunks, RGB8, filter 0 and zlib level 9:
 no timestamps, metadata hashes, paths or render timing. Byte determinism is

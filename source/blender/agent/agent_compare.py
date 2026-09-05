@@ -157,7 +157,7 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
         raise ValueError("The camera view requires scene.camera")
     with isolated_data():
         rgb, silhouette = reference(ref, size, mask)
-        scene, points, center, radius = render_scene(source, size, frame)
+        scene, points, center, radius, framing = render_scene(source, size, frame)
         near, far = aim(scene, source, view, points, center, radius)
         images = render_passes(scene, size, near, far)
         result = {"view": view, **measure(rgb, silhouette, images["color"] / 255,

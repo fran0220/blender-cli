@@ -75,7 +75,7 @@ for instance in bpy.context.evaluated_depsgraph_get().object_instances:
 assert len(instance_points) > 12
 from agent_observe import isolated_data, render_scene
 with isolated_data():
-    scene, framed_points, center, radius = render_scene(bpy.context.scene, 512, 'Plane')
+    scene, framed_points, center, radius, framing = render_scene(bpy.context.scene, 512, 'Plane')
     for axis in range(3):
         assert abs(min(p[axis] for p in framed_points) - min(p[axis] for p in instance_points)) < 1e-5
         assert abs(max(p[axis] for p in framed_points) - max(p[axis] for p in instance_points)) < 1e-5
@@ -248,6 +248,19 @@ def main():
         finally:
             call("session", "close")
         assert "observe" in execute("42", "--observe", "front", "--file", blend)
+        for geometry in (
+                "bpy.ops.curve.primitive_bezier_circle_add(); bpy.context.object.data.bevel_depth = 0.12",
+                "bpy.ops.mesh.primitive_cube_add(); o = bpy.context.object; "
+                "o.modifiers.new('Array', 'ARRAY').count = 3; "
+                "o.modifiers.new('Displace', 'DISPLACE').strength = 0.3"):
+            result = execute("bpy.ops.wm.read_factory_settings(use_empty=True); " + geometry + "\n"
+                             "a = agent.observe(passes=('silhouette',))\n"
+                             "bpy.ops.object.convert(target='MESH')\n"
+                             "b = agent.observe(passes=('silhouette',))\n"
+                             "assert a['framing'] == b['framing'], (a, b)\n"
+                             "assert open(a['image'], 'rb').read() == open(b['image'], 'rb').read()\n"
+                             "a['framing']")
+            print("converted geometry framing:", result["value"], flush=True)
         execute("bpy.context.scene.camera = None", "--save", root / "no-camera.blend")
         call("observe", "--views", "camera", "--file", root / "no-camera.blend", ok=False)
     print("agent observation: all assertions passed", flush=True)

@@ -23,6 +23,7 @@ import agent
 VIEWS = ("front", "back", "left", "right", "top", "bottom", "persp", "camera", "side")
 PASSES = ("color", "wire", "silhouette", "normal", "depth")
 BORDER = 2
+OCCUPANCY = 1 / 1.1
 
 
 def names(value, allowed):
@@ -119,6 +120,7 @@ def render_scene(source, size, frame):
     background.inputs["Strength"].default_value = 1
 
     points = []
+    objects = set()
     if frame and frame not in source.objects:
         raise KeyError(f"No framing object: {frame}")
     for instance in graph.object_instances:
@@ -137,7 +139,10 @@ def render_scene(source, size, frame):
         copy.matrix_world = instance.matrix_world.copy()
         scene.collection.objects.link(copy)
         if not frame or obj.original.name == frame:
-            points.extend(instance.matrix_world @ Vector(corner) for corner in obj.bound_box)
+            vertices = getattr(data, "vertices", ())
+            coordinates = (vertex.co for vertex in vertices) if len(vertices) else map(Vector, obj.bound_box)
+            points.extend(instance.matrix_world @ coordinate for coordinate in coordinates)
+            objects.add(obj.original.name)
     if not points:
         points = [Vector((-1, -1, -1)), Vector((1, 1, 1))]
     low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
@@ -155,7 +160,9 @@ def render_scene(source, size, frame):
     camera = bpy.data.objects.new("Agent camera", bpy.data.cameras.new("Agent camera"))
     scene.collection.objects.link(camera)
     scene.camera = camera
-    return scene, points, center, radius
+    framing = {"bounds": {"low": list(low), "high": list(high)}, "center": list(center),
+               "radius": radius, "objects": sorted(objects), "occupancy": OCCUPANCY}
+    return scene, points, center, radius, framing
 
 
 def aim(scene, source, view, points, center, radius):
@@ -175,13 +182,13 @@ def aim(scene, source, view, points, center, radius):
         camera.data.type = "PERSP" if view == "persp" else "ORTHO"
         camera.data.lens = 50
         camera.data.sensor_width = 36
-        distance = radius * 1.1 / math.sin(math.atan(18 / 50)) if view == "persp" else radius * 3
+        distance = radius / OCCUPANCY / math.sin(math.atan(18 / 50)) if view == "persp" else radius * 3
         matrix = camera.rotation_euler.to_matrix().to_4x4()
         matrix.translation = center + direction * distance
         camera.matrix_world = matrix
         basis = camera.rotation_euler.to_matrix().transposed()
         projected = [basis @ (point - center) for point in points]
-        camera.data.ortho_scale = max(max(abs(p.x), abs(p.y)) for p in projected) * 2.2
+        camera.data.ortho_scale = max(max(abs(p.x), abs(p.y)) for p in projected) * (2 / OCCUPANCY)
         camera.data.ortho_scale = max(camera.data.ortho_scale, 0.02)
         camera.data.clip_start = max(radius * 0.001, 0.0001)
         camera.data.clip_end = distance + radius * 4
@@ -247,7 +254,7 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
         raise ValueError("The camera view requires scene.camera")
     tiles = []
     with isolated_data():
-        scene, points, center, radius = render_scene(source, size, frame)
+        scene, points, center, radius, framing = render_scene(source, size, frame)
         wire = wire_material() if "wire" in passes else None
         for view in views:
             near, far = aim(scene, source, view, points, center, radius)
@@ -292,7 +299,8 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
             if i == 0 and reference is not None:
                 image[BORDER:BORDER + size, stride + BORDER:-BORDER] = reference
             outputs.append(image)
-    result = {"ok": True, "views": views, "passes": passes, "size": [outputs[0].shape[1], outputs[0].shape[0]]}
+    result = {"ok": True, "views": views, "passes": passes, "framing": framing,
+              "size": [outputs[0].shape[1], outputs[0].shape[0]]}
     directory = None
     if not inline:
         directory = (Path.cwd() / ".blender-cli" / "observe" if agent._session else
