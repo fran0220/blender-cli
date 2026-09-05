@@ -102,6 +102,27 @@ def main():
         def run(code, ok=True):
             return call("exec", "-c", code, ok=ok)
 
+        channels = iter(range(100))
+
+        def conversation(*requests):
+            """One `repl --standalone` session; returns each request's events, in order.
+
+            Some RNA facts only exist across requests: an operator's poll depends on
+            the mode the previous request left behind.
+            """
+            channel = root / f"channel-{next(channels)}"
+            channel.mkdir()
+            process = subprocess.run([executable, "repl", "--standalone"], cwd=channel, timeout=300,
+                                     input="".join(json.dumps(request) + "\n" for request in requests),
+                                     capture_output=True, text=True)
+            assert process.returncode == 0, (process.stdout, process.stderr)
+            answers = {}
+            for line in process.stdout.splitlines():
+                if line.strip():
+                    event = json.loads(line)
+                    answers.setdefault(event["id"], []).append(event)
+            return answers
+
         # --- describe channel: the request and event set, generated from the table ---
         channel = call("describe", "channel")
         assert channel["kind"] == "channel", channel
@@ -204,6 +225,63 @@ def main():
                         "bpy.context.object.name = 'Handle'; " + receiver + ".bevel_dept",
                         ok=False)["error"]
             assert "data.bevel_depth" in error["rna"]["nearest"], error
+
+        # --- RNA records, real operator polls, and errors that carry no RNA at all ---
+        answers = conversation(
+            {"id": 1, "op": "exec", "code": "bpy.data.objects['Cube'].locaton = (0, 0, 0)"},
+            {"id": 2, "op": "exec", "code": "bpy.data.objects['Cube'].rotation_mode = 'NOT_AN_ENUM'"},
+            {"id": 3, "op": "exec", "code": "bpy.context.scene.render.resolution_x = 2**40"},
+            {"id": 4, "op": "exec", "code": "bpy.data.objects['Cube'].location = 'wrong'"},
+            {"id": 5, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add(unknown_keyword=1)"},
+            {"id": 6, "op": "exec", "code": "int('not a number')"},
+            {"id": 7, "op": "exec", "code": "int(bpy.data.objects['Cube'].location)"},
+            {"id": 8, "op": "exec", "code": "bpy.types.Object.locaton"},
+            {"id": 9, "op": "exec", "code": "bpy.ops.mesh.primitive_cub_add()"},
+            {"id": 10, "op": "describe", "path": "bpy.ops.mesh.bevel"},
+            {"id": 11, "op": "exec", "code": "bpy.ops.object.mode_set(mode='EDIT')"},
+            {"id": 12, "op": "describe", "path": "bpy.ops.mesh.bevel"},
+            {"id": 13, "op": "exec", "code": "bpy.ops.object.mode_set(mode='OBJECT')"},
+            {"id": 14, "op": "describe", "path": "bpy.ops.view3d.select"},
+            {"id": 15, "op": "describe", "path": "Modifier"},
+            {"id": 16, "op": "describe", "path": "bpy.types.BevelModifier"},
+            {"id": 17, "op": "exec", "code": "bpy.data.objects['Cube'].modifiers.new('Bevel', 'BEVEL')"},
+            {"id": 18, "op": "describe", "path": 'bpy.data.objects["Cube"].modifiers[0]'},
+            {"id": 19, "op": "describe", "path": "bpy.ops.mesh"},
+            {"id": 20, "op": "exec", "code": "agent.describe('bpy.types.Object.location')['array_length']"},
+            {"id": 21, "op": "describe", "path": "__import__('os').getcwd()"},
+        )
+
+        def answer(request_id, event="done"):
+            terminal = answers[request_id][-1]
+            assert terminal["event"] == event, terminal
+            return terminal
+
+        typo = answer(1, "error")
+        assert "location" in typo["rna"]["nearest"] and typo["line"] == 1, typo
+        assert "XYZ" in {item["identifier"] for item in answer(2, "error")["rna"]["enum_items"]}, answers[2]
+        overflow = answer(3, "error")
+        assert overflow["rna"]["hard_min"] <= 512 <= overflow["rna"]["hard_max"], overflow
+        assert answer(4, "error")["rna"]["array_length"] == 3, answers[4]
+        assert "size" in answer(5, "error")["rna"]["properties"], answers[5]
+        # A failure with no RNA receiver stays an ordinary Python error, never a decorated one.
+        assert "rna" not in answer(6, "error"), answers[6]
+        assert "rna" not in answer(7, "error"), answers[7]
+        assert "location" in answer(8, "error")["rna"]["nearest"], answers[8]
+        assert "primitive_cube_add" in answer(9, "error")["rna"]["nearest"], answers[9]
+        # `poll` is the operator's real poll in the context the previous request left.
+        bevel = answer(10)
+        assert bevel["kind"] == "operator" and bevel["poll"] is False, bevel
+        assert "offset" in bevel["properties"] and bevel["signature"].startswith("bpy.ops.mesh.bevel(*, "), bevel
+        assert answer(12)["poll"] is True, answers[12]
+        blocked = answer(14)
+        assert blocked["poll"] is False and "GPU viewport selection" in blocked["poll_reason"], blocked
+        assert answer(15)["struct"] == "Modifier", answers[15]
+        assert answer(16)["base"] == "Modifier", answers[16]
+        instance = answer(18)
+        assert instance["struct"] == "BevelModifier" and "width" in instance["properties"], instance
+        assert answer(19)["kind"] == "module" and answer(19)["operators"]["bevel"], answers[19]
+        assert [event["value"] for event in answers[20] if event["event"] == "value"] == ["3"], answers[20]
+        assert answer(21, "error")["type"] == "ValueError", answers[21]
 
         # --- corrective fixes, proven by running the correction the process proposes ---
         def fields(code):
