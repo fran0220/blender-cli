@@ -41,6 +41,17 @@ def connection(endpoint):
         yield client
 
 
+def events_until_end(stream, request_id):
+    """Collect one request's events, in order, up to its terminal event."""
+    events = []
+    while True:
+        event = json.loads(stream.readline())
+        assert event["id"] == request_id, event
+        events.append(event)
+        if event["event"] in ("done", "error"):
+            return events
+
+
 def main():
     executable = str(Path(sys.argv[1]).resolve())
     # Deliberately exceed sockaddr_un.sun_path even on Linux. Raw clients use
@@ -56,12 +67,14 @@ def main():
                                      capture_output=True, text=True, timeout=timeout)
             assert process.returncode == (0 if ok else 1), (args, process.stdout, process.stderr)
             result = json.loads(process.stdout)
-            if isinstance(result, dict):
-                assert result.get("ok", True) == ok, result
+            assert result.get("ok", True) == ok, result
             return result
 
         def execute(code, **kwargs):
             return call("exec", "-c", code, **kwargs)
+
+        def history():
+            return call("session", "history")["history"]
 
         def vertices():
             cube = next(obj for obj in call("inspect")["objects"] if obj["name"] == "Cube")
@@ -82,15 +95,18 @@ def main():
         try:
             call("session", "open", ok=False)
             usage = call("session", ok=False)["error"]
-            assert usage == {"type": "ValueError", "message":
-                             "session requires an action: open|save|close|snapshot|rollback|history"}, usage
+            assert usage == {"type": "ProtocolError", "line": None, "message":
+                             "session requires action: "
+                             "status|feedback|save|close|snapshot|rollback|history"}, usage
             for index in range(10):
                 code = "x = 0; x" if index == 0 else "x += 1; x"
                 result = execute(code)
                 assert result["value"] == str(index), result
-                assert result["snapshot"].startswith("sha256:"), result
+                assert result["diff"]["snapshot"].startswith("sha256:"), result
                 if index in (0, 5, 9):
                     print(f"exec {index + 1}: {json.dumps(result)}", flush=True)
+            # A statement that changes no datablock advances neither step nor snapshot.
+            assert execute("x")["diff"]["step"] == 0, "namespace-only work is not a scene change"
             assert execute("agent is __import__('agent')")["value"] == "True"
             assert execute(repr("模型" * 300))["value"] == repr("模型" * 300)
             assert "error" in execute("agent.compare('missing.png', 'front')", ok=False)
@@ -107,23 +123,24 @@ mesh.update()
 len(mesh.vertices)
 """)
             assert vertices() > 8, modified
+            assert modified["diff"]["step"] == 1, modified
             call("session", "rollback", baseline["snapshot"])
             assert vertices() == 8
             execute("branch = x + 100; bpy.data.objects['Cube'].location.x = 3")
             # The former future remains reachable after a new branch.
-            call("session", "rollback", modified["snapshot"])
+            call("session", "rollback", modified["diff"]["snapshot"])
             assert vertices() > 8
             call("session", "rollback", baseline["snapshot"])
-            history = call("session", "history")
-            assert history[0]["verb"] == "open", history
-            assert any(item["label"] == "before" for item in history), history
-            assert [item["at"] for item in history] == sorted(item["at"] for item in history)
-            assert execute("len(agent.history())")["value"] == str(len(history))
+            assert history()[0]["op"] == "open", history()
+            assert any(item["label"] == "before" for item in history()), history()
+            assert [item["at"] for item in history()] == sorted(item["at"] for item in history())
+            assert execute("len(agent.history())")["value"] == str(len(history()))
             execute("saved = agent.snapshot('helper'); bpy.data.objects['Cube'].location.x = 12")
             execute("agent.rollback(saved); bpy.data.objects['Cube'].location.x")
             assert execute("bpy.data.objects['Cube'].location.x")["value"] == "0.0"
             execute("bpy.data.objects['Cube'].location.x = 7; agent.diff()")
-            assert execute("agent.diff()")["diff"] == {"added": [], "changed": [], "removed": []}
+            empty = execute("agent.diff()")["diff"]
+            assert (empty["added"], empty["changed"], empty["removed"]) == ([], [], []), empty
             call("session", "rollback", "~1")
             execute("bpy.data.objects['Cube'].location.x = 4")
             execute("bpy.data.objects['Cube'].location.x = 8")
@@ -137,29 +154,61 @@ len(mesh.vertices)
             time.sleep(0.1)
             assert execute("timer_fired")["value"] == "True"
 
-            # Cancellation is on a second connection while the original is executing.
+            # The feedback policy is per session and is what `session status` reports.
+            policy = call("session", "feedback", "image.mode=off", "perception=false")["feedback"]
+            assert policy["image"]["mode"] == "off" and policy["perception"] is False, policy
+            status = call("session", "status")
+            assert status["feedback"] == policy and status["targets"] == [], status
+            assert status["session"] == opened["session"] and status["recovered_from"] is None
+            assert call("session", "feedback", "image.mode=delta",
+                        "perception=true")["feedback"] == call("session", "status")["feedback"]
+
+            # Cancellation is on a second connection while the original is executing, and
+            # is answered at once instead of queueing behind the running request.
             with connection(local_endpoint) as running, connection(local_endpoint) as control:
-                request = {"id": 9001, "verb": "exec", "args": {"argv": ["-c", "while True:\n    pass"]}}
-                running.sendall((json.dumps(request) + "\n").encode())
+                running.sendall((json.dumps({"id": 9001, "op": "exec",
+                                             "code": "while True:\n    pass"}) + "\n").encode())
                 time.sleep(0.1)
-                control.sendall(b'{"id":9001,"cancel":true}\n')
-                response = json.loads(running.makefile("rb").readline())
-                assert response["id"] == 9001 and response["result"]["error"]["type"] == "Cancelled", response
+                control.sendall((json.dumps({"id": 9002, "op": "cancel", "target": 9001}) + "\n").encode())
+                answer = json.loads(control.makefile("rb").readline())
+                assert answer == {"id": 9002, "event": "done", "ok": True,
+                                  "target": 9001, "cancelled": True}, answer
+                stream = running.makefile("rb")
+                final, = events_until_end(stream, 9001)
+                assert final["event"] == "error" and final["type"] == "Cancelled", final
+                # An id that is not running is answered too, and changes nothing.
+                control.sendall((json.dumps({"id": 9003, "op": "cancel", "target": 4242}) + "\n").encode())
+                idle = json.loads(control.makefile("rb").readline())
+                assert idle["cancelled"] is False, idle
             assert execute("x")["value"] == "9"
+
             # Multiple complete lines on one connection retain order and matching IDs.
             with connection(local_endpoint) as pipeline:
                 for index, code in enumerate(("queued = 40", "queued += 2; queued")):
-                    message = {"id": 9100 + index, "verb": "exec", "args": {"argv": ["-c", code]}}
+                    message = {"id": 9100 + index, "op": "exec", "code": code}
                     pipeline.sendall((json.dumps(message) + "\n").encode())
                 stream = pipeline.makefile("rb")
-                first, second = (json.loads(stream.readline()) for _ in range(2))
-                assert first["id"] == 9100 and second["id"] == 9101
-                assert second["result"]["value"] == "42", second
+                first = events_until_end(stream, 9100)
+                second = events_until_end(stream, 9101)
+                assert first[-1]["event"] == "done" and second[-1]["event"] == "done"
+                assert second[0] == {"id": 9101, "event": "value", "value": "42"}, second
+
+            # `repl` is the same protocol on stdio: it bridges to this session.
+            bridged = subprocess.run(
+                [executable, "repl"], cwd=root, capture_output=True, text=True, timeout=60,
+                input=json.dumps({"id": 9200, "op": "exec",
+                                  "code": "bridged = 'yes'\nbridged"}) + "\n")
+            assert bridged.returncode == 0, bridged
+            streamed = [json.loads(line) for line in bridged.stdout.splitlines() if line.strip()]
+            assert [event["event"] for event in streamed] == ["value", "diff", "done"], streamed
+            assert streamed[0]["value"] == "'yes'", streamed
+            assert execute("bridged")["value"] == "'yes'", "repl shares the session namespace"
+
             failed = execute("raise RuntimeError('intentional')", ok=False)
-            assert "snapshot" not in failed
-            before_count = len(call("session", "history"))
+            assert "diff" not in failed, failed
+            before_count = len(history())
             call("inspect")
-            assert len(call("session", "history")) == before_count
+            assert len(history()) == before_count
             blend = root / "out.blend"
             call("session", "save", "--file", blend)
             assert blend.is_file()
@@ -180,7 +229,7 @@ len(mesh.vertices)
         assert not (root / ".blender-cli" / f'autosave-{opened["session"]}.blend').exists()
         assert call("inspect", "--file", blend)["ok"]
         fallback = execute("'x' in globals()")
-        assert fallback["value"] == "False" and "snapshot" not in fallback, fallback
+        assert fallback["value"] == "False" and fallback["diff"]["snapshot"] is None, fallback
         call("session", "open", "--file", blend)
         try:
             assert vertices() == 8
@@ -190,8 +239,7 @@ len(mesh.vertices)
         # A native call cannot be preempted; close still has a bounded forced-exit path.
         call("session", "open")
         with connection(local_endpoint) as hung:
-            request = {"id": 9200, "verb": "exec",
-                       "args": {"argv": ["-c", "import time; time.sleep(30)"]}}
+            request = {"id": 9300, "op": "exec", "code": "import time; time.sleep(30)"}
             hung.sendall((json.dumps(request) + "\n").encode())
             time.sleep(0.1)
             assert call("session", "close")["forced"] is True
@@ -200,19 +248,22 @@ len(mesh.vertices)
         autosave = root / ".blender-cli" / f'autosave-{crashed["session"]}.blend'
         first_write = wait_autosave(autosave)
         execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(); "
-                "bpy.context.object.name = 'RecoveredCube'; held = bpy.context.object; "
+                "bpy.context.object.name = 'RecoveredCube'; "
                 "saved_state = (bpy.data.filepath, bpy.data.is_dirty)")
-        # A failed edit must not contaminate the pending successful snapshot.
-        execute("held.location.x = 9; raise RuntimeError('not a snapshot')", ok=False)
+        # A failed edit leaves neither the live scene nor the autosave contaminated.
+        execute("bpy.data.objects['RecoveredCube'].location.x = 9; raise RuntimeError('not a snapshot')",
+                ok=False)
+        assert execute("bpy.data.objects['RecoveredCube'].location.x")["value"] == "0.0"
         wait_autosave(autosave, first_write)
         reader = root / "one-shot-reader"
         reader.mkdir()
         saved_cube, = call("inspect", "--file", autosave, cwd=reader)["objects"]
         assert saved_cube["name"] == "RecoveredCube" and saved_cube["location"][0] == 0, saved_cube
-        assert execute("(bpy.data.filepath, bpy.data.is_dirty) == saved_state and held.location.x == 9")["value"] == "True"
+        assert execute("(bpy.data.filepath, bpy.data.is_dirty) == saved_state")["value"] == "True"
         # Rollback itself dirties the autosave, even without another successful exec.
+        # `~0` is the current snapshot: only state changes advance the history.
         stamp = autosave.stat().st_mtime_ns
-        call("session", "rollback", "~1")
+        call("session", "rollback", "~0")
         wait_autosave(autosave, stamp)
         stamp = autosave.stat().st_mtime_ns
         call("session", "save", "--file", root / "explicit.blend")
@@ -243,8 +294,8 @@ len(mesh.vertices)
         logged = [json.loads(line.removeprefix("Agent request: "))
                   for line in (root / ".blender-cli/session.log").read_text().splitlines()
                   if line.startswith("Agent request: ")]
-        assert logged[-1]["id"] and logged[-1]["verb"] == "exec", logged[-1]
-        assert "os._exit" in logged[-1]["args"]["argv"][1], logged[-1]
+        assert logged[-1]["id"] and logged[-1]["op"] == "exec", logged[-1]
+        assert "os._exit" in logged[-1]["code"], logged[-1]
         # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
         for args in (("exec", "-c", "42"), ("session", "history")):
             dead = call(*args, ok=False)
@@ -252,6 +303,7 @@ len(mesh.vertices)
             assert dead["autosave"] == str(autosave), dead
         recovered = call("session", "open", "--file", autosave)
         assert recovered["previous_autosave"] == str(autosave), recovered
+        assert recovered["recovered_from"] == "autosave", recovered
         with autosave.with_suffix(".json").open() as stream:
             metadata = json.load(stream)
         assert metadata["filepath"] == "", metadata
@@ -307,8 +359,8 @@ len(mesh.vertices)
         execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add()")
         first_label = call("session", "snapshot", "--label", "durable-fit")["snapshot"]
         execute("bpy.ops.object.delete(); bpy.ops.mesh.primitive_uv_sphere_add(); agent.snapshot('durable-fit')")
-        history = call("session", "history")
-        last_label = next(event["snapshot"] for event in reversed(history) if event["label"] == "durable-fit")
+        last_label = next(event["snapshot"] for event in reversed(history())
+                          if event["label"] == "durable-fit")
         assert first_label != last_label
         index_path = root / ".blender-cli/snapshots/index.json"
         index_before = index_path.read_bytes()
@@ -318,7 +370,7 @@ len(mesh.vertices)
         assert call("session", "close")["stale"]
         assert index_path.read_bytes() == index_before
         call("session", "open")
-        durable_history = [event for event in call("session", "history") if event["label"] == "durable-fit"]
+        durable_history = [event for event in history() if event["label"] == "durable-fit"]
         assert [event["snapshot"] for event in durable_history] == [first_label, last_label]
         assert all(event["durable"] and event["bytes"] > 0 for event in durable_history)
         call("session", "rollback", "durable-fit")

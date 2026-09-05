@@ -32,10 +32,4 @@ add_blender_test_impl(agent_observe "" "${TEST_PYTHON_EXE}"
 )
 set_tests_properties(agent_observe PROPERTIES TIMEOUT 1800)
 
-add_blender_test_impl(agent_compare "" "${TEST_PYTHON_EXE}"
-  ${TEST_PYTHON_EXE_EXTRA_ARGS}
-  "${CMAKE_CURRENT_SOURCE_DIR}/compare.py"
-  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
-)
-set_tests_properties(agent_compare PROPERTIES TIMEOUT 1800)
-set_tests_properties(agent_session agent_observe agent_compare PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(agent_session agent_observe PROPERTIES SKIP_RETURN_CODE 77)

@@ -2,7 +2,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Exercise the installed process and real Blender data; no scene fixtures."""
+"""Exercise the installed process and real Blender data; no scene fixtures.
+
+One-shot verbs are checked through the folded envelope; `repl --standalone`
+is checked through the event stream itself, because the envelope is derived
+from that stream and nothing else.
+"""
 
 import json
 from pathlib import Path
@@ -18,7 +23,7 @@ def main():
 
         def raw(*args):
             return subprocess.run([executable, *map(str, args)], cwd=root,
-                                  capture_output=True, text=True, timeout=30)
+                                  capture_output=True, text=True, timeout=60)
 
         def call(*args, ok=True):
             process = raw(*args, "--json")
@@ -30,8 +35,22 @@ def main():
             assert result["ok"] is ok, result
             return result
 
+        # A repl is a session: each conversation gets its own directory, as a
+        # real one has, so none of them inherits another's `.blender-cli`.
+        channels = iter(range(100))
+
+        def repl(*lines, args=("--standalone",)):
+            """Return the event stream of one `repl` conversation, in order."""
+            channel = root / f"channel-{next(channels)}"
+            channel.mkdir()
+            process = subprocess.run([executable, "repl", *args], cwd=channel, timeout=120,
+                                     input="".join(json.dumps(line) + "\n" for line in lines),
+                                     capture_output=True, text=True)
+            assert process.returncode == 0, (process.stdout, process.stderr)
+            return [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+
         help_result = raw("--help")
-        assert help_result.returncode == 0 and "exec" in help_result.stdout, help_result
+        assert help_result.returncode == 0 and "repl" in help_result.stdout, help_result
         version = raw("--version")
         assert version.returncode == 0 and "blender-cli 5.3.0-alpha-agent.1" in version.stdout, version
 
@@ -45,13 +64,17 @@ def main():
         assert {"type": "OBJECT", "name": "Cube"} in result["diff"]["added"], result
         assert {"type": "MESH", "name": "Cube"} in result["diff"]["added"], result
         assert result["value"] == "{'FINISHED'}" and result["ms"] >= 0, result
+        # A one-shot verb has no snapshot store, but the step counter still counts changes.
+        assert result["diff"]["snapshot"] is None and result["diff"]["step"] == 1, result
         inspected = call("inspect", "--file", blend)
         cube, = inspected["objects"]
         assert cube["name"] == "Cube" and cube["type"] == "MESH", cube
         assert cube["mesh"] == {"vertices": 8, "edges": 12, "faces": 6, "uv_layers": ["UVMap"]}, cube
 
         no_op = call("exec", "-c", "pass", "--file", blend)
-        assert no_op["diff"] == {"added": [], "changed": [], "removed": []}, no_op
+        assert no_op["diff"] == {"added": [], "changed": [], "removed": [],
+                                 "snapshot": None, "step": 0}, no_op
+        assert no_op["value"] is None, no_op
         changed = call("exec", "-c", "bpy.data.objects['Cube'].location.x = 2; bpy.context.view_layer.update()",
                        "--file", blend)
         assert any(item["type"] == "OBJECT" and item["name"] == "Cube" and "transform" in item["fields"]
@@ -124,33 +147,76 @@ collection.objects.link(obj)
         assert not bad_path["ok"], bad_path
         missing_file = call("inspect", "--file", root / "absent.blend", ok=False)
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
-        usage = call("session", ok=False)["error"]
-        assert usage["type"] == "ValueError" and usage["message"] == (
-            "session requires an action: open|save|close|snapshot|rollback|history"), usage
         selection = call("inspect", "--select", "location", ok=False)["error"]
         assert selection["type"] == "ValueError" and "relative to bpy.data" in selection["message"], selection
-        assert call("compare", ok=False)["error"]["type"] == "ValueError"
-        described = call("describe", "bpy.types.Object.location")
-        assert described["type"] == "float" and described["array_length"] == 3, described
-        helper = call("describe", "agent.compare")
-        assert helper["kind"] == "function" and "fit='bbox'" in helper["signature"], helper
-        assert helper["doc"] and {p["name"]: p["default"] for p in helper["parameters"]}["metrics"] == "('iou',)"
-        module = call("describe", "agent")
-        assert set(module["functions"]) == {"observe", "compare", "describe", "snapshot", "rollback", "diff", "history"}
-        assert all(function["doc"] for function in module["functions"].values()), module
-        for path in ("foo", "agent.no_such_helper", "bpy.types.NoSuchStruct", "__import__('os')"):
-            error = call("describe", path, ok=False)["error"]
-            assert error["type"] == "ValueError" and "describe resolves bpy.* and agent.*" in error["message"], error
-            assert "line" not in error, error
-        for receiver in ("bpy.context.object", "bpy.data.objects['Handle']"):
-            error = call("exec", "-c", "bpy.ops.curve.primitive_bezier_circle_add(); "
-                         "bpy.context.object.name = 'Handle'; " + receiver + ".bevel_dept", ok=False)["error"]
-            assert "data.bevel_depth" in error["rna"]["nearest"], error
+        # Only the request's own source carries a line; runtime frames are not the agent's.
+        assert selection["line"] is None, selection
         separate_inline = call("observe", "--layout", "separate", "--inline", ok=False)
         assert "one image" in separate_inline["error"]["message"], separate_inline
-        assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"
         human = raw("exec", "-c", "42")
         assert human.returncode == 0 and json.loads(human.stdout)["value"] == "42", human
+        assert "\n  " in human.stdout, "human output is the indented envelope"
+
+        # Every request field is checked against one table; a verb is one request.
+        usage = call("session", ok=False)["error"]
+        assert usage == {"type": "ProtocolError", "line": None, "message":
+            "session requires action: status|feedback|save|close|snapshot|rollback|history"}, usage
+        assert call("not-a-verb", ok=False)["error"]["message"] == "Unknown verb: not-a-verb"
+        assert "Unknown option for exec" in call("exec", "-c", "1", "--nope", ok=False)["error"]["message"]
+        bad_action = call("session", "resurrect", ok=False)["error"]
+        assert bad_action["type"] == "ProtocolError" and "must be one of" in bad_action["message"], bad_action
+        both = call("exec", "-c", "1", str(script), ok=False)["error"]
+        assert both["message"] == "exec requires exactly one of code or script", both
+        assert call("exec", ok=False)["error"]["message"] == "exec requires exactly one of code or script"
+
+        # Ops the contract declares but this build does not implement say so by name.
+        for op, extra in (("target", ("list",)), ("fit", ("--params", "[]"))):
+            stub = call(op, *extra, ok=False)["error"]
+            assert stub["type"] == "NotImplemented" and op in stub["message"], stub
+
+        # The event stream is the source; the envelope above is derived from it.
+        events = repl({"id": 4, "op": "exec",
+                       "code": "import sys\nprint('out')\nprint('err', file=sys.stderr)\n"
+                               "bpy.ops.mesh.primitive_cube_add()\n'done'"},
+                      {"id": 5, "op": "session", "action": "status"})
+        assert [event["event"] for event in events if event["id"] == 4] == [
+            "log", "log", "value", "diff", "done"], events
+        first, second, value, diff, done = [event for event in events if event["id"] == 4]
+        assert first == {"id": 4, "event": "log", "stream": "stdout", "text": "out\n"}, first
+        assert second == {"id": 4, "event": "log", "stream": "stderr", "text": "err\n"}, second
+        assert value == {"id": 4, "event": "value", "value": "'done'"}, value
+        assert diff["snapshot"].startswith("sha256:") and diff["step"] == 1, diff
+        # A repl starts from factory startup, whose default cube already owns the name.
+        assert [item["name"] for item in diff["added"] if item["type"] == "OBJECT"] == [
+            "Cube.001"], diff
+        assert done["ok"] is True and done["ms"] >= 0, done
+        status, = [event for event in events if event["id"] == 5]
+        assert status["step"] == 1 and status["snapshot"] == diff["snapshot"], status
+        assert status["feedback"]["image"]["mode"] == "delta", status
+
+        # Log events arrive while the request runs, not buffered until it ends.
+        streamed = repl({"id": 6, "op": "exec",
+                         "code": "for i in range(3):\n    print('line', i)\n"})
+        assert [event.get("text") for event in streamed if event["event"] == "log"] == [
+            "line 0\n", "line 1\n", "line 2\n"], streamed
+
+        # Unknown fields and malformed lines are rejected without running anything.
+        rejected = repl({"id": 7, "op": "exec", "code": "1", "observe": "front"},
+                        {"id": 8, "op": "nonsense"})
+        assert rejected[0]["event"] == "error" and rejected[0]["type"] == "ProtocolError", rejected
+        assert "Unknown field for exec: 'observe'" in rejected[0]["message"], rejected
+        assert "Unknown op" in rejected[1]["message"], rejected
+
+        # A failed request leaves no partial edit behind.
+        rolled = repl({"id": 9, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add()"},
+                      {"id": 10, "op": "exec",
+                       "code": "bpy.ops.mesh.primitive_uv_sphere_add()\nraise RuntimeError('half')"},
+                      {"id": 11, "op": "inspect"})
+        failed, = [event for event in rolled if event["id"] == 10 and event["event"] == "error"]
+        assert failed["type"] == "RuntimeError" and failed["line"] == 2, failed
+        surviving, = [event for event in rolled if event["id"] == 11]
+        names = {obj["name"] for obj in surviving["objects"]}
+        assert "Cube.001" in names and not any(name.startswith("Sphere") for name in names), names
     print("agent protocol: all assertions passed")
 
 

@@ -51,10 +51,12 @@ JSON objects, one per line, UTF-8, newline-terminated. Transports:
 ### Requests
 
 ```
-{"id": 7, "op": "exec",     "code": "...", "record": true|false}
+{"id": 7, "op": "exec",     "code": "..." | "script": "/abs/path.py", "record": true|false,
+                            "timeout": 30, "feedback": {…image policy…}}
 {"id": 8, "op": "program",  "action": "get|set|patch|run|history|rollback|record",
                             "text": "...", "old": "...", "new": "...", "label": "...",
-                            "version": "sha256:…|label", "on": true|false}
+                            "version": "sha256:…|label", "on": true|false, "from_step": 3,
+                            "feedback": {…image policy…}}
 {"id": 9, "op": "target",   "action": "set|list|clear", "name": "front",
                             "ref": "path.png", "view": "front", "mask": "auto", "fit": "bbox",
                             "metrics": ["iou","chamfer","ssim","hist"]}
@@ -62,7 +64,8 @@ JSON objects, one per line, UTF-8, newline-terminated. Transports:
                             "method": "coordinate|nelder-mead|random"}
 {"id":11, "op": "inspect",  "select": ["objects[\"Cube\"].location"], "object": "...", "full": false}
 {"id":12, "op": "observe",  "views": ["front"], "passes": ["color"], "size": 512,
-                            "ref": "path.png", "layout": "sheet|separate", "overlay": false}
+                            "ref": "path.png", "layout": "sheet|separate", "overlay": false,
+                            "frame": "Handle", "out": "path", "inline": false}
 {"id":13, "op": "describe", "path": "bpy.ops.mesh.bevel" | "agent.compare" | "channel" | "schema"}
 {"id":14, "op": "session",  "action": "snapshot|rollback|history|save|close|feedback|status",
                             "label": "...", "snapshot": "sha256:…|~N", "file": "...", "feedback": {...}}
@@ -70,10 +73,27 @@ JSON objects, one per line, UTF-8, newline-terminated. Transports:
 ```
 
 `id` is a client-chosen integer, unique within the connection. Fields not
-listed for an `op` are rejected with `error`. One request executes at a
-time; later requests queue in arrival order. `cancel` is handled on the
-transport thread and answered immediately; it raises `G.is_break` for the
-running request, which then ends with `error` of type `Cancelled`.
+listed for an `op` are rejected with `error` of type `ProtocolError`, naming
+the field and the ones the op accepts, before anything runs. The request
+table in `agent_runtime.py` (`REQUESTS`, `EVENTS`, `DEFS`) is that list: the
+validator, `describe channel` and `describe schema` all read it, and each
+field carries `type`, `required`, `default`, `enum`, `items`, `ref` and
+numeric bounds. One request executes at a time; later requests queue in
+arrival order. `cancel` is handled on the transport thread and answered
+immediately with its own `done` — `{"target": N, "cancelled": true|false}`,
+false when no request with that id is running — while it raises `G.is_break`
+for the running request, which then ends with `error` of type `Cancelled`.
+
+Every CLI verb is exactly one request and its flags are that request's
+fields; the mapping lives once, in `agent_cli.hh`, so the launcher and the
+in-process one-shot verb build identical requests. `--file` and `--save`
+are not request fields except where an op declares `file`: they select the
+scene a one-shot verb loads and writes, and a session rejects them.
+
+A request that fails restores `Main` to the snapshot the session held when
+it started, so a partial edit never survives its own error. A request that
+changes no datablock takes no snapshot and does not advance `step`; its
+`diff` event still carries the state it left.
 
 ### Events
 
@@ -108,7 +128,14 @@ is the folded envelope, indented.
 A one-shot verb prints one JSON document: the `done`/`error` object with
 `diff`, `perception`, `objective` and `images: [image…]` merged in and
 `stdout`/`stderr` concatenated from `log`. The folded envelope is derived
-from the event stream by one function; it has no fields of its own.
+from the event stream by one function, `fold()` in `agent_events.hh`; it has
+no fields of its own. An `error` event's fields become the envelope's
+`error` object; `stdout` and `stderr` appear only when something was written;
+`progress` is transient and does not survive folding. Human output is that
+envelope indented; `--json` is the same document, compact. Exit status is 0
+for `ok: true`, 1 otherwise. Both the launcher talking to a session and the
+in-process one-shot verb fold the same way, because they call the same
+function.
 
 ### Feedback budgets
 
@@ -190,14 +217,44 @@ class Provider(Protocol):
     def after(self, request: dict, session: Session, emit) -> None: ... # emit(event_dict)
 
 def register_provider(provider: Provider) -> None
+def register_op(op: str, handler) -> None          # handler(request, session, emit) -> dict
+def register_helper(name: str, function) -> None   # function(session, ...) backs agent.<name>
+def register_record_hook(hook) -> None             # hook(session, code, step)
+
+PROVIDER_MODULES = ["agent_feedback", "agent_target", "agent_program"]
 ```
 
 `before` runs on the main thread before the request executes; `after` runs
-after it, in `order`, and may call `emit` any number of times. A provider
-that raises is reported as a `log` event on `stderr` and skipped; it never
-fails the request. Providers read session state through `Session`; they do
-not call each other. The image provider reads the perception provider's
-last result through `session.last_perception`.
+after it, in `order`, and may call `emit` any number of times. Both run only
+for a request that can change `Main` (`exec`, `fit`, `program
+set|patch|run|rollback`, `session rollback`), because a request that changes
+nothing has no consequences to push. A provider that raises is reported as a
+`log` event on `stderr` and skipped; it never fails the request. Providers
+read session state through `Session`; they do not call each other. The image
+provider reads the perception provider's last result through
+`session.last_perception`.
+
+Each module named in `PROVIDER_MODULES` is imported once per session and must
+expose `register(session)`, where it installs its providers, request handlers,
+`agent` helpers and the record hook. A module that is not built is skipped; a
+listed module without that hook fails the session, because a feedback channel
+that silently contributes nothing is worse than a session that will not open.
+A module that belongs to a session only, such as the program, registers
+nothing when `"snapshot" not in session.native` — that is exactly the
+one-shot case.
+
+The built-in `diff` provider (order 100) is the kernel's: it samples the ID
+state at both boundaries, advances `step` and takes the snapshot when
+something changed, runs the record hook, and emits the `diff` event. It is
+the only provider that decides what a state change is; everything else reads
+`session.last_diff`.
+
+The kernel publishes these session attributes for providers and handlers:
+`last_diff`, `previous_snapshot` (the snapshot in force when the request
+began), `last_perception`, `request_feedback` (the policy for this request,
+including a per-request image override), `targets`, `recovered_from` and
+`opened_file`. A session opened with an explicit file starts from that file:
+nothing replays over it.
 
 ## Program model
 
@@ -774,8 +831,10 @@ reloaded from their files, and ordinary blend-save orphan rules apply. Python
 variables and unlabelled history do not survive a process crash. Both `session open
 --file` and one-shot `--file` can load the autosave.
 
-`session` without an action returns `ValueError` in both modes, with message
-`session requires an action: open|save|close|snapshot|rollback|history`.
+A missing required field is a contract violation, not a value error: `session`
+without an action returns `ProtocolError` in both modes, with the message the
+request table generates,
+`session requires action: status|feedback|save|close|snapshot|rollback|history`.
 
 The content-addressed store retains independent upstream memfiles, not a
 linear undo tail: rolling back then executing does not delete the former

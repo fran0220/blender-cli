@@ -179,10 +179,10 @@ def main():
             assert image(wide_ref)[1:3] == (3080, 516)
             inline = call("observe", "--views", "front", "--passes", "silhouette", "--inline")
             assert "image" not in inline and image(inline)[1:3] == (516, 516)
-            assert image(execute("1 + 1", "--observe", "front")["observe"])[1:3] == (516, 516)
             helper = execute("agent.observe(); agent.diff()")
             assert ast.literal_eval(helper["value"]) == {"added": [], "changed": [], "removed": []}, helper
-            assert helper["diff"] == {"added": [], "changed": [], "removed": []}, helper
+            assert (helper["diff"]["added"], helper["diff"]["changed"],
+                    helper["diff"]["removed"]) == ([], [], []), helper
             pending = execute("bpy.data.objects['Cube'].location.x += 0.1; agent.observe(); agent.diff()")
             assert any(item["name"] == "Cube" and "transform" in item["fields"]
                        for item in ast.literal_eval(pending["value"])["changed"]), pending
@@ -247,7 +247,6 @@ def main():
             print("GN front pixels (white/red):", white, red, flush=True)
         finally:
             call("session", "close")
-        assert "observe" in execute("42", "--observe", "front", "--file", blend)
         for geometry in (
                 "bpy.ops.curve.primitive_bezier_circle_add(); bpy.context.object.data.bevel_depth = 0.12",
                 "bpy.ops.mesh.primitive_cube_add(); o = bpy.context.object; "
