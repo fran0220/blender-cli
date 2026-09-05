@@ -1,186 +1,225 @@
 # blender-cli — execution plan
 
 This is the only execution-status document. Constraints are in `AGENTS.md`;
-the contract is in `doc/agent/design.md`. Each phase ends with a runnable
-result and states what proves it. Status words: `todo`, `doing`, `done`,
-`unverified` (landed, not yet proven on a product platform).
+the contract is in `doc/agent/design.md`. Work is organised as workstreams
+with disjoint file ownership so they run in parallel; each ends with a
+runnable result and states what proves it. Status words: `todo`, `doing`,
+`done`, `unverified` (landed, not yet proven on a product platform).
 
-Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name: `blender-cli`.
+Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary
+name: `blender-cli`. Development evidence is produced in Linux orbs; macOS
+and Windows verification is deferred until every workstream below is `done`
+on Linux (owner: the platform workstream, last).
 
-## Phase 0 — project
+## Foundations that stay
 
-| Item | Status |
-|---|---|
-| `AGENTS.md`, `PLAN.md`, `doc/agent/{design,build-profile,upstream}.md` | done |
-| `build_files/cmake/config/blender_agent.cmake` build profile | done — configures and builds on Linux x86_64 (Debian 12, xPack GCC 14.3.0); `cmake --build build/orb --target install` exits 0 |
-| GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
-| Amp project mapped to the fork | done — `doufunao/blender-cli` |
-| Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
-| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | done — [run 33971702805](https://github.com/fran0220/blender-cli/actions/runs/33971702805): AppleClang 17.0.0 and MSVC 19.44.35228 configure and build bf_agent + blender-cli with target-local fatal warnings; Linux full build, four tests and packaging also pass; workflows are now manual-only by user direction |
+These subsystems are kept as the implementation base of the request set.
+They are complete on Linux and unchanged in intent; workstreams below may
+edit them only where their row says so.
 
-## Phase 1 — a process that answers
+| Subsystem | Files | Status |
+|---|---|---|
+| Build profile, `WITH_AGENT`, `source/blender/agent/` wiring, orb setup, manual-only platform workflows | `build_files/cmake/config/blender_agent.cmake`, `.agents/setup`, `.github/workflows/agent-*.yml` | done — Linux configure/install `BUILD_EXIT=0`; macOS/Windows native compilation of `bf_agent` and `blender-cli` verified once, workflows are `workflow_dispatch` only |
+| Command entry and launcher (`blender --command agent …`, `blender-cli` launcher, session auto-connect) | `agent_command.cc`, `launcher.cc`, `launcher_session.hh` | done — replaced in place by the kernel workstream (event streaming, `repl`) |
+| Session daemon: `AF_UNIX` endpoint, main-thread loop, `BLI_timer_execute` pump, cancellation via `G.is_break`, memfile snapshot chain, isolated-snapshot autosave and dead-PID recovery, durable crash dumps | `agent_session.cc`, `agent_socket.hh`, `agent_transport.hh`, `agent_runtime.py` (`Session`) | done on Linux — median trivial round trip 5.5 ms; crash → autosave → reopen proven; wire shape replaced by the kernel workstream |
+| Synthetic context (window/screen/`VIEW_3D` adoption, `ED_editors_flush_edits` at every boundary) | `agent_context.cc` | done — unchanged |
+| Observation renderer: EEVEE offscreen, fixed presets/lighting/color management, framing from converted geometry, `framing` in the response, GN instances, Vulkan descriptor-pool rollover so a session renders without bound | `agent_render.cc`, `agent_observe.py`, `vk_descriptor_pools.cc/.hh` (`/* blender-cli */`, exception in `upstream.md`) | done on Linux — deterministic hash `84ab1492…` retained; ≥300 renders per session without exhaustion |
+| Metrics: IoU, Chamfer, SSIM, histogram distance; `--mask auto` classic-CV segmentation; `fit=bbox` reference normalisation with occupancy 1/1.1 | `agent_compare.py` | done — retained as the objective's computation; the `compare` verb is removed by the CLI workstream |
+| RNA: `describe` for `bpy.*` and `agent.*`, corrective error records (`nearest`, `data.` hop, property/operator schemas) | `agent_rna.py` | done — extended by the describe workstream |
+| Packaging: trimmed install, `tar.zst`, size tables | `packaging/package.py`, `tests/agent/package.py`, `doc/agent/build-profile.md` | done on Linux and macOS — Windows package unverified; re-measured by the platform workstream after all features land |
 
-Done when: starting with an empty `s.blend`,
-`blender-cli exec -c 'import bpy; bpy.ops.mesh.primitive_cube_add()' --file s.blend --save --json`
-followed by `blender-cli inspect --file s.blend --json` prints the cube as JSON,
-on Linux. Proven on Debian 12 x86_64 with GCC 14.3.0; product-platform evidence
-remains Phase 5.
+## Workstreams
 
-| Item | Status |
-|---|---|
-| `WITH_AGENT` CMake option; `source/blender/agent/` subdirectory wired from `source/blender/CMakeLists.txt` | done — agent-profile configure, compile, link and install pass |
-| `agent` `CommandHandler` registered from `creator.cc` (`BKE_blender_cli_command_register`), dispatching the six verbs; `blender-cli` is a launcher that runs `blender --command agent …` | done — installed `--help`, `--version` and six-verb protocol checks pass; future verbs return `NotImplemented` |
-| `exec` one-shot: run code on the main thread, capture stdout/stderr, return the ID diff (added / changed / removed datablocks) | done — real cube add/remove, evaluated transform/geometry tags, no-op, captures, final expression, exceptions and cooperative timeout pass |
-| `inspect` from RNA: scene, objects, materials, modifiers, armatures; `--object`, `--full`; never truncated | done — saved cube reports 8 vertices / 12 edges / 6 faces; full nodes/modifiers, bones, cameras, lights, collections and scalar/array RNA selection pass |
-| `--file` load / `--save` write around a one-shot call | done — real installed-process round-trip, paths with spaces, factory startup, missing-file error and no save after failure pass |
-| First protocol test in `tests/agent/` | done — `ctest --test-dir build/orb -R agent --output-on-failure`: agent_protocol passes (11.67s) |
+Each workstream owns the files in its row exclusively until it reports
+`done`. Anything outside its row is a request to the owning workstream (or
+to the coordinator when no owner exists), never a direct edit. Every
+workstream removes the code, tests and documentation that its work replaces
+in the same commits; nothing is kept for compatibility. Every workstream
+rebases on `origin/main` before pushing, builds in its own orb, and runs
+`ctest --test-dir build/orb -R agent --output-on-failure` before every push.
 
-## Phase 2 — session
+### K — kernel: event channel, `repl`, provider registry
 
-Done when: `session open` starts a daemon, ten `exec` calls share a
-namespace and variables, `snapshot` and `rollback` restore geometry, and the
-round trip for a trivial `exec` is under 10 ms on Linux.
+Done when: `blender-cli repl --standalone` reads one `exec` request line and
+writes `log`, `value`, `diff` and `done` events in the documented order;
+the session socket speaks the same protocol; `cancel` ends a running request
+with `error` of type `Cancelled` while the transport thread keeps reading;
+a one-shot verb prints exactly the folded envelope derived from those
+events; and `agent.register_provider` runs a test provider's `after` hook
+after every `exec` with its dict appearing as an event. All other
+workstreams build on K's declarations in `design.md` and rebase onto K when
+it lands.
 
-Proven on Debian 12 x86_64 with GCC 14.3.0: agent-profile configure/install
-returns `BUILD_EXIT=0`; both agent CTests pass. A separate 20-launcher-call
-run measured median 5.453 ms, min 5.311 ms, max 5.775 ms (strict 10 ms median
-bound, no added tolerance). Windows AF_UNIX/daemon code is structurally
-present but unverified; macOS is also unverified. Neither is product-platform
-evidence until run there.
-
-| Item | Status |
-|---|---|
-| Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | done — Linux real endpoint, ordered pipelined IDs and full 200 KB response pass; product platforms unverified |
-| Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | done — idle Python timer, second-connection cancellation and subsequent exec pass |
-| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; observation and comparison are delivered in Phases 3–4 below |
-| Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | done — cube 8 → 26 → 8 vertices; branch retention, labels, ~N, operator undo coexistence, Main replacement and save/reload pass |
-| Crash recovery: explicit dead-PID errors and isolated snapshot autosaves | done on Linux — `BUILD_EXIT=0`; final combined four CTests pass (278.09s); real `os._exit(3)` → dead-session error → autosave reopen restores the cube; idle writes, failed-edit isolation, rollback, relative assets, unchanged live references/filepath/dirty state, explicit-save behavior, stale/clean cleanup and one-shot reload pass. Five-write medians: cube 7.565 ms, 1,002,001-vertex grid 86.020 ms; measured policy and upstream API adaptation in design.md. Session usage and select-base diagnostics pass; product platforms deferred |
-| `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | done — normal/forced close, duplicate-open refusal, stale recovery, file-open and one-shot fallback pass; median round trip 5.453 ms |
-
-## Phase 3 — observation
-
-Done when: `observe --views front,side,top,persp` returns one contact sheet
-whose bytes are identical across two runs on the same platform, and
-`bpy.ops.mesh.*` edit-mode operators succeed inside `exec` without a GUI.
-
-Proven on Debian 12 x86_64, xPack GCC 14.3.0, software Vulkan with Mesa
-25.0.7: agent-profile install returns `BUILD_EXIT=0`; all three agent CTests
-pass (88.20s). Separate-process four-view PNGs are byte-identical (SHA-256
-`84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`).
-A separate session run measured first/subsequent five-pass front observations
-at 3.538s / 3.470s with a warm driver shader cache. Mesa 22.3.6 rendered
-Combined but crashed on upstream's native Z pass; setup now installs modern
-Mesa from bookworm-backports. No upstream source changes were needed.
-Metal/macOS and real-GPU Vulkan/Windows remain **unverified**.
+Owns: `agent_command.cc`, `agent_session.cc`, `agent_socket.hh`,
+`agent_transport.hh`, `launcher.cc`, `launcher_session.hh`, `agent.py`,
+`agent_runtime.py` (request dispatch, `Session`, provider registry, envelope
+folding), `tests/agent/protocol.py`, `tests/agent/session.py`.
 
 | Item | Status |
 |---|---|
-| Synthetic `wmWindow` / `bScreen` / `VIEW_3D` area so context-dependent operators run headless | done — real subdivide/bevel/extrude/translate, retained edit-mode flush, fallback layout, rollback and explicit GPU-selection error pass |
-| Offscreen EEVEE render through `WM_init_gpu_offscreen`; Metal on macOS via a normal background build, Vulkan on Windows | done on Linux — native full render, byte equality, unchanged memfile snapshots and empty helper diff pass; product platforms unverified |
-| Camera presets (front, back, left, right, top, bottom, persp, `camera`), auto-framing on the scene or a named object | done on Linux — converted-geometry bounds and public framing metadata; bevelled-curve and Array+Displace mesh conversions retain identical framing and PNG bytes. Manual mug IoU against its conversion: 0.0776149355 before → 1 after; ImageMagick bbox 466×460+23+26 in a 512 tile, visually inspected. Existing deterministic fixture hash is unchanged |
-| Geometry Nodes mesh instances retain evaluated geometry, materials and framing | done on Linux — 12 red ico instances; front white/red pixels 19,415/15,597 versus 0/0 before; temporary bounds agree with mesh vertices within 1e-5; named framing, unchanged snapshots and visually inspected front/perspective renders pass. Existing byte-identity hash remains `84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`; all four final CTests pass (278.09s) |
-| Built-in lighting rig, fixed view transform, fixed resolution ladder (512 / 768 / 1024) | done — fixed three-SUN rig and Standard/sRGB; all three tile sizes pass |
-| Passes: color, wireframe, silhouette, normal, depth | done — 2580×516 five-pass sheet, nonempty tiles, binary silhouette checks and visual inspection of beveled cube/sphere pass |
-| Contact sheet composition; `--ref` side-by-side and overlay | done — view×pass order, separate-file count, square/nonsquare reference dimensions, overlay and inline PNG checks pass |
-| `exec --observe` returns the image in the same round trip | done — one-shot/session attachment and `agent.observe()` use the same renderer; pending user edits remain in diff |
+| Request objects `{"id","op",…}` with strict per-op field validation; events streamed as JSON lines as they are produced (C++ writer, Python producer) | todo |
+| `repl` stdio bridge (`--file`, `--standalone`); socket and stdio carry identical bytes | todo |
+| `cancel` answered on the transport thread; running request ends with `Cancelled`; rollback to the pre-request snapshot on any failed request | todo |
+| Folded envelope for one-shot verbs derived from the event list by one function; `--json` and human output both come from it | todo |
+| Provider registry: `Provider` protocol, orders, failure isolation (`log` event, never fatal), `agent.register_provider` | todo |
+| `session status` / `session feedback`; `step` counter; `diff` event carries `snapshot` and `step`; durable labelled snapshots under `.blender-cli/snapshots/` and `rollback <label>` after recovery | todo |
+| Remove the old `{"id","verb","args"}` wire shape, `exec --observe`, and the old response envelope; tests rewritten against the event stream | todo |
 
-## Phase 4 — closing the loop inside the process
+### F — feedback: perception and image providers
 
-Done when: agent code inside `exec` calls `agent.compare(ref, "front")` in
-a loop over a parameter range and returns the best IoU without a single
-image leaving the process.
+Done when: after `exec -c 'bpy.ops.mesh.primitive_cube_add()'` in a session
+the envelope carries a `perception` with counts, bounds, framing, changed
+region and fraction, and silhouette delta; a second identical-state `exec`
+produces no `image` event under the default threshold; moving the cube
+produces one `image` event of kind `delta` whose `region` covers the
+change; `session feedback image.mode=off` suppresses images; and
+`agent.perceive()` returns the same dict as the event.
 
-Proven on Debian 12 x86_64, xPack GCC 14.3.0 and Mesa 25.0.7 software
-Vulkan: agent-profile configure/install returns `BUILD_EXIT=0`. The real
-`agent_compare` CTest passes (136.37s), as do the three earlier protocol,
-session and observation regressions. No upstream files changed. Product
-Metal/macOS and Vulkan/Windows remain **unverified**, owned by Phase 5.
-
-The saved X-scale-0.6 cube front reference scores IoU 0.9999693439607603,
-Chamfer 0.0013440860215053765 px, SSIM 0.9999552715896969 and histogram
-distance 0.00003065603923968485. Bounds are IoU ≥ 0.98, Chamfer ≤ 1 px,
-SSIM ≥ 0.98 and histogram ≤ 0.02. The non-perfect silhouette differs at
-exactly four corner pixels: thresholded antialiased color has 130480 foreground
-pixels, native depth/coverage has 130476. This is not resampling or camera drift.
-A red-sphere reference scores 0.682835025523083 / 40.85824683145036 px /
-0.7060183742050152 / 1.0 (bounds < 0.8 / > 10 px / < 0.9 / > 0.3).
-The uniform blue-background composite recovers the native silhouette exactly:
-IoU 1, Chamfer 0, SSIM 0.9999999997841629, histogram 0 (required IoU ≥ 0.95).
-
-NumPy is retained deliberately: fresh reference loading, preprocessing and all
-four pixel metrics average 120.998 ms over 20 runs on real rendered buffers,
-versus 3318.741 ms for a warm all-metric comparison including render (~3.6%).
-The 20-candidate X-scale loop (0.20 through 0.96, step 0.04) selects 0.60,
-IoU 0.9999693439607603, with exec `ms=66474.6604`, wall 66.4818s. It emits
-only numbers and creates no PNGs. Compare preserves snapshots and empty diffs
-without edits and retains actual transform edits during fitting. Metric formulas,
-mask limitations and resizing policy are defined only in `doc/agent/design.md`.
+Owns: new `agent_feedback.py`, `tests/agent/feedback.py`,
+`agent_observe.py` (only additions for the feedback size and delta
+rendering; the renderer's determinism and `framing` contract are frozen).
 
 | Item | Status |
 |---|---|
-| `compare --ref --view [--metrics]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | done on Linux — plural CLI option (old spelling rejected), reference metadata, all prior quality thresholds and 20-candidate fit pass; fit selects 0.60 with IoU 0.9978540444 |
-| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | done on Linux — default bbox fit shares observe occupancy; 20%-margin reference IoU 0.4352601245 with none → 0.9977926975 with bbox; exact self-comparison explicitly uses fit=none. Fitted reference reports bbox [116,23,396,488], pixel occupancy 0.908203125 |
-| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | done on Linux — one-hop data.bevel_depth hints pass for context.object and bpy.data.objects receivers; prior RNA error assertions pass |
-| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | done on Linux — agent module and all seven public helper signatures/defaults/docstrings; unsupported paths produce ValueError without internal CLI line numbers; prior RNA descriptions pass |
+| Perception provider: counts, bounds, framing, changed region/fraction, silhouette delta, symmetry, at 256 px front view by default | todo |
+| Image provider: delta/overlay/full/error kinds, threshold, budget views/pass/size, region crop; overlay against the previous state | todo |
+| Perception caches the previous feedback render per view so deltas cost one render per action | todo |
+| `agent.perceive()` helper; provider registration at session start | todo |
 
-Dogfood framing/discovery changes: full Linux profile build/install returned
-`BUILD_EXIT=0`; all four CTests passed (317.55s). The plain-mesh deterministic
-fixture retains SHA-256 `84ab14926ce2ade4bc5b80e5ee0a6eb4504f209fea7b12c27984c66abe47cbd6`:
-its actual vertex bounds agree with the previous object bounds. The fixture
-does not require a new hash. New product-platform behavior remains unverified.
+### T — targets, objective and `fit`
 
-## Phase 5 — size, packaging, platforms
+Done when: `target set front --ref ref.png` followed by an `exec` yields an
+`objective` event with per-target metrics, deltas against the previous
+step, the worst 4×4 cell with `missing`/`extra`, and best-so-far
+snapshot/step; `fit` over two program parameters with a 40-evaluation
+budget streams `progress` at most every 0.5 s, returns the best parameters
+and snapshot, and leaves `Main` at the best state; `cancel` during `fit`
+keeps the best state; and a seeded `random` method is reproducible.
 
-Done when: measured package sizes on both product platforms are recorded in
-`doc/agent/build-profile.md`, and the Phase 1–4 protocol tests pass on
-macOS arm64 and Windows x64.
+Owns: new `agent_target.py`, new `agent_fit.py`, `tests/agent/fit.py`,
+`agent_compare.py` (only the shared metric functions; CLI parsing is
+removed by W).
 
 | Item | Status |
 |---|---|
-| Configure and build the agent profile on macOS arm64 and Windows x64 | done for native compilation — [gate 33971702805](https://github.com/fran0220/blender-cli/actions/runs/33971702805); macOS full build and four tests pass in [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411); Windows full build succeeded in [run 33972449797](https://github.com/fran0220/blender-cli/actions/runs/33972449797), but final runtime remains unverified as detailed below |
-| Per-component size measurement; adjust the profile from numbers, not guesses | done for Linux and macOS — final Linux script measured and verified in the orb; tables in build-profile.md; OpenVDB/Cycles decisions resolved; Windows measurements unverified — no native Windows run |
-| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | done on Linux and macOS — all four trimmed regressions and six-verb exact observation equality pass; Linux extracted archive also passes; Windows final trim unverified — no native Windows run |
-| Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | done for macOS archive in [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411) and Linux dev archive in orb; Windows archive unverified — no native Windows run; unsigned, no notarization |
+| Target storage in the session and on disk under `.blender-cli/targets/`; `target set/list/clear` | todo |
+| Objective provider (order 300): per-target metrics at feedback size, deltas, worst cell, best-so-far | todo |
+| `fit`: parameter specs (program params or RNA paths), objective forms, budget, methods `coordinate`, `nelder-mead`, `random`; evaluates through program re-run or RNA assignment plus objective scoring in-process | todo |
+| `progress` events, `cancel` semantics, `done` shape; `agent.fit()` and `agent.objective()` helpers | todo |
 
-Linux final profile configure/install reports `BUILD_EXIT=0` with agent-local
-fatal warnings enabled. `ctest --test-dir build/orb -R agent --output-on-failure`
-passes all four tests (281.15s). GCC exposed equal EAGAIN/EWOULDBLOCK expressions;
-the fix preserves errno semantics rather than disabling the warning. Measurement
-and archive/equivalence evidence, including justified trim exceptions, are owned
-by `doc/agent/build-profile.md`. macOS's long temporary directories exposed the
-socket-address limit; relative addressing fixes it, with a deliberately long
-directory regression and preserved absolute reporting/cleanup. The corrected
-macOS full run passes all four tests (162.84s), including actual Metal rendering,
-then all four trimmed scripts and exact before/after observation equality.
-Its warm full-build cache records 4,276 hits / 2 misses, and the complete job
-takes 12m53s. Earlier failed runs are diagnostic evidence, not final validation.
+### P — program model
 
-### Manual-only platform verification
+Done when: a session with recording on turns three `exec` calls into
+`.blender-cli/program/model.py` with a `P = {…}` block and `# step N`
+blocks; `program set` with an edited parameter re-executes only the steps
+after the first changed one (prefix cache keyed by sha256 of params +
+steps), and the resulting `Main` hash equals a fresh full run; `program
+history`/`rollback` move between `versions/<sha>.py`; and after `os._exit`
+a `session open` rebuilds the scene from the program when the autosave is
+older than the program's last version.
 
-On 2026-09-05 the user stopped Actions-based development to shorten iteration
-time. Both `Agent gate` and `Agent full build` are `workflow_dispatch` only;
-neither main pushes nor tags start builds. No further native iteration or waiting
-is part of this phase. Runs 33974082545 and 33974081826 were still in progress
-at the handoff and are not used as evidence. Subsequent verification is in the
-Linux orb; no scheduled follow-up is installed.
+Owns: new `agent_program.py`, `tests/agent/program.py`, `agent_runtime.py`
+(only the `record`/`program` hooks K declares as extension points; K owns
+the file).
 
-The final Windows work remains in place, explicitly **unverified — no native
-Windows run**: Winsock AF_UNIX test connections and process-exit synchronization,
-restricted daemon handle inheritance, the bundled Vulkan loader probe, and
-`blender.shared` library/manifest trimming. This reason refers to validation of
-the final combined state, not the absence of earlier Windows attempts. Earlier
-attempts compiled and passed protocol; they exposed captured-pipe inheritance,
-premature stale-PID recovery and an incorrect loader path. They do not establish
-final runtime or package correctness. Windows 11 GPU rendering is also unverified;
-the CI host is Windows Server 2022, not a Windows 11 workstation.
+| Item | Status |
+|---|---|
+| Program file layout, parameter block parsing, step recording, `reproducible` flag | todo |
+| `program get/set/patch/run/history/rollback/record`; versions and `index.json` | todo |
+| Prefix-cached re-execution using snapshots per step; hash equality with a full run | todo |
+| Crash recovery via program replay when it is newer than the autosave; `agent.program()` helper | todo |
 
-## Phase 6 — hosts (not started, not scheduled)
+### D — describe schema and corrective errors
 
-- Sophon mounts `blender-cli` as a local stdio Service once Sophon's
-  Services support a stdio transport. That change lives in Sophon's own
-  repository; nothing here.
-- An MCP adapter is added only when a shell-less host is actually in use.
-  Recording that host here comes before any adapter code.
+Done when: `describe channel` returns the request and event set with field
+types; `describe schema` returns a JSON-schema projection of every request
+suitable for a tool catalog; an `exec` with a misspelled property whose
+nearest match has similarity ≥ 0.85 carries `error.fix.code` that runs
+successfully as-is; and ambiguous misspellings carry no `fix`.
+
+Owns: `agent_rna.py`, `tests/agent/describe.py` (new; the RNA portions of
+`tests/agent/protocol.py` move here in coordination with K).
+
+| Item | Status |
+|---|---|
+| `describe channel` and `describe schema` generated from the request table K exposes | todo |
+| `fix` on unambiguous attribute, enum and operator-keyword errors; never on ambiguous ones | todo |
+| `describe` records for the new `agent` helpers | todo |
+
+### W — CLI projections, documentation, removal of the comparison verb
+
+Done when: every request has exactly one CLI projection whose flags map
+one-to-one to request fields; `blender-cli compare` no longer exists and
+its tests are gone; `README.md`, `doc/agent/usage.md` and `doc/agent/design.md`
+describe only the current surface; and a fresh orb can follow
+`usage.md` from `repl` to a fitted model without consulting anything else.
+
+Owns: `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` (request
+sections only; K owns *Channel protocol*), `tests/agent/compare.py`
+(deletion), CLI argument tables in `agent_command.cc` help text (in
+coordination with K).
+
+| Item | Status |
+|---|---|
+| Remove `compare` verb, its parser and tests; `target set` is the only CLI entry to metrics | todo |
+| `target`, `fit`, `program`, `repl`, `session status/feedback` CLI projections and help | todo |
+| `usage.md` rewritten around the channel loop: repl, feedback budgets, targets, fit, program, recovery | todo |
+| `README.md` reflects the current surface and quick start | todo |
+
+### L — loop evidence
+
+Done when: a Claude Opus thread with a painter-generated reference models the
+object through `blender-cli repl` only, and the transcript shows: the
+number of round trips, the objective trajectory, at least one `fit`, at
+least one `program set`, one crash recovery, and zero requests whose only
+purpose was to see the current state. Findings become items in the owning
+workstreams, not fixes in this one.
+
+Owns: `.amp/in/artifacts/` in its own orb; no repository files.
+
+| Item | Status |
+|---|---|
+| Dogfood run on the completed Linux build; friction list filed to owners | todo |
+
+### X — product platforms
+
+Done when: all agent tests pass on macOS arm64 and Windows x64 from the
+manual workflows, package sizes are re-measured after the feature work, and
+`build-profile.md` records them. Not scheduled until every workstream above
+is `done` on Linux.
+
+Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
+`packaging/package.py`, `tests/agent/package.py`.
+
+| Item | Status |
+|---|---|
+| macOS arm64 full run of all agent tests on the final surface | todo |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | unverified — no native Windows run has passed the runtime tests |
+| Re-measured package sizes on both product platforms | todo |
+
+## Ordering
+
+```diagram
+┌───┐
+│ K │ kernel: channel, repl, cancel, envelope, registry
+└─┬─┘
+  ├──────────┬──────────┬──────────┐
+┌─▼─┐      ┌─▼─┐      ┌─▼─┐      ┌─▼─┐
+│ F │      │ T │      │ P │      │ D │
+└─┬─┘      └─┬─┘      └─┬─┘      └─┬─┘
+  └──────────┴────┬─────┴──────────┘
+                ┌─▼─┐
+                │ W │ CLI projections, docs, removals
+                └─┬─┘
+                ┌─▼─┐      ┌───┐
+                │ L │ ───▶ │ X │ platforms, last
+                └───┘      └───┘
+```
+
+F, T, P and D start together against the declarations in `design.md`,
+using local stubs for K's registry until K lands, then rebase. W starts when
+K lands and finishes after F/T/P/D. L runs on the first build where W is
+`done`. X runs last.
 
 ## Resolved decisions
 
@@ -188,9 +227,20 @@ the CI host is Windows Server 2022, not a Windows 11 workstation.
   SDK is trimmed, not the modelling implementation. Measurements and reasoning
   are in `doc/agent/build-profile.md`.
 - Cycles CPU and Embree stay: EEVEE does not replace object/texture baking.
-  Correct the profile's stale option spelling to upstream's `WITH_EMBREE`.
-  Preserve Cycles' Python engine registration during packaging.
+  The profile uses upstream's `WITH_EMBREE` spelling. Cycles' Python engine
+  registration is preserved during packaging.
 - Packaging retains factory-required Python modules outside `addons_core`, a
   monospaced filename alias for one font face, and the real startup AgX transform
   beside Standard. Literal deletion broke one-shot JSON or engine registration;
   do not patch upstream Python or disguise AgX as Standard to satisfy a size goal.
+- Comparison is not a request. A target plus the objective event replaces the
+  former comparison verb; `agent.compare()` remains for ad-hoc in-code use.
+- Feedback defaults: perception and objective on, image mode `delta` with
+  threshold 0.002, front view, 256 px, overlay on. Budgets are per session,
+  overridable per request only for images.
+- The program is the source of truth for reproducibility; the memfile
+  snapshot chain is the source of truth for rollback speed. Both exist; the
+  program is not derived from undo and undo is not derived from the program.
+- Upstream exceptions beyond registration and build wiring are limited to the
+  Vulkan descriptor-pool rollover and the crash-dump path hook, both recorded
+  in `doc/agent/upstream.md`.

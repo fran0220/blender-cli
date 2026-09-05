@@ -1,32 +1,289 @@
 # blender-cli design
 
-Owner of: the process model, the six verbs, their wire shapes, the session
-protocol, observation determinism and the comparison metrics. Constraints
-are in `AGENTS.md`; status is in `PLAN.md`.
+Owner of: the process model, the channel protocol and its events, the request
+set and its CLI projections, the feedback provider registry, the program
+model, targets and `fit`, the session protocol, observation determinism and
+the comparison metrics. Constraints are in `AGENTS.md`; status is in
+`PLAN.md`.
 
 ## Why this shape
 
 An agent modelling from a reference image runs one loop: look at the scene,
 write `bpy` code, execute it, look at the result, compare with the
-reference, repeat. Every layer between "write code" and "look at the result"
-is cost. `blender-mcp` pays for an MCP server, a socket, a GUI Blender, an
-add-on timer polling every 50 ms, and a viewport screenshot that depends on
-GUI state. blender-cli removes all of it:
+reference, repeat. The agent's decision is the only step that must be slow
+(seconds, tokens). Everything else is either computed inside the process or
+it is waste:
 
 ```
-agent ──(code)──▶ one process: Python namespace + Main + eval + offscreen
-                  render + metrics ──(JSON + one image)──▶ agent
+agent ──(one statement)──▶ one process: namespace + Main + eval + offscreen
+                           render + metrics + search
+      ◀──(event stream: value, diff, perception, objective, image, done)──
 ```
 
-Two further cuts shorten the loop more than anything else:
+Four cuts follow from that, in order of how much loop they remove:
 
-1. **Quantitative comparison inside the process.** Whether a silhouette lines
-   up is a number, not a judgment. `compare` and its in-process twin
-   `agent.compare()` let a script fit parameters numerically in one round
-   trip; the agent's eyes are used for qualitative acceptance only.
-2. **Self-description and RNA-aware errors.** The most common wasted round
-   trip is a hallucinated `bpy` identifier. `describe` answers from live RNA,
-   and an error carries the nearest valid names.
+1. **Feedback is pushed.** Each action answers with its own consequences on
+   three channels — structural diff, perceptual delta, objective delta — so
+   "observe" and "compare" are not separate decisions. Budgets keep the cost
+   bounded; deltas keep the tokens low.
+2. **The scene is a program.** `model.py` is the record; the agent edits
+   text, the process re-executes from the longest cached prefix. State is
+   fully visible, history is a version tree on disk, rollback is a checkout.
+3. **Search runs inside.** `fit` evaluates parameters against registered
+   targets in-process with progress and cancellation; the agent proposes a
+   parameterisation and an objective, not a sequence of guesses.
+4. **Self-description and corrective errors.** `describe` answers from live
+   RNA and from the channel registry; an error carries the nearest valid
+   identifier and, when unambiguous, the corrected statement.
+
+## Channel protocol
+
+One session speaks one protocol on every transport. Requests and events are
+JSON objects, one per line, UTF-8, newline-terminated. Transports:
+
+- the session socket (`.blender-cli/session.sock`, AF_UNIX);
+- `blender-cli repl`: a stdio bridge to the session socket (opening the
+  session if none exists; `--standalone` runs the loop in the same process
+  without a daemon), so a host holds one pipe for the whole session;
+- one-shot CLI verbs: each sends exactly one request and prints its folded
+  envelope (below).
+
+### Requests
+
+```
+{"id": 7, "op": "exec",     "code": "...", "record": true|false}
+{"id": 8, "op": "program",  "action": "get|set|patch|run|history|rollback|record",
+                            "text": "...", "old": "...", "new": "...", "label": "...",
+                            "version": "sha256:…|label", "on": true|false}
+{"id": 9, "op": "target",   "action": "set|list|clear", "name": "front",
+                            "ref": "path.png", "view": "front", "mask": "auto", "fit": "bbox",
+                            "metrics": ["iou","chamfer","ssim","hist"]}
+{"id":10, "op": "fit",      "params": [...], "objective": {...}, "budget": {...},
+                            "method": "coordinate|nelder-mead|random"}
+{"id":11, "op": "inspect",  "select": ["objects[\"Cube\"].location"], "object": "...", "full": false}
+{"id":12, "op": "observe",  "views": ["front"], "passes": ["color"], "size": 512,
+                            "ref": "path.png", "layout": "sheet|separate", "overlay": false}
+{"id":13, "op": "describe", "path": "bpy.ops.mesh.bevel" | "agent.compare" | "channel" | "schema"}
+{"id":14, "op": "session",  "action": "snapshot|rollback|history|save|close|feedback|status",
+                            "label": "...", "snapshot": "sha256:…|~N", "file": "...", "feedback": {...}}
+{"id":15, "op": "cancel",   "target": 10}
+```
+
+`id` is a client-chosen integer, unique within the connection. Fields not
+listed for an `op` are rejected with `error`. One request executes at a
+time; later requests queue in arrival order. `cancel` is handled on the
+transport thread and answered immediately; it raises `G.is_break` for the
+running request, which then ends with `error` of type `Cancelled`.
+
+### Events
+
+Every request produces an ordered sequence of events sharing its `id`, ending
+in exactly one `done` or `error`:
+
+```
+{"id": 7, "event": "log",        "stream": "stdout|stderr", "text": "..."}
+{"id": 7, "event": "value",      "value": "<repr>"}
+{"id": 7, "event": "diff",       "added": [...], "changed": [...], "removed": [...],
+                                 "snapshot": "sha256:…", "step": 12}
+{"id": 7, "event": "perception", ...shape below...}
+{"id": 7, "event": "objective",  ...shape below...}
+{"id": 7, "event": "image",      "kind": "delta|full|overlay|error", "view": "front",
+                                 "pass": "color", "path": "...", "inline": "<base64>",
+                                 "size": [w, h], "region": [x0, y0, x1, y1]}
+{"id":10, "event": "progress",   "eval": 37, "of": 200, "best": 0.913, "params": {...}}
+{"id": 7, "event": "done",       "ok": true, "ms": 123.4, ...op-specific result...}
+{"id": 7, "event": "error",      "ok": false, "type": "...", "message": "...", "line": 3,
+                                 "rna": {...}, "fix": {"code": "..."}, "autosave": "..."}
+```
+
+Ordering within one request: `log` and `progress` as produced; `value`; then
+`diff`; then `perception`; then `objective`; then zero or more `image`; then
+`done`. `log` may interleave with anything before `done`. `done` carries the
+op-specific result fields defined under each request below (`session
+history` rows, `describe` records, `observe` paths). Human-readable output
+is the folded envelope, indented.
+
+### Folded envelope (one-shot CLI, `--json`)
+
+A one-shot verb prints one JSON document: the `done`/`error` object with
+`diff`, `perception`, `objective` and `images: [image…]` merged in and
+`stdout`/`stderr` concatenated from `log`. The folded envelope is derived
+from the event stream by one function; it has no fields of its own.
+
+### Feedback budgets
+
+`session feedback` sets the per-session policy; it is returned by
+`session status`:
+
+```
+{"perception": true,
+ "objective":  true,
+ "image": {"mode": "delta|full|off", "threshold": 0.002, "views": ["front"],
+           "pass": "color", "size": 256, "overlay": true}}
+```
+
+Defaults are the values above. `threshold` is the fraction of changed
+pixels in the budget view below which no `image` event is sent. `exec` and
+`program` requests may carry `"feedback"` to override the image policy for
+one request; nothing else is per-request.
+
+### Perception event
+
+Always sent for `exec`, `program set|patch|run|rollback` and `session
+rollback`; costs no render beyond the budget view at budget size.
+
+```
+{"event": "perception",
+ "objects": 3, "verts": 1290, "faces": 1288,
+ "bounds": {"low": [x,y,z], "high": [x,y,z]}, "dims": [x,y,z],
+ "framing": {...observe framing record...},
+ "changed": {"objects": ["Handle"],
+             "view": "front", "region": [x0,y0,x1,y1], "fraction": 0.031,
+             "silhouette_delta": 0.012},
+ "symmetry": {"x": 0.98, "y": 0.41, "z": 0.12}}
+```
+
+`changed` compares the budget view against the previous perception render
+of the same session (kept in memory, 256 px silhouette + color); it is
+`null` on the first action. `symmetry` is silhouette IoU under mirroring in
+the budget view.
+
+### Objective event
+
+Sent after every action when at least one target is registered:
+
+```
+{"event": "objective",
+ "targets": {"front": {"iou": 0.931, "delta": {"iou": +0.012},
+                       "chamfer": 3.1, "ssim": 0.82,
+                       "worst": {"region": [x0,y0,x1,y1], "iou": 0.61,
+                                 "missing": 0.7, "extra": 0.3}}},
+ "best": {"front": {"iou": 0.931, "snapshot": "sha256:…", "step": 12}}}
+```
+
+`worst` is the 4×4 grid cell of the view with the largest silhouette error,
+split into reference-not-model (`missing`) and model-not-reference
+(`extra`). `best` remembers the best score seen this session and the
+snapshot/step that produced it, so an agent can return to it without
+bookkeeping.
+
+### Image event
+
+`delta` is the changed region cropped from the budget view with 8 px
+padding, at budget size; `overlay` is before/after of that region
+(before red, after cyan, agreement white); `error` is the target's
+silhouette error map (missing red, extra blue) for the worst region;
+`full` is a whole frame at requested size. `inline` is present on the
+`repl` and socket transports; `path` on all transports.
+
+## Feedback provider registry
+
+The runtime assembles events for a request by calling registered providers
+in a fixed order; workstreams add channels by registering, never by editing
+the assembly. In `agent_runtime.py`:
+
+```python
+class Provider(Protocol):
+    name: str                       # "diff", "perception", "objective", "image", ...
+    order: int                      # ascending; diff=100, perception=200, objective=300, image=400
+    def before(self, request: dict, session: Session) -> None: ...   # capture pre-state
+    def after(self, request: dict, session: Session, emit) -> None: ... # emit(event_dict)
+
+def register_provider(provider: Provider) -> None
+```
+
+`before` runs on the main thread before the request executes; `after` runs
+after it, in `order`, and may call `emit` any number of times. A provider
+that raises is reported as a `log` event on `stderr` and skipped; it never
+fails the request. Providers read session state through `Session`; they do
+not call each other. The image provider reads the perception provider's
+last result through `session.last_perception`.
+
+## Program model
+
+`.blender-cli/program/model.py` is the session's program. It is plain
+Python executed in the session namespace from a factory-empty `Main`
+(`bpy.ops.wm.read_factory_settings(use_empty=True)` is the implicit first
+step). Layout:
+
+```python
+# blender-cli program
+P = {"handle_x": 0.43, "body_r": 0.35}      # parameters (fit targets these by name)
+# step 1
+bpy.ops.mesh.primitive_cylinder_add(radius=P["body_r"], depth=1.0)
+# step 2
+...
+```
+
+- `program record on` (default on in a session) appends every `exec` whose
+  diff is non-empty as the next `# step N` block; an `exec` with an empty
+  diff is not recorded. `exec` with `"record": false` never records.
+- `program get` returns `{text, version, steps, params}`. `program set`
+  replaces the text; `program patch` applies one `old`→`new` replacement
+  (must match exactly once). Both re-execute.
+- Re-execution runs step blocks in order from the longest prefix whose
+  memfile snapshot is cached (cache key: sha256 of the parameter block plus
+  the concatenated steps up to that point), then continues executing the
+  remaining steps; each executed step's snapshot is cached. A step that
+  raises stops execution; the `error` names the step and the program is
+  left at the last good step with the failing text intact.
+- Every `set|patch|run|rollback` and every recorded `exec` creates a
+  version: `versions/<sha256>.py` plus a row in `index.json`
+  `{version, parent, label, at, steps, message}`. `program history` lists
+  the tree; `program rollback <version|label>` checks a version out and
+  re-executes it. `session snapshot --label L` labels the current version.
+- Nondeterministic calls (random without seed, time, file reads of changing
+  files) are the agent's responsibility; `program run` reports
+  `reproducible: false` when re-executing the same version yields a
+  different memfile hash.
+- After a crash, `session open` in the same directory reloads the program
+  and re-executes its current version; the autosave `.blend` is the fast
+  path when its hash matches, else the program is the truth.
+
+## Targets and `fit`
+
+`target set` stores the reference under `.blender-cli/targets/<name>/` with
+its preprocessed silhouette (mask policy and `fit` policy as in `compare`),
+bound to one view. Registered targets are scored by the objective provider
+after every action at budget size (256, silhouette metrics only) and at full
+size on `observe`/`fit` completion.
+
+`fit`:
+
+```
+{"op": "fit",
+ "params": [{"name": "handle_x", "min": 0.2, "max": 0.6}          # program parameter
+            {"path": "objects[\"Handle\"].scale[0]", "min": 0.5, "max": 2}],   # RNA path
+ "objective": {"target": "front", "metric": "iou"}
+            | {"targets": ["front", "side"], "metric": "iou", "weights": [0.7, 0.3]}
+            | {"code": "agent.compare(...)['iou']"},
+ "budget": {"evals": 200, "seconds": 120, "size": 128},
+ "method": "coordinate"}
+```
+
+Each evaluation sets the parameters (program parameters re-execute from the
+parameter block's cached prefix; RNA paths assign directly), renders the
+objective's views at `budget.size`, and scores. `progress` events are sent
+at most every 0.5 s. `cancel` stops the search and keeps the best. `done`
+returns `{best: {params, score}, evals, curve: [[eval, best]…], applied:
+true, error_map: image}`; the best parameters are applied to the live scene
+and, for program parameters, written into `P`. Methods: `coordinate`
+(cyclic coordinate descent with shrinking steps), `nelder-mead`, `random`
+(Latin-hypercube then local refinement). Determinism: same program, same
+budget, same method ⇒ same result.
+
+## Describe and corrective errors
+
+`describe channel` returns the request/event registry as records;
+`describe schema` (CLI `describe --schema`) returns the same as JSON Schema
+for a function-calling host. `describe agent`, `describe agent.<fn>` and
+`bpy.*` paths behave as in the RNA contract below.
+
+Errors add `fix` when a single correction is unambiguous: an unknown
+attribute with one nearest identifier at similarity ≥ 0.85, an invalid enum
+with one nearest item, or an out-of-range value that clamps — `fix.code` is
+the original statement with the correction applied, and `fix.reason` says
+why. When no single fix is certain, `fix` is absent, never a guess.
 
 ## Process model
 
@@ -57,12 +314,14 @@ Two further cuts shorten the loop more than anything else:
 
 ## Modes
 
-- **One-shot**: `blender-cli <verb> … [--file scene.blend] [--save]`.
-  Loads, runs, optionally writes, exits. State lives in the `.blend` file.
-- **Session**: `blender-cli session open [--file scene.blend]` starts a
-  daemon bound to `<cwd>/.blender-cli/session.sock`. Any verb run in that
-  directory connects to it; without a session the verb runs one-shot. State
-  lives in the process; `session save` writes the `.blend`.
+- **Channel**: `blender-cli repl [--file scene.blend] [--standalone]` holds
+  one stdio pipe to the session for the whole conversation: requests in,
+  events out, as the channel protocol defines. This is the primary mode.
+- **Session + one-shot verbs**: `blender-cli session open [--file
+  scene.blend]` starts a daemon bound to `<cwd>/.blender-cli/session.sock`.
+  Any verb run in that directory sends one request to it and prints the
+  folded envelope. Without a session the verb runs one-shot: loads, runs,
+  optionally writes (`--save`), exits, with state in the `.blend` file.
 
 The returned endpoint remains absolute. Where its absolute name exceeds the
 platform's Unix-socket address limit, the launcher and daemon address the same
@@ -70,37 +329,49 @@ file relative to their initial working directory. Raw socket clients can likewis
 connect to `.blender-cli/session.sock` from the session directory. Cleanup retains
 the absolute name even if Python later changes the daemon's working directory.
 
-Both modes run the same registry; the daemon adds only the endpoint and the
-persistent namespace.
+All modes run the same request registry; the daemon adds only the endpoint,
+the persistent namespace and the program. One-shot verbs are projections of
+the requests: each verb's flags are the request's fields, and its output is
+the folded envelope.
 
-## The six verbs
+## The requests
 
-All verbs take `--json` to emit exactly one JSON document on stdout; human
-output is the default. Images are files whose paths appear in the JSON, or
-inline base64 with `--inline`. Exit code 0 is success; non-zero carries an
-`error` object.
+Every request is described here in its CLI projection; the JSON form is the
+request shape under *Channel protocol*. All verbs take `--json` to emit
+exactly one JSON document on stdout; human output is the default. Images are
+files whose paths appear in the JSON, or inline base64 with `--inline`. Exit
+code 0 is success; non-zero carries an `error` object.
 
 ### `session`
 
 ```
 session open  [--file F]        start daemon for cwd; answers {"session": id, "socket": path}
+session status                  {"session", "file", "dirty", "step", "snapshot", "feedback", "targets"}
+session feedback [--json-file F | KEY=VALUE…]   set the feedback policy; answers the policy
 session save  [--file F]        write the .blend
 session close                   write nothing, stop the daemon
 session snapshot [--label L]    {"snapshot": "sha256:…", "label": L}
-session rollback <id|~N>        restore; {"snapshot": current}
-session history                 [{"snapshot", "label", "verb", "at"}]
+session rollback <id|~N|label>  restore; {"snapshot": current, "step": N}
+session history                 [{"snapshot", "label", "op", "step", "at"}]
 ```
 
 Snapshots are memfile undo states keyed by the content hash of the memfile.
-`rollback` never asks; it restores.
+Labelled snapshots are also written to `.blender-cli/snapshots/<label>.blend`
+and survive a process crash; `rollback <label>` after recovery reloads that
+file. `rollback` never asks; it restores. Every request that changes `Main`
+advances `step` and produces a `diff` event carrying the new snapshot.
 
 ### `exec`
 
 ```
-exec -c CODE | exec FILE.py [--observe VIEWS] [--timeout S]
+exec -c CODE | exec FILE.py [--no-record] [--timeout S] [--image delta|full|off]
 ```
 
-Result:
+Runs the code, then pushes feedback: a `diff` event (added/changed/removed
+IDs with the new snapshot and step), a `perception` event, an `objective`
+event when targets exist, and `image` events under the feedback policy.
+With recording on (the default in a session), the executed code is appended
+to the program as the next step. Folded envelope:
 
 ```json
 {
@@ -110,10 +381,12 @@ Result:
   "diff": {
     "added":   [{"type": "OBJECT", "name": "Cube"}, …],
     "changed": [{"type": "MESH", "name": "Cube", "fields": ["geometry", "copy_on_eval"]}],
-    "removed": []
+    "removed": [],
+    "snapshot": "sha256:…", "step": 12
   },
-  "snapshot": "sha256:…",
-  "observe": {"image": "path.png", "views": ["front", "persp"]},
+  "perception": {…},
+  "objective": {…},
+  "images": [{"kind": "delta", "view": "front", "path": "…", "region": [x0, y0, x1, y1]}],
   "ms": 12
 }
 ```
@@ -127,22 +400,22 @@ On exception:
     "type": "AttributeError",
     "message": "'Object' object has no attribute 'locaton'",
     "line": 3,
-    "rna": {"struct": "Object", "nearest": ["location", "rotation_euler"], "type": "float[3]"}
+    "rna": {"struct": "Object", "nearest": ["location", "rotation_euler"], "type": "float[3]"},
+    "fix": {"code": "bpy.data.objects[\"Cube\"].location = (1, 0, 0)"}
   },
   "stdout": "…", "stderr": "…"
 }
 ```
 
-The namespace persists across `exec` calls in a session. It is preloaded
-with `bpy`, `bmesh`, `mathutils`, `math` and the `agent` helper module.
+A failed `exec` rolls `Main` back to the pre-request snapshot, so a partial
+edit never persists and the failed code is never recorded. The namespace
+persists across `exec` calls in a session. It is preloaded with `bpy`,
+`bmesh`, `mathutils`, `math` and the `agent` helper module.
 
-#### Phase 1 one-shot contract
+#### One-shot details
 
-At the Phase 1 boundary, only `exec` and `inspect` were implemented; the other
-four verbs answered `NotImplemented` and exited 1. Snapshots, observations and
-RNA error suggestions were absent, not placeholder fields. One-shot
-namespaces are fresh and preload `bpy`, `bmesh`, `mathutils`, `math`; Phase 2
-adds `agent` and the session contract below, preserving the one-shot behavior.
+One-shot namespaces are fresh and preload `bpy`, `bmesh`, `mathutils`,
+`math` and `agent`; the session contract below preserves one-shot behavior.
 `value` is a string containing the final expression's `repr`, or JSON null if
 there is no final expression. Both AST pieces compile before either executes.
 `ms` measures compilation and execution, excluding file load/save and ID diff.
@@ -182,8 +455,8 @@ Renames are detected by comparing names and add the `name` group. Entries sort
 by type/name. These are real depsgraph update categories, not property names or
 byte-level equality: tagging an unchanged value may count, and untagged raw
 memory edits do not. Embedded IDs are not separate Main-list entries. Explicit
-undo pushes/restores inside arbitrary code can reset the accumulator; Phase 1
-does not promise a mutation journal across those boundaries.
+undo pushes/restores inside arbitrary code can reset the accumulator; there
+is no mutation journal across those boundaries.
 
 The exact flag mapping (prefix `ID_RECALC_`) is:
 
@@ -212,7 +485,7 @@ The exact flag mapping (prefix `ID_RECALC_`) is:
 Reserved/provision bits do not name field groups. Combined upstream masks map
 to each constituent group.
 
-#### Phase 2 session contract
+#### Session details
 
 `session open [--file F]` detaches the sibling Blender executable and waits up
 to 10 seconds for its local endpoint to accept. POSIX uses `fork`, `setsid`,
@@ -285,8 +558,8 @@ files**. Reacquire RNA references from `bpy.data` after rollback: saved Python
 references into old Main may become invalid. Every successful session exec
 adds a history event and a `snapshot` field; `inspect` does not. Initial state
 has an `open` event. Manual snapshots have optional labels. `at` is Unix time
-in seconds. `agent.diff()` samples the current exec boundary, with the Phase 1
-ID-tag semantics (explicit undo/snapshot operations can reset accumulated tags).
+in seconds. `agent.diff()` samples the current exec boundary, with the
+ID-tag semantics above (explicit undo/snapshot operations can reset accumulated tags).
 `--file` loads only at `session open`; `session save --file F` writes without
 reloading, and bare save uses the current Blender filepath.
 
@@ -378,7 +651,7 @@ modifiers, materials, vertex/edge/face counts, UV layers), materials
 `--full` expands node trees and modifier settings. `--select` takes RNA
 paths for a targeted read. Never truncated.
 
-The Phase 1 response is `{ok, scene, objects, materials, armatures, cameras,
+The response is `{ok, scene, objects, materials, armatures, cameras,
 lights, collections}`. Object `type` is RNA's object type (`MESH`, not ID type
 `OBJECT`); `mesh` contains `vertices`, `edges`, `faces` counts and UV layer names.
 Transforms include all rotation representations, world matrix and dimensions;
@@ -414,7 +687,7 @@ observe [--views V,…] [--passes P,…] [--size 512|768|1024] [--ref IMG] [--la
 
 Result: `{"image": path, "views": [...], "passes": [...], "size": [w, h]}`.
 
-#### Phase 3 observation contract
+#### Observation details
 
 The full `RE_RenderFrame` EEVEE pipeline is the primary path, rather than
 `ED_view3d_draw_offscreen_imbuf_simple`: it supplies native Combined, Normal
@@ -500,9 +773,9 @@ layout. `--inline` writes no files and substitutes a `base64` string for the
 sheet's `image` path. It is mutually exclusive with `--out` and requires sheet
 layout: separate layout writes files, never multiple image payloads across the
 one-image boundary. All results include `ok: true`,
-requested views/passes and actual output dimensions. `exec --observe VIEWS`
-attaches this result as `observe`; `agent.observe(views, passes, size, ref)`
-uses the same implementation and returns the dict directly.
+requested views/passes and actual output dimensions. Feedback `image` events
+and `agent.observe(views, passes, size, ref)` use the same implementation;
+the helper returns the dict directly.
 
 Every observation also returns `framing: {bounds: {low: [x,y,z], high: [x,y,z]},
 center: [x,y,z], radius: number, objects: [name,...], occupancy: number}`.
@@ -520,27 +793,30 @@ not a cross-driver floating-point equivalence claim. Metal/macOS and
 real-GPU Vulkan/Windows require their own platform runs; Linux software
 Vulkan evidence cannot establish either.
 
-### `compare`
+### `target`
 
 ```
-compare --ref IMG --view V [--metrics M,…] [--mask auto|none] [--fit bbox|none]
+target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none] [--metrics M,…]
+target list
+target clear [NAME]
 ```
 
-Metrics: `iou` (silhouette intersection-over-union), `chamfer` (edge
-distance, pixels), `ssim`, `hist` (color-histogram distance). `--mask auto`
-removes the reference background with classic CV before comparison.
+A target binds a reference image to a preset view. While targets exist, every
+state-changing request ends with an `objective` event scoring each target at
+the feedback size; `fit` optimises against them. Metrics: `iou` (silhouette
+intersection-over-union), `chamfer` (edge distance, pixels), `ssim`, `hist`
+(color-histogram distance). `--mask auto` removes the reference background
+with classic CV before comparison. There is no comparison verb: the same
+computation is `agent.compare(ref, view, metrics=…)` inside `exec`, returning
+`{"view": "front", "reference": {…}, "iou": 0.83, "chamfer": 4.2, "ssim": 0.71, "hist": 0.12}`,
+and the `objective` event carries it for every target.
 
-Result: `{"view": "front", "iou": 0.83, "chamfer": 4.2, "ssim": 0.71, "hist": 0.12}`.
+#### Metric details
 
-The same computation is `agent.compare(ref, view, metrics=…)` inside `exec`,
-returning a dict.
-
-#### Phase 4 comparison contract
-
-CLI additionally accepts `--size 512|768|1024`, `--frame OBJECT` (bounds, not
-timeline frame, exactly as observe), and `--debug-out DIR`. The helper accepts
-the same settings as `size=512, frame=None, debug=False, fit="bbox"`; `debug=True` selects
-a new temporary directory, or a path chooses the directory. Only requested
+`agent.compare` accepts `size=512, frame=None, debug=False, fit="bbox",
+mask="auto"`, `frame` meaning bounds, not timeline frame, exactly as observe;
+`debug=True` selects a new temporary directory, or a path chooses the directory
+(`target set --debug-out DIR` for the CLI). Only requested
 metric keys, `view`, and `reference: {bbox: [x0,y0,x1,y1], occupancy: number,
 fit: "bbox"|"none"}` are returned (CLI adds `ok`). The bbox is the final
 foreground's tile-pixel bounds, top-left origin and exclusive high coordinates;
@@ -556,14 +832,14 @@ including PNG, JPEG and WebP. Byte buffers are straight display-referred sRGB;
 float buffers are unpremultiplied, converted from linear to sRGB and clamped.
 Alpha is resampled with premultiplied **display** RGB to avoid transparent-color
 bleeding, then unpremultiplied for segmentation. Reference image datablocks and
-render data are disposed under Phase 3's recalc/callback preservation boundary.
+render data are disposed under the observation recalc/callback preservation boundary.
 
 A square 516/772/1028 image whose entire two-pixel opaque outer border is
 RGB(32,32,32) is recognized as a single observe tile and cropped by two pixels.
 No other border is removed; multi-view/pass sheets should be cropped by the
 caller. This makes observe→compare self-consistency independent of sheet chrome.
 Then pixel-center bilinear interpolation aspect-fits and centers the image in
-the chosen tile, just like Phase 3 overlay. Scaled dimensions are nearest
+the chosen tile, just like the observe overlay. Scaled dimensions are nearest
 integers (Python round, minimum 1); odd padding puts the extra pixel at right
 or bottom. Padding is background, never foreground. `--fit none` stops here,
 preserving reference framing (use it for exact observe self-comparisons or
@@ -585,7 +861,7 @@ Euclidean distance > max(0.08, m + 6d), on channels normalized to [0,1]. If any
 alpha is < 254/255, alpha ≥ 0.5 takes precedence. A 3×3 square opening followed
 by closing, with edge-replicated padding, removes isolated noise and closes
 one-pixel gaps. All surviving components are kept; large holes are retained,
-not filled, because an object can have real holes in its Phase 3 silhouette.
+not filled, because an object can have real holes in its rendered silhouette.
 This is deterministic classic CV, not semantic segmentation: textured borders,
 foreground touching most of the border, background-colored objects, and thin
 features can defeat it. Debug exposes that uncertainty instead of hiding it.
@@ -593,12 +869,12 @@ features can defeat it. Debug exposes that uncertainty instead of hiding it.
 `mask=none` uses alpha ≥ 0.5 when the loaded image has an alpha channel (even
 fully opaque alpha); otherwise display grayscale ≥ 0.5. It does no morphology.
 Grayscale is 0.2126R + 0.7152G + 0.0722B. RGB under alpha is composited onto
-the Phase 3 display background (rounded sRGB(0.035), 53/255). SSIM replaces
+the observe display background (rounded sRGB(0.035), 53/255). SSIM replaces
 pixels outside each image's own foreground mask with this same background;
 histograms exclude those pixels. Thus a removed colored background does not
 dominate either appearance metric.
 
-Let A and B be reference and exact Phase 3 render silhouettes:
+Let A and B be reference and exact observe render silhouettes:
 
 - **IoU** = |A ∩ B| / |A ∪ B|; both empty gives 1.
 - **Chamfer** uses inner four-connected silhouette boundaries E(A), E(B),
@@ -636,7 +912,7 @@ Answers from live RNA: signature, properties with types, ranges, enum items
 and descriptions, and for operators the poll requirements the synthetic
 context satisfies.
 
-#### Phase 4 RNA contract
+#### RNA details
 
 `describe` and `agent.describe(path)` resolve public attributes and literal
 string/integer subscripts, never calls or arbitrary expressions. A bare name
@@ -655,7 +931,7 @@ type, subtype, animatable, readonly, and where applicable array_length, default,
 hard_min/max, soft_min/max, fixed_type, and enum_items (identifier/name/description).
 Operators add path, keyword signature, context note and actual `poll()` boolean;
 `poll_reason` is present only when upstream supplies a failure message. Polls
-run in the adopted Phase 3 context, not an invented edit mode. Module results
+run in the adopted synthetic context, not an invented edit mode. Module results
 map every operator name to its one-line RNA description. Neither JSON nor
 indented human output truncates properties or enum items.
 
@@ -678,23 +954,31 @@ upstream operations, not synthetic errors. Descriptions still expose their range
 
 ## The `agent` helper module
 
-Preloaded into every `exec` namespace. The Phase 4 surface is:
+Preloaded into every `exec` namespace. The surface is:
 
 ```python
-agent.observe(views=("front",), passes=("color",), size=512, ref=None) -> {"image": path, ...}
+agent.observe(views=("front",), passes=("color",), size=512, ref=None, frame=None) -> {"image": path, "framing": …}
 agent.compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False, fit="bbox") -> {"view": …, "reference": …, "iou": …}
+agent.perceive(view="front", size=256) -> perception dict (same shape as the event)
+agent.objective() -> objective dict for all targets (same shape as the event)
+agent.fit(params, objective=None, budget=None, method="coordinate") -> {"best": …, "params": …, "evals": …}
 agent.describe(path) -> {"kind": …, ...}
 agent.snapshot(label=None) -> "sha256:…"
 agent.rollback(snapshot_id) -> None
 agent.diff() -> {"added": …, "changed": …, "removed": …}   # since last exec boundary
-agent.history() -> [{"snapshot": …, "label": …, "verb": …, "at": …}, …]
+agent.history() -> [{"snapshot": …, "label": …, "op": …, "step": …, "at": …}, …]
+agent.program() -> {"text": …, "params": {…}, "steps": N, "version": "sha256:…"}
+agent.register_provider(provider) -> None
 ```
+
+Every helper returns the same dict its event or request carries; there is
+no helper-only shape.
 
 ## Synthetic context
 
 Many `bpy.ops` operators poll for a window, screen, `VIEW_3D` area and
 region. Background startup does not provide a reliable active UI area.
-Phase 3 adopts the first loaded window's active screen and its first
+The process adopts the first loaded window's active screen and its first
 `VIEW_3D` area/`WINDOW` region. Background factory startup and file loading
 already provide these data; constructing a duplicate hierarchy unconditionally
 would change files unnecessarily. If missing, the agent allocates a data-only
@@ -722,15 +1006,10 @@ mode switch, and supports continuing an edit across requests.
 
 ## Wire protocol (session)
 
-JSON lines over `AF_UNIX`. One request, one response, in order:
-
-```
-→ {"id": 1, "verb": "exec", "args": {"argv": ["-c", "…"]}}
-← {"id": 1, "result": {…}}
-```
-
-Cancellation: `{"id": 1, "cancel": true}` sets `G.is_break`; the running
-request answers with `"ok": false, "error": {"type": "Cancelled"}`.
+The session socket speaks exactly the channel protocol: JSON lines over
+`AF_UNIX`, request objects in, event objects out, in request order. There
+is no second wire shape; the `repl` bridge and one-shot verbs are clients of
+this socket.
 
 ## What is deliberately absent
 
@@ -739,5 +1018,8 @@ request answers with `"ok": false, "error": {"type": "Cancelled"}`.
 - No curated operator wrappers (`gameready`, `rig`, `retarget`). The agent
   writes code; recipes belong in the agent's own skill documents.
 - No typed tool catalog derived from RNA. `describe` serves RNA on demand
-  instead of enumerating it.
+  instead of enumerating it; `describe schema` projects the request set,
+  never `bpy`.
+- No comparison verb. Comparison is an objective pushed after every action.
+- No confirmation, dry-run or preview step. Rollback is the control.
 - No MCP, HTTP or add-on socket. See `AGENTS.md`.
