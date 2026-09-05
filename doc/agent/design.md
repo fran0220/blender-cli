@@ -132,10 +132,11 @@ with `bpy`, `bmesh`, `mathutils`, `math` and the `agent` helper module.
 
 #### Phase 1 one-shot contract
 
-At the Phase 1 boundary, only `exec` and `inspect` were implemented; the other four verbs answered
-`NotImplemented` and exit 1. Session snapshots, observations and RNA error
-suggestions are absent, not placeholder fields. One-shot namespaces are fresh
-and preload `bpy`, `bmesh`, `mathutils`, `math`; `agent` arrives with Phase 2.
+At the Phase 1 boundary, only `exec` and `inspect` were implemented; the other
+four verbs answered `NotImplemented` and exited 1. Snapshots, observations and
+RNA error suggestions were absent, not placeholder fields. One-shot
+namespaces are fresh and preload `bpy`, `bmesh`, `mathutils`, `math`; Phase 2
+adds `agent` and the session contract below, preserving the one-shot behavior.
 `value` is a string containing the final expression's `repr`, or JSON null if
 there is no final expression. Both AST pieces compile before either executes.
 `ms` measures compilation and execution, excluding file load/save and ID diff.
@@ -367,8 +368,7 @@ context satisfies.
 
 ## The `agent` helper module
 
-Preloaded into every `exec` namespace. Fixed in Phase 2; the intended
-surface:
+Preloaded into every `exec` namespace. The Phase 2 surface is:
 
 ```python
 agent.observe(views=("front",), passes=("color",), size=512, ref=None) -> {"image": path, ...}
@@ -382,7 +382,8 @@ agent.history() -> [{"snapshot": …, "label": …, "verb": …, "at": …}, …
 ## Synthetic context
 
 Many `bpy.ops` operators poll for a window, screen, `VIEW_3D` area and
-region. In background mode none exist. The fork constructs one
+region. Background startup does not provide a reliable active UI area.
+Phase 3 will construct one
 `wmWindow`/`bScreen` with a single `VIEW_3D` area and `WINDOW` region at
 session start, without GHOST and without drawing, and installs it as the
 default context for `exec`. Operators that genuinely need a GPU viewport

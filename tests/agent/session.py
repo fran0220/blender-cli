@@ -81,6 +81,14 @@ len(mesh.vertices)
             execute("bpy.data.objects['Cube'].location.x = 7; agent.diff()")
             assert execute("agent.diff()")["diff"] == {"added": [], "changed": [], "removed": []}
             call("session", "rollback", "~1")
+            execute("bpy.data.objects['Cube'].location.x = 4")
+            execute("bpy.data.objects['Cube'].location.x = 8")
+            assert execute("bpy.ops.ed.undo(); bpy.data.objects['Cube'].location.x")["value"] == "4.0"
+            call("session", "rollback", baseline["snapshot"])
+            assert len(execute("'x' * 200000")["value"]) == 200002
+            execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
+            call("session", "rollback", baseline["snapshot"])
+            assert vertices() == 8
             execute("bpy.app.timers.register(lambda: globals().update(timer_fired=True), first_interval=0.02)")
             time.sleep(0.1)
             assert execute("timer_fired")["value"] == "True"

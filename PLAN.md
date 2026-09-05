@@ -41,13 +41,20 @@ Done when: `session open` starts a daemon, ten `exec` calls share a
 namespace and variables, `snapshot` and `rollback` restore geometry, and the
 round trip for a trivial `exec` is under 10 ms on Linux.
 
+Proven on Debian 12 x86_64 with GCC 14.3.0: agent-profile configure/install
+returns `BUILD_EXIT=0`; both agent CTests pass. A separate 20-launcher-call
+run measured median 5.453 ms, min 5.311 ms, max 5.775 ms (strict 10 ms median
+bound, no added tolerance). Windows AF_UNIX/daemon code is structurally
+present but unverified; macOS is also unverified. Neither is product-platform
+evidence until run there.
+
 | Item | Status |
 |---|---|
-| Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | doing — transport syntax checked on Linux; real protocol verification pending full build |
-| Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | doing — main-thread runtime integrated; timers/cancellation test added, not yet run |
-| Persistent Python namespace per session (`agent` helper module preloaded) | doing — module surface implemented; ten-call persistence test awaiting build |
-| Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | doing — independent memfiles and background undo stack integrated; geometry round trip unverified |
-| `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | doing — detached launcher and direct socket client syntax checked; lifecycle/latency unverified |
+| Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | done — Linux real endpoint, ordered pipelined IDs and full 200 KB response pass; product platforms unverified |
+| Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | done — idle Python timer, second-connection cancellation and subsequent exec pass |
+| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; Phase 3/4 helpers raise explicit errors |
+| Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | done — cube 8 → 26 → 8 vertices; branch retention, labels, ~N, operator undo coexistence, Main replacement and save/reload pass |
+| `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | done — normal/forced close, duplicate-open refusal, stale recovery, file-open and one-shot fallback pass; median round trip 5.453 ms |
 
 ## Phase 3 — observation
 
@@ -105,5 +112,3 @@ macOS arm64 and Windows x64.
   large). Default: stays until Phase 5 numbers say otherwise.
 - Whether Cycles CPU stays for baking or Phase 5 shows EEVEE baking covers
   the need. Default: stays.
-- The `agent` Python helper module's exact surface (`observe`, `compare`,
-  `snapshot`) is fixed in Phase 2 and recorded in `doc/agent/design.md`.
