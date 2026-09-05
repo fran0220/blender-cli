@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 name: Agent gate
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read

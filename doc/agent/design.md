@@ -218,7 +218,9 @@ to each constituent group.
 to 10 seconds for its local endpoint to accept. POSIX uses `fork`, `setsid`,
 `/dev/null` stdin, and append-only `.blender-cli/session.log` stdout/stderr;
 Windows uses Unicode `CreateProcessW` with `DETACHED_PROCESS` and redirected
-handles. `.blender-cli/session.pid` records the daemon PID, also used as the
+handles. Its `STARTUPINFOEX` handle list includes only NUL and the log, not the
+caller's capture pipes, so the detached daemon cannot hold their EOF open.
+`.blender-cli/session.pid` records the daemon PID, also used as the
 returned session ID. A process-held `.blender-cli/session.lock` serializes
 open/forced-close operations. The directory is owner-only on POSIX. Opening
 an already-live session fails; a dead PID permits stale socket cleanup.

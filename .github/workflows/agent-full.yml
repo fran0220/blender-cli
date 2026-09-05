@@ -9,8 +9,6 @@ on:
         type: choice
         default: all
         options: [all, macos_arm64, windows_x64]
-  push:
-    tags: ['*-agent.*']
 permissions:
   contents: read
 jobs:

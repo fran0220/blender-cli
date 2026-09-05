@@ -64,8 +64,11 @@ Tier 2 — packaging, zero source changes:
   OpenColorIO) and Cython. These are not `bpy`, and retained add-ons/agent modules
   do not import them. Keep Blender's actual IO/color/volume libraries.
 - Remove shared libraries belonging to the disabled USD, OSL, MaterialX,
-  tracking, HIPRT, OpenXR and SDL subsystems, plus build helpers and Windows
-  PDBs. Preserve all license notices. SYCL/UR stay: the pinned Embree build
+  tracking, HIPRT, OpenXR, SDL, denoising, video and audio subsystems, plus build
+  helpers and Windows PDBs. Windows installs these in `blender.shared`; the
+  copied side-by-side manifest removes entries for deleted DLLs while preserving
+  its assembly identity. The final Windows path is not yet validated (see PLAN).
+  Preserve all license notices. SYCL/UR stay: the pinned Embree build
   causes actual dynamic dependencies even with all Cycles GPU devices off.
 - Datafiles: one Inter font face, with the required `DejaVuSansMono.woff2`
   filename alias (symlink on Unix; same-face copy in Windows ZIP). BLF loads
@@ -114,15 +117,22 @@ protocol scripts against the new tree as well before distributing it.
 macOS uses a plain directory with `bin/` and `Resources/`, preserving upstream
 `@loader_path/../Resources/lib` and application resource lookup; a top-level
 `blender-cli` symlink gives a stable CLI path. No binary rewriting or `.app` is
-needed. Windows uses the upstream flat layout. Archives are unsigned and not
+needed. Windows keeps the CLI at the root and upstream's `blender.shared` DLL
+directory and side-by-side assembly layout. Archives are unsigned and not
 notarized; quarantine instructions are in the root README.
 
-The push gate compiles `bf_agent` and `blender-cli` on AppleClang/MSVC, including
+Both workflows are **manual-only** (`workflow_dispatch`): the user stopped
+Actions-based iteration on 2026-09-05 in favor of faster Linux orb development.
+There are no push or tag build triggers. Historical platform evidence remains
+valid for its tested revision; Linux does not substitute for final Windows evidence.
+
+The manual gate compiles `bf_agent` and `blender-cli` on AppleClang/MSVC, including
 their unavoidable generated DNA/shader dependency closure (3,806/3,761 Ninja
 edges in the first native gates). It does not link Blender. Fatal warnings are
 target-local (`-Werror` or `/WX`), never global. Linux builds and tests the full
 profile with a 360-minute job budget. Each platform caches pinned libraries and a
-2 GiB sccache store. The dispatch/tag workflow builds, installs, tests and
+2 GiB sccache store, preferring complete build caches over newer gate-only caches.
+The manual full workflow builds, installs, tests and
 archives both product targets by default; dispatch can select one native
 platform for a focused retry without repeating another multi-hour build.
 Native device absence returns CTest skip code 77 with an explicit
@@ -138,7 +148,7 @@ Python startup generates bytecode, so warm test trees are larger than a fresh
 install; those caches are removed from archives.
 
 The untrimmed install compressed with `tar -I 'zstd -19' -cf - -C build/orb/bin .
-| wc -c` is **238,793,581 bytes**. No macOS/Windows size is inferred from this.
+| wc -c` is **238,794,063 bytes**. No macOS/Windows size is inferred from this.
 
 ### Release-tree result
 
@@ -147,9 +157,9 @@ The untrimmed install compressed with `tar -I 'zstd -19' -cf - -C build/orb/bin 
 | Warm installed tree, logical file bytes | 1,009,451,951 |
 | Trimmed tree, logical file bytes | 480,087,757 |
 | Removed, net | 529,364,194 (52.4%) |
-| Original whole-install tar.zst, level 19 | 238,793,581 |
-| `blender-cli-5.3.0-alpha-agent.1-linux-x64.tar.zst`, level 19 | 115,117,862 |
-| Compressed saving | 123,675,719 (51.8%) |
+| Original whole-install tar.zst, level 19 | 238,794,063 |
+| `blender-cli-5.3.0-alpha-agent.1-linux-x64.tar.zst`, level 19 | 115,150,673 |
+| Compressed saving | 123,643,390 (51.8%) |
 
 | Removed payload | Logical bytes saved |
 |---|---:|
@@ -173,7 +183,7 @@ warnings; `basic.sl` is the only retained external studio-light file.
 
 Linux verification after the profile spelling/fatal-warning and long-socket-path fixes:
 `BUILD_EXIT=0`; `ctest --test-dir build/orb -R agent --output-on-failure`:
-**100% tests passed, 0 tests failed out of 4**, 255.32 seconds. The four scripts
+**100% tests passed, 0 tests failed out of 4**, 281.15 seconds. The four scripts
 also pass against the trimmed tree. A fresh extraction of the archive passes
 all six verbs, and its observation is byte-identical to the original install:
 SHA-256 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
@@ -184,7 +194,7 @@ and voxel-remesh the cube to 488 vertices. No scene fixtures or mocks are used.
 
 | Component | Allocated size |
 |---|---:|
-| `5.3` | 447 MiB (437 MiB before Python startup caches) |
+| `5.3` | 448 MiB (437 MiB before Python startup caches) |
 | `blender` | 185 MiB |
 | `lib` | 336 MiB |
 | `makesrna` | 3.3 MiB |

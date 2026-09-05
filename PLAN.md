@@ -16,7 +16,7 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 | GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
 | Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
-| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | done — [run 33964004642](https://github.com/fran0220/blender-cli/actions/runs/33964004642): AppleClang 17.0.0 and MSVC 19.44.35228 configure and build bf_agent + blender-cli successfully, with target-local fatal warnings |
+| CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | done — [run 33971702805](https://github.com/fran0220/blender-cli/actions/runs/33971702805): AppleClang 17.0.0 and MSVC 19.44.35228 configure and build bf_agent + blender-cli with target-local fatal warnings; Linux full build, four tests and packaging also pass; workflows are now manual-only by user direction |
 
 ## Phase 1 — a process that answers
 
@@ -129,14 +129,14 @@ macOS arm64 and Windows x64.
 
 | Item | Status |
 |---|---|
-| Configure and build the agent profile on macOS arm64 and Windows x64 | doing — native gates green; macOS full build and four tests pass in [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411); Windows full builds still running |
-| Per-component size measurement; adjust the profile from numbers, not guesses | done for Linux and macOS — measured tables in build-profile.md; OpenVDB/Cycles decisions resolved; Windows measurements pending |
-| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | done on Linux and macOS — all four trimmed regressions and six-verb exact observation equality pass; Linux extracted archive also passes; required startup retention is documented below; Windows remains unverified |
-| Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | unverified as a pair — macOS archive uploaded by [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411); Windows artifact pending; unsigned, no notarization |
+| Configure and build the agent profile on macOS arm64 and Windows x64 | done for native compilation — [gate 33971702805](https://github.com/fran0220/blender-cli/actions/runs/33971702805); macOS full build and four tests pass in [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411); Windows full build succeeded in [run 33972449797](https://github.com/fran0220/blender-cli/actions/runs/33972449797), but final runtime remains unverified as detailed below |
+| Per-component size measurement; adjust the profile from numbers, not guesses | done for Linux and macOS — final Linux script measured and verified in the orb; tables in build-profile.md; OpenVDB/Cycles decisions resolved; Windows measurements unverified — no native Windows run |
+| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | done on Linux and macOS — all four trimmed regressions and six-verb exact observation equality pass; Linux extracted archive also passes; Windows final trim unverified — no native Windows run |
+| Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | done for macOS archive in [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411) and Linux dev archive in orb; Windows archive unverified — no native Windows run; unsigned, no notarization |
 
 Linux final profile configure/install reports `BUILD_EXIT=0` with agent-local
 fatal warnings enabled. `ctest --test-dir build/orb -R agent --output-on-failure`
-passes all four tests (255.32s). GCC exposed equal EAGAIN/EWOULDBLOCK expressions;
+passes all four tests (281.15s). GCC exposed equal EAGAIN/EWOULDBLOCK expressions;
 the fix preserves errno semantics rather than disabling the warning. Measurement
 and archive/equivalence evidence, including justified trim exceptions, are owned
 by `doc/agent/build-profile.md`. macOS's long temporary directories exposed the
@@ -146,6 +146,25 @@ macOS full run passes all four tests (162.84s), including actual Metal rendering
 then all four trimmed scripts and exact before/after observation equality.
 Its warm full-build cache records 4,276 hits / 2 misses, and the complete job
 takes 12m53s. Earlier failed runs are diagnostic evidence, not final validation.
+
+### Manual-only platform verification
+
+On 2026-09-05 the user stopped Actions-based development to shorten iteration
+time. Both `Agent gate` and `Agent full build` are `workflow_dispatch` only;
+neither main pushes nor tags start builds. No further native iteration or waiting
+is part of this phase. Runs 33974082545 and 33974081826 were still in progress
+at the handoff and are not used as evidence. Subsequent verification is in the
+Linux orb; no scheduled follow-up is installed.
+
+The final Windows work remains in place, explicitly **unverified — no native
+Windows run**: Winsock AF_UNIX test connections and process-exit synchronization,
+restricted daemon handle inheritance, the bundled Vulkan loader probe, and
+`blender.shared` library/manifest trimming. This reason refers to validation of
+the final combined state, not the absence of earlier Windows attempts. Earlier
+attempts compiled and passed protocol; they exposed captured-pipe inheritance,
+premature stale-PID recovery and an incorrect loader path. They do not establish
+final runtime or package correctness. Windows 11 GPU rendering is also unverified;
+the CI host is Windows Server 2022, not a Windows 11 workstation.
 
 ## Phase 6 — hosts (not started, not scheduled)
 
