@@ -101,6 +101,13 @@ def package(install, output, platform, archive):
     version_dir = versions[0]
     report = {"platform": platform, "installed_bytes": size(install),
               "before": components(resources), "removed": []}
+    report["components"] = {}
+    for pattern in ("lib/*", "*.dll", "*.exe", version_dir.name + "/datafiles/*",
+                    version_dir.name + "/scripts/addons_core/*",
+                    version_dir.name + "/python/lib/python3.*/*",
+                    version_dir.name + "/python/lib/*"):
+        for path in sorted(resources.glob(pattern)):
+            report["components"][str(path.relative_to(resources))] = size(path)
 
     def remove(path):
         amount = size(path)
@@ -122,6 +129,17 @@ def package(install, output, platform, archive):
     assert len(stdlibs) == 1, stdlibs
     for name in ("test", "idlelib", "tkinter", "ensurepip", "lib2to3", "turtledemo"):
         remove(stdlibs[0] / name)
+    # Upstream's macOS/Windows Python install copies VFX SDK bindings even when
+    # those engines are disabled. None are dependencies of the kept add-ons or
+    # agent modules. Keep requests/zstandard used by upstream Python modules.
+    site = stdlibs[0] / "site-packages"
+    for pattern in ("pxr", "usd_core*", "MaterialX*", "materialx*", "oslquery*",
+                    "OpenImageIO*", "openimageio*", "PyOpenColorIO*", "opencolorio*",
+                    "openvdb*", "pyopenvdb*", "Cython*", "cython*"):
+        for path in sorted(site.glob(pattern)):
+            remove(path)
+    for path in sorted(resources.glob("*.icns")) + list(resources.glob("Assets.car")):
+        remove(path)
     data = version_dir / "datafiles"
     for path in sorted((data / "fonts").iterdir()):
         if path.name != "Inter.woff2":
