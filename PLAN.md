@@ -143,9 +143,10 @@ Owns: `agent_rna.py`, `tests/agent/describe.py` (new; the RNA portions of
 
 | Item | Status |
 |---|---|
-| `describe channel` and `describe schema` generated from the request table K exposes | todo |
-| `fix` on unambiguous attribute, enum and operator-keyword errors; never on ambiguous ones | todo |
-| `describe` records for the new `agent` helpers | todo |
+| `describe channel` and `describe schema` generated from the request table K exposes | done on Linux — read from K's `agent_runtime.REQUESTS`/`EVENTS`/`DEFS`, never a second copy; nine ops, nine events; each op's schema is a self-contained draft 2020-12 document whose `$defs` hold only the shapes it reaches, and every op's `example` validates against it. `mutates` is dispatch policy and is not projected. Two exclusive choices the contract makes are enforced only by K's validator and so are deliberately absent from the schema: `exec` code-or-script and `fit_param` name-or-path. Declaring them as `exactly_one_of` in K's table is all that is needed; the projection and its test already follow that key |
+| `fix` on unambiguous attribute, enum and operator-keyword errors; never on ambiguous ones | done in `agent_rna.error_fields`, unverified on the wire — the current runtime still copies only `rna`, so `error.fix` reaches the envelope when K merges `error_fields`. Proven against real RNA in `tests/agent/describe.py`: `locaton`→`location` (0.93), `type='MESHES'`→`'MESH'` (0.80, sole candidate), `bevel_dept`→`data.bevel_depth` (0.95), each rewritten statement re-executed successfully; `rotation_mode='XYZY'` ties `XYZ` and `XZY` at 0.857 and carries no `fix` |
+| `describe` records for the new `agent` helpers | done on Linux — `describe agent` answers for all twelve helpers now present (`compare`, `describe`, `diff`, `fit`, `history`, `objective`, `observe`, `perceive`, `program`, `register_provider`, `rollback`, `snapshot`), each with a signature, docstring and parameter defaults from `inspect.signature`. The test asserts every record is well formed rather than a fixed list, so later helpers are covered without editing it |
+| Open, owned by K: `describe` path errors carry `agent_rna`'s own line instead of null, because the error assembly treats every non-`agent_runtime` frame as user code. `doc/agent/design.md` requires null; the assertion is parked in `tests/agent/describe.py` with a comment and returns when the assembly filters agent modules | todo |
 
 ### W — CLI projections, documentation, removal of the comparison verb
 

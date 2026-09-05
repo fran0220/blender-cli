@@ -487,11 +487,41 @@ budget, same method ⇒ same result.
 for a function-calling host. `describe agent`, `describe agent.<fn>` and
 `bpy.*` paths behave as in the RNA contract below.
 
-Errors add `fix` when a single correction is unambiguous: an unknown
-attribute with one nearest identifier at similarity ≥ 0.85, an invalid enum
-with one nearest item, or an out-of-range value that clamps — `fix.code` is
-the original statement with the correction applied, and `fix.reason` says
-why. When no single fix is certain, `fix` is absent, never a guess.
+Both are **generated from the request table** the runtime validates against
+(`REQUESTS`, `EVENTS` and the shared `DEFS` it references); neither is
+hand-maintained, so a host's tool catalog cannot describe a request the
+process would reject. A field spec carries `type`, `required`, `default`,
+`enum`, `items`, `ref` (a `DEFS` name), `minimum`/`maximum` with an optional
+`exclusive_minimum`, `exactly_one_of` on an object, and a one-line `doc`.
+`describe channel` answers `{kind: "channel", requests, events, defs}`; each
+request record is `{doc, fields, events, example}`, where `events` names the
+events that op can produce and `example` is one concrete valid request.
+
+`describe schema` answers `{kind: "schema", $schema, requests}` with one
+document per op. Each document is self-contained — its own `$schema`, an
+`$id` of `urn:blender-cli:request:<op>`, `title`, `description`, and a
+`$defs` holding exactly the shared shapes it reaches — so a host can hand a
+single op's schema to a model unchanged. `id` and `op` are part of the
+projected request: `op` is a `const`, `additionalProperties` is `false`, and
+`exactly_one_of` becomes `oneOf`. Every op record's `example` validates
+against its own document; that is what keeps the table, the schema and the
+request validator from drifting apart.
+
+Errors add `fix` when a single correction is certain: an unknown attribute
+or operator keyword, or an enum item that is not in the property's live
+items. Candidates are ranked by the same difflib similarity as `nearest`,
+including the `data.` hop, and a correction is **unambiguous** when it is
+the only candidate above the 0.6 cutoff, or scores at least 0.85 and beats
+the runner-up by more than 0.05. A lone candidate needs no threshold because
+nothing else is close; a crowded neighbourhood needs both. `fix.code` is the
+submitted code with that one identifier replaced at its source position and
+nothing else changed, so the agent resubmits it directly — necessary because
+a failed request rolls `Main` back, which makes any earlier statement in the
+same code part of the correction. It is emitted only if it still compiles.
+`fix.reason` names the struct, the rejected identifier, the replacement and
+its similarity. When no single fix is certain, `fix` is absent, never a
+guess. A value Blender clamps is not an error at all (see *RNA details*), so
+it carries no `fix`; the property record's ranges expose the limit instead.
 
 ## Process model
 
@@ -1190,8 +1220,11 @@ and docstrings: `{kind: "function", signature: "agent.compare(...)", doc: string
 parameters: [{name: string, default: string|null}, ...]}`. Defaults are Python
 repr strings; null means a required parameter. `describe agent` returns
 `{kind: "module", path: "agent", doc: string, functions: {name: function_record}}`.
-Unresolvable paths raise `ValueError` naming the supported `bpy.*`/`agent.*`
-roots and supplied path. CLI describe errors never include internal `line` fields.
+Helpers added by other workstreams appear there as soon as they exist; the
+record comes from `inspect.signature`, never from a hand-written list.
+Unresolvable paths raise `ValueError` naming the supported `bpy.*` and
+`agent.*` roots, the `channel` and `schema` registries, and the supplied
+path. CLI describe errors never include internal `line` fields.
 Structs include `struct`, `description`, `base` (nullable), and `properties`
 keyed by identifier. Property records include identifier, description, lowercase
 type, subtype, animatable, readonly, and where applicable array_length, default,
@@ -1218,6 +1251,11 @@ traceback locals, including semicolon-separated statements; calls are never
 replayed. If no RNA receiver can be recovered, `rna` is absent, not empty.
 Blender silently clamps many numeric assignments; these remain successful
 upstream operations, not synthetic errors. Descriptions still expose their ranges.
+That same source position is what `fix.code` rewrites, so a correction is a
+byte-level edit of the submitted text, not a regenerated statement.
+`agent_rna.error_fields(error, code, filename)` returns the fields this module
+contributes — `rna`, `fix`, or neither — and the runtime merges them into the
+error object. It never raises and never replaces `type`, `message` or `line`.
 
 ## The `agent` helper module
 
