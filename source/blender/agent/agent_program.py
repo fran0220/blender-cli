@@ -630,6 +630,21 @@ def on_session_open(session, directory=None, previous_autosave=None):
     return recovery
 
 
+def parameters(session):
+    """The program's current `P` values. `fit` reads its search space from here."""
+    return attach(session).params
+
+
+def set_parameters(session, values):
+    """Replace named parameters, write a version and re-execute the steps that read them.
+
+    `Main` is left at the result. Answers the run result: `{ok, version, digest, ran,
+    from_step, cached, steps, reproducible, ms}`, or `ok: false` with `error` when a
+    step raises. This is one `fit` evaluation.
+    """
+    return attach(session).set_params(values)
+
+
 def record_from_exec(session, code, before, after, diff):
     """Recording hook for the `exec` path: record code that changed data."""
     if not code or not any(diff.get(group) for group in ("added", "changed", "removed")):

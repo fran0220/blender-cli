@@ -189,15 +189,19 @@ def main():
                   f'cached={edited["cached"]} digest={partial} full_run_digest={full["digest"]}',
                   flush=True)
 
-            # `Program.set_params` and `Program.run` are the API `fit` drives.
-            fitted = marked("_program = agent_program.attach(agent._session)\n"
-                            "_result = _program.set_params({'shift': 1.25})\n"
-                            "_result['params'] = _program.params\n"
-                            "_result['api_version'] = _program.version\n")
+            # One `fit` evaluation: the two module functions workstream T calls.
+            fitted = marked(
+                "_result = agent_program.set_parameters(agent._session, {'shift': 1.25})\n"
+                "_result['params'] = agent_program.parameters(agent._session)\n")
             assert fitted["ran"] == [3] and steps_ran() == [3], fitted
             assert fitted["params"] == {"radius": 0.4, "height": 4.0, "shift": 1.25}, fitted
-            assert fitted["api_version"] == fitted["version"], fitted
+            assert fitted["version"] and fitted["digest"], fitted
             assert 'P = {"radius": 0.4, "height": 4.0, "shift": 1.25}' in program("get")["text"]
+            # A parameter no step reads re-executes nothing.
+            unused = marked(
+                "_result = agent_program.set_parameters(agent._session, {'unused': 7})\n")
+            assert unused["ran"] == [] and unused["cached"] == 3 and steps_ran() == [], unused
+            assert unused["digest"] == fitted["digest"], unused
 
             # History is a tree of parents; rollback moves between versions.
             history = program("history")

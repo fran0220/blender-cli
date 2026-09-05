@@ -333,20 +333,25 @@ an empty dict means the program did not take over.
 ### Python API
 
 `agent.program()` returns `{text, params, steps, version, reproducible}`.
-The `fit` request drives program parameters through the same objects:
+
+`fit` drives program parameters through two module functions, which are the
+stable surface for it:
 
 ```python
-program = agent_program.attach(session)   # the session's Program, created on demand
-program.set_params({"handle_x": 0.5})     # rewrite P and re-execute the affected suffix
-program.run(from_step=None)               # re-execute; both answer the run result above
-program.version                           # current "sha256:…"
-program.params                            # the parsed P dict
+agent_program.parameters(session) -> dict          # the current P values
+agent_program.set_parameters(session, values) -> run result
 ```
 
-`set_params` merges named values into `P`, rewrites only the `P = {…}`
-statement in the header, commits a version and re-executes. It is the
-supported way to evaluate a program parameter, and it costs one partial
-re-execution per evaluation.
+`set_parameters` merges named values into `P`, rewrites only the `P = {…}`
+statement in the header, commits a version and re-executes from the first
+step that reads a changed parameter, leaving `Main` at the result. That is
+one `fit` evaluation, and it costs one partial re-execution. The answer is
+the run result above, so `version` identifies the evaluated program and
+`digest` identifies the scene it produced.
+
+The objects behind them are available for anything else: `attach(session)`
+returns the session's `Program`, with `params`, `version`, `text`,
+`set_params(values)` and `run(from_step=None)`.
 
 The `exec` path records through
 `agent_program.record_from_exec(session, code, before, after, diff)`, where
