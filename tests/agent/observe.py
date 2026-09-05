@@ -57,8 +57,8 @@ def read_png(data):
 
 
 def main():
-    require_device()
     executable = str(Path(sys.argv[1]).resolve())
+    require_device(executable)
     with tempfile.TemporaryDirectory(prefix="agent observe ") as directory:
         root = Path(directory)
 

@@ -16,8 +16,8 @@ from gpu import require_device
 
 
 def main():
-    require_device()
     executable = str(Path(sys.argv[1]).resolve())
+    require_device(executable)
     with tempfile.TemporaryDirectory(prefix="agent compare ") as directory:
         root = Path(directory)
 

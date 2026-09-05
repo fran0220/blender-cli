@@ -46,7 +46,7 @@ if __name__ == "__main__":
     original, trimmed = (Path(arg).resolve() for arg in sys.argv[1:])
     gpu = True
     try:
-        require_device()
+        require_device(original)
     except SystemExit as error:
         if error.code != 77:
             raise
