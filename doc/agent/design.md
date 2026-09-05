@@ -64,6 +64,12 @@ Two further cuts shorten the loop more than anything else:
   directory connects to it; without a session the verb runs one-shot. State
   lives in the process; `session save` writes the `.blend`.
 
+The returned endpoint remains absolute. Where its absolute name exceeds the
+platform's Unix-socket address limit, the launcher and daemon address the same
+file relative to their initial working directory. Raw socket clients can likewise
+connect to `.blender-cli/session.sock` from the session directory. Cleanup retains
+the absolute name even if Python later changes the daemon's working directory.
+
 Both modes run the same registry; the daemon adds only the endpoint and the
 persistent namespace.
 

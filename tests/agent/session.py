@@ -4,6 +4,7 @@
 
 """Real installed CLI/AF_UNIX session, memfile restoration and latency checks."""
 
+import contextlib
 import json
 from pathlib import Path
 import socket
@@ -16,8 +17,13 @@ import time
 
 def main():
     executable = str(Path(sys.argv[1]).resolve())
-    with tempfile.TemporaryDirectory(prefix="agent session ") as directory:
-        root = Path(directory)
+    # Deliberately exceed sockaddr_un.sun_path even on Linux. Raw clients use
+    # the same endpoint relative to cwd; shortening TMPDIR would hide the bug.
+    with (
+        tempfile.TemporaryDirectory(prefix="agent session " + "x" * 96) as directory,
+        contextlib.chdir(directory),
+    ):
+        root = Path(directory).resolve()
 
         def call(*args, ok=True):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=root,
@@ -38,6 +44,7 @@ def main():
         opened = call("session", "open")
         endpoint = opened["socket"]
         assert endpoint == str(root / ".blender-cli" / "session.sock"), opened
+        local_endpoint = str(Path(endpoint).relative_to(root))
         try:
             call("session", "open", ok=False)
             for index in range(10):
@@ -95,11 +102,11 @@ len(mesh.vertices)
             # Cancellation is on a second connection while the original is executing.
             with socket.socket(socket.AF_UNIX) as running, socket.socket(socket.AF_UNIX) as control:
                 running.settimeout(10)
-                running.connect(endpoint)
+                running.connect(local_endpoint)
                 request = {"id": 9001, "verb": "exec", "args": {"argv": ["-c", "while True:\n    pass"]}}
                 running.sendall((json.dumps(request) + "\n").encode())
                 time.sleep(0.1)
-                control.connect(endpoint)
+                control.connect(local_endpoint)
                 control.sendall(b'{"id":9001,"cancel":true}\n')
                 response = json.loads(running.makefile("rb").readline())
                 assert response["id"] == 9001 and response["result"]["error"]["type"] == "Cancelled", response
@@ -107,7 +114,7 @@ len(mesh.vertices)
             # Multiple complete lines on one connection retain order and matching IDs.
             with socket.socket(socket.AF_UNIX) as pipeline:
                 pipeline.settimeout(10)
-                pipeline.connect(endpoint)
+                pipeline.connect(local_endpoint)
                 for index, code in enumerate(("queued = 40", "queued += 2; queued")):
                     message = {"id": 9100 + index, "verb": "exec", "args": {"argv": ["-c", code]}}
                     pipeline.sendall((json.dumps(message) + "\n").encode())
@@ -149,7 +156,7 @@ len(mesh.vertices)
         # A native call cannot be preempted; close still has a bounded forced-exit path.
         call("session", "open")
         with socket.socket(socket.AF_UNIX) as hung:
-            hung.connect(endpoint)
+            hung.connect(local_endpoint)
             request = {"id": 9200, "verb": "exec",
                        "args": {"argv": ["-c", "import time; time.sleep(30)"]}}
             hung.sendall((json.dumps(request) + "\n").encode())
@@ -160,7 +167,9 @@ len(mesh.vertices)
         execute("import os; os._exit(0)", ok=False)
         # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
         call("session", "open")
+        execute("import os; os.chdir('..')")
         call("session", "close")
+        assert not Path(endpoint).exists(), "Daemon cwd changes must not redirect endpoint cleanup"
     print("agent session: all assertions passed")
 
 

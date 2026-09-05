@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -52,10 +53,19 @@ inline sockaddr_un socket_address(const std::string &path)
 {
   sockaddr_un address{};
   address.sun_family = AF_UNIX;
-  if (path.size() >= sizeof(address.sun_path)) {
+  /* Both peers start in the session directory. Relative addressing avoids
+   * sun_path's limit even when the absolute working directory is very long.
+   * Callers retain the absolute path for reporting and cleanup after Python
+   * changes its working directory; no process-wide chdir is needed here. */
+  std::string socket_path = path;
+  if (socket_path.size() >= sizeof(address.sun_path)) {
+    socket_path =
+        std::filesystem::path(path).lexically_relative(std::filesystem::current_path()).string();
+  }
+  if (socket_path.empty() || socket_path.size() >= sizeof(address.sun_path)) {
     throw std::runtime_error("Session socket path is too long");
   }
-  memcpy(address.sun_path, path.c_str(), path.size() + 1);
+  memcpy(address.sun_path, socket_path.c_str(), socket_path.size() + 1);
   return address;
 }
 
