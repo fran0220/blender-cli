@@ -236,6 +236,51 @@ def render_passes(scene, size, near, far, wire=None):
     return images
 
 
+def view_axes(view, camera):
+    """Image axes whose mirror is a world-axis mirror about the framing center.
+
+    Only the orthographic presets qualify: they project the framing center onto the
+    image center, so flipping an axis of the buffer mirrors world space exactly.
+    """
+    if view == "camera" or camera.data.type != "ORTHO":
+        return {}
+    basis = camera.matrix_world.to_3x3().normalized()
+    axes = {}
+    for image_axis, vector in ((1, basis.col[0]), (0, basis.col[1])):
+        for index, name in enumerate("xyz"):
+            if abs(abs(vector[index]) - 1) < 1e-6:
+                axes[name] = image_axis
+    return axes
+
+
+def render_budget(views, size):
+    """One render per view at feedback size, as raw buffers rather than encoded tiles.
+
+    Feedback compares consecutive states pixel by pixel and crops regions out of them,
+    so it needs the arrays; counts come from the same converted geometry as `framing`.
+    """
+    source = bpy.context.scene
+    if "camera" in views and source.camera is None:
+        raise ValueError("The camera view requires scene.camera")
+    tiles = {}
+    with isolated_data():
+        scene, points, center, radius, framing = render_scene(source, size, None)
+        counts = {"objects": 0, "verts": 0, "faces": 0}
+        for obj in scene.collection.objects:
+            if obj.type in {"LIGHT", "CAMERA"}:
+                continue
+            counts["objects"] += 1
+            counts["verts"] += len(getattr(obj.data, "vertices", ()))
+            counts["faces"] += len(getattr(obj.data, "polygons", ()))
+        for view in views:
+            near, far = aim(scene, source, view, points, center, radius)
+            images = render_passes(scene, size, near, far)
+            tiles[view] = {"color": images["color"],
+                           "silhouette": images["silhouette"][:, :, 0] != 0,
+                           "axes": view_axes(view, scene.camera)}
+    return tiles, framing, counts
+
+
 def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
             layout="sheet", frame=None, overlay=False, out=None, inline=False):
     views, passes = names(views, VIEWS), names(passes, PASSES)

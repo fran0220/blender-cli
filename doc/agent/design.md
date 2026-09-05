@@ -167,13 +167,40 @@ rollback`; costs no render beyond the budget view at budget size.
  "changed": {"objects": ["Handle"],
              "view": "front", "region": [x0,y0,x1,y1], "fraction": 0.031,
              "silhouette_delta": 0.012},
- "symmetry": {"x": 0.98, "y": 0.41, "z": 0.12}}
+ "symmetry": {"x": 0.98, "y": null, "z": 0.12}}
 ```
 
-`changed` compares the budget view against the previous perception render
-of the same session (kept in memory, 256 px silhouette + color); it is
-`null` on the first action. `symmetry` is silhouette IoU under mirroring in
-the budget view.
+`objects`, `verts` and `faces` count the same converted, instanced geometry
+that `framing` measures and the budget view renders — evaluated as rendered,
+including geometry-nodes instances, excluding cameras, lights and
+hidden-render objects. `bounds` repeats `framing.bounds` and `dims` is its
+extent.
+
+`changed` compares the budget view against the previous perception render of
+the same session (kept in memory as the budget-size silhouette and color
+buffers); it is `null` on the first action, and present with zero deltas when
+an action changed nothing. `changed.objects` names the objects in the
+request's ID diff, including the objects that use changed geometry
+datablocks. A pixel counts as changed when any 8-bit channel moves by more
+than 2 or the silhouette flips there; `region` is the changed pixels' bounds
+in the budget view (top-left origin, exclusive high, `null` when nothing
+changed) and `fraction` is their share of the view. `silhouette_delta` is
+`1 − IoU` of the two silhouettes.
+
+`symmetry` is silhouette IoU under mirroring about each world-axis plane
+through the framing center, measured in the budget view. An orthographic
+preset projects that center onto the image center, so mirroring the buffer
+mirrors world space exactly; the axis along the view direction is invisible
+to the silhouette and is reported as `null` rather than the trivial 1.0
+(`front` measures x and z). Non-axis-aligned views (`persp`, `camera`)
+report `null` for all three. Perception costs no render beyond the budget
+views, whose buffers the image provider reuses.
+
+`agent.perceive(view, size)` returns this payload without the `event` key
+and without advancing the remembered state, so an action's own
+`agent.perceive()` and its perception event describe the same state against
+the same baseline. It renders once for that sample; only the action's
+provider advances the baseline.
 
 ### Objective event
 
@@ -196,12 +223,22 @@ bookkeeping.
 
 ### Image event
 
-`delta` is the changed region cropped from the budget view with 8 px
-padding, at budget size; `overlay` is before/after of that region
-(before red, after cyan, agreement white); `error` is the target's
-silhouette error map (missing red, extra blue) for the worst region;
-`full` is a whole frame at requested size. `inline` is present on the
-`repl` and socket transports; `path` on all transports.
+`delta` is the changed region cropped out of the budget view with 8 px
+padding, in the budget view's own pixels; its `region` is that padded crop,
+so it always covers `perception.changed.region`. `overlay` is the same
+region's silhouettes before and after (before red, after cyan, agreement
+white, neither RGB 32); `error` is the target's silhouette error map
+(missing red, extra blue) for the worst region, or, when the feedback render
+itself failed, a `message` and no image at all; `full` is a whole frame at
+budget size. `inline` is present on the `repl` and socket transports; `path`
+on all transports.
+
+The image provider sends one image per budget view per action, and nothing
+when the view's changed fraction is below `threshold`. A view the agent has
+never seen has nothing to be a delta against and is sent `full`; `mode:
+"full"` sends whole frames thereafter, `mode: "delta"` sends the crop and,
+with `overlay` on, the overlay beside it. Files are written under
+`.blender-cli/feedback/`, named by the content hash of the PNG.
 
 ## Feedback provider registry
 
