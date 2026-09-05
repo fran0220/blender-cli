@@ -34,9 +34,9 @@ def observe(views=("front",), passes=("color",), size=512, ref=None):
     return render(views=views, passes=passes, size=size, ref=ref)
 
 
-def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False):
+def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False, fit="bbox"):
     from agent_compare import compare as compare_render
-    return compare_render(ref, view, metrics=metrics, mask=mask, size=size, frame=frame, debug=debug)
+    return compare_render(ref, view, metrics=metrics, mask=mask, size=size, frame=frame, debug=debug, fit=fit)
 
 
 def describe(path):

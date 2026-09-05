@@ -10,7 +10,7 @@ import tempfile
 import bpy
 import numpy as np
 
-from agent_observe import (VIEWS, aim, bytes_rgb, isolated_data, names, png,
+from agent_observe import (OCCUPANCY, VIEWS, aim, bytes_rgb, isolated_data, names, png,
                            render_passes, render_scene, resize, srgb)
 
 METRICS = ("iou", "chamfer", "ssim", "hist")
@@ -30,7 +30,7 @@ def morphology(mask, dilate):
     return result
 
 
-def reference(ref, size, policy):
+def reference(ref, size, policy, fit="bbox"):
     """Load with Blender's codecs; caller owns the isolated-data lifetime."""
     image = bpy.data.images.load(str(Path(ref).resolve()), check_existing=False)
     w, h = image.size
@@ -80,12 +80,28 @@ def reference(ref, size, policy):
         # ImBuf's source color mode and distinguishes an actual alpha channel.
         has_alpha = image.depth in (16, 32, 64, 128)
         mask = a >= 0.5 if has_alpha else (rgb @ np.array((0.2126, 0.7152, 0.0722))) >= 0.5
+    rgb = rgb * a[:, :, None] + BACKGROUND * (1 - a[:, :, None])
+    if fit == "bbox" and mask.any():
+        ys, xs = np.nonzero(mask)
+        x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+        rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+        scale = size * OCCUPANCY / max(mask.shape)
+        rw, rh = max(1, round(mask.shape[1] * scale)), max(1, round(mask.shape[0] * scale))
+        # Segment before cropping; cropped edges no longer identify the background.
+        rgb = resize(rgb, rw, rh)
+        mask = resize(mask[:, :, None].astype(float), rw, rh)[:, :, 0] >= 0.5
     tile = np.full((size, size, 3), BACKGROUND, dtype=np.float64)
     silhouette = np.zeros((size, size), dtype=bool)
     x, y = (size - rw) // 2, (size - rh) // 2
-    tile[y:y + rh, x:x + rw] = rgb * a[:, :, None] + BACKGROUND * (1 - a[:, :, None])
+    tile[y:y + rh, x:x + rw] = rgb
     silhouette[y:y + rh, x:x + rw] = mask
-    return tile, silhouette
+    bbox = None
+    occupancy = 0.0
+    if silhouette.any():
+        ys, xs = np.nonzero(silhouette)
+        bbox = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+        occupancy = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / size
+    return tile, silhouette, {"bbox": bbox, "occupancy": occupancy, "fit": fit}
 
 
 def boundary(mask):
@@ -144,7 +160,7 @@ def measure(reference_rgb, reference_mask, render_rgb, render_mask, metrics):
     return result
 
 
-def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False):
+def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False, fit="bbox"):
     metrics = names(metrics, METRICS)
     if view not in VIEWS:
         raise ValueError(f"Unknown view: {view}")
@@ -152,15 +168,17 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
         raise ValueError("size must be 512, 768 or 1024")
     if mask not in ("auto", "none"):
         raise ValueError("mask must be auto or none")
+    if fit not in ("bbox", "none"):
+        raise ValueError("fit must be bbox or none")
     source = bpy.context.scene
     if view == "camera" and source.camera is None:
         raise ValueError("The camera view requires scene.camera")
     with isolated_data():
-        rgb, silhouette = reference(ref, size, mask)
+        rgb, silhouette, reference_info = reference(ref, size, mask, fit)
         scene, points, center, radius, framing = render_scene(source, size, frame)
         near, far = aim(scene, source, view, points, center, radius)
         images = render_passes(scene, size, near, far)
-        result = {"view": view, **measure(rgb, silhouette, images["color"] / 255,
+        result = {"view": view, "reference": reference_info, **measure(rgb, silhouette, images["color"] / 255,
                                          images["silhouette"][:, :, 0] != 0, metrics)}
     if debug:
         directory = Path(tempfile.mkdtemp(prefix="blender-cli-compare-")) if debug is True else Path(debug).resolve()

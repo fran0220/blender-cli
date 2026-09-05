@@ -85,7 +85,25 @@ recovered = load_rgb('debug/reference-silhouette.png')[:, :, 0] != 0
 float(np.count_nonzero(recovered & silhouette) / np.count_nonzero(recovered | silhouette))
 """)
             assert float(mask_iou["value"]) >= 0.95, mask_iou
-            assert compare(root / "mask.png", "--mask", "none")["iou"] == 1.0
+            assert compare(root / "mask.png", "--mask", "none", "--fit", "none")["iou"] == 1.0
+            execute("""
+from agent_observe import resize
+# Same real silhouette, with 20% margins on each side.
+ys, xs = np.nonzero(silhouette)
+cropped = silhouette[ys.min():ys.max()+1, xs.min():xs.max()+1]
+scale = 512 * 0.6 / max(cropped.shape)
+w, h = round(cropped.shape[1] * scale), round(cropped.shape[0] * scale)
+padded = np.zeros((512, 512, 3), dtype=np.uint8)
+x, y = (512-w)//2, (512-h)//2
+padded[y:y+h, x:x+w] = np.repeat(
+    (resize(cropped[:, :, None].astype(float), w, h) >= 0.5).astype(np.uint8) * 255, 3, axis=2)
+Path('margins.png').write_bytes(png(padded))
+""")
+            fitted = compare(root / "margins.png", "--mask", "none")
+            unfitted = compare(root / "margins.png", "--mask", "none", "--fit", "none")
+            print("margin-reference none/bbox:", unfitted, fitted, flush=True)
+            assert fitted["iou"] >= 0.99 and unfitted["iou"] < 0.8, (fitted, unfitted)
+            assert fitted["reference"]["fit"] == "bbox" and fitted["reference"]["bbox"] is not None
             execute("""
 Path('portrait.png').write_bytes(png(rgb[:, 64:-64]))
 rgba = np.concatenate((rgb / 255, silhouette[:, :, None].astype(float)), axis=2)
@@ -110,7 +128,7 @@ for extension, format in (('jpg', 'JPEG'), ('webp', 'WEBP')):
                 assert compare(root / ("colored." + extension))["iou"] >= 0.95
             for size in (768, 1024):
                 resized = call("compare", "--ref", ref, "--view", "front", "--size", size, "--frame", "Cube")
-                assert set(resized) == {"ok", "view", "iou"} and resized["iou"] >= 0.98, resized
+                assert set(resized) == {"ok", "view", "iou", "reference"} and resized["iou"] >= 0.98, resized
             # Warm comparison cost includes fresh reference loading, evaluation and rendering.
             compare(ref)
             warm = execute("agent.compare('ref.png', 'front', metrics=('iou','chamfer','ssim','hist'))")
@@ -147,7 +165,7 @@ from agent_observe import isolated_data
 with isolated_data():
     start = time.perf_counter()
     for _ in range(20):
-        pixels, mask = reference('ref.png', 512, 'auto')
+        pixels, mask, info = reference('ref.png', 512, 'auto')
         measure(pixels, mask, rgb / 255, silhouette, METRICS)
     pixel_ms = (time.perf_counter() - start) * 1000 / 20
 {'preprocess_and_metrics_ms': pixel_ms}
@@ -195,7 +213,7 @@ with isolated_data():
             assert module["kind"] == "module" and module["operators"]["bevel"], module
             assert ast.literal_eval(execute("agent.describe('bpy.types.Object.location')")["value"])["array_length"] == 3
             call("describe", "__import__('os').getcwd()", ok=False)
-            for extra in (("--size", "256"), ("--mask", "bad"), ("--metric", "bad")):
+            for extra in (("--size", "256"), ("--mask", "bad"), ("--metric", "bad"), ("--fit", "bad")):
                 call("compare", "--ref", ref, "--view", "front", *extra, ok=False)
             compare(root / "missing.png", ok=False)
         finally:

@@ -62,6 +62,7 @@ def parse(arguments):
         parser.add_argument("--view", required=True)
         parser.add_argument("--metric", default="iou")
         parser.add_argument("--mask", choices=("auto", "none"), default="auto")
+        parser.add_argument("--fit", choices=("bbox", "none"), default="bbox")
         parser.add_argument("--size", type=int, default=512)
         parser.add_argument("--frame")
         parser.add_argument("--debug-out")
@@ -288,7 +289,7 @@ def run(arguments, snapshot, fields, session=None):
             elif args.verb == "compare":
                 result = {"ok": True, **agent.compare(args.ref, args.view, metrics=args.metric,
                                                      mask=args.mask, size=args.size, frame=args.frame,
-                                                     debug=args.debug_out or False)}
+                                                     debug=args.debug_out or False, fit=args.fit)}
             else:
                 result = inspect(args)
             if session and args.verb == "exec":

@@ -523,7 +523,7 @@ Vulkan evidence cannot establish either.
 ### `compare`
 
 ```
-compare --ref IMG --view V [--metric M,…] [--mask auto|none]
+compare --ref IMG --view V [--metric M,…] [--mask auto|none] [--fit bbox|none]
 ```
 
 Metrics: `iou` (silhouette intersection-over-union), `chamfer` (edge
@@ -539,9 +539,13 @@ returning a dict.
 
 CLI additionally accepts `--size 512|768|1024`, `--frame OBJECT` (bounds, not
 timeline frame, exactly as observe), and `--debug-out DIR`. The helper accepts
-the same settings as `size=512, frame=None, debug=False`; `debug=True` selects
+the same settings as `size=512, frame=None, debug=False, fit="bbox"`; `debug=True` selects
 a new temporary directory, or a path chooses the directory. Only requested
-metric keys and `view` are returned (CLI adds `ok`). Debug alone adds
+metric keys, `view`, and `reference: {bbox: [x0,y0,x1,y1], occupancy: number,
+fit: "bbox"|"none"}` are returned (CLI adds `ok`). The bbox is the final
+foreground's tile-pixel bounds, top-left origin and exclusive high coordinates;
+occupancy is its longest extent divided by tile size. An empty foreground has
+`bbox: null, occupancy: 0`. Debug alone adds
 `debug: {reference_silhouette: path}` for an unbordered binary RGB PNG. Normal
 comparison does not encode, write or return any image, even within `exec`.
 Each call freshly loads the reference and freshly evaluates/renders the scene;
@@ -561,8 +565,18 @@ caller. This makes observe→compare self-consistency independent of sheet chrom
 Then pixel-center bilinear interpolation aspect-fits and centers the image in
 the chosen tile, just like Phase 3 overlay. Scaled dimensions are nearest
 integers (Python round, minimum 1); odd padding puts the extra pixel at right
-or bottom. Padding is background, never foreground. No silhouette alignment,
-translation or scale optimization happens implicitly.
+or bottom. Padding is background, never foreground. `--fit none` stops here,
+preserving reference framing (use it for exact observe self-comparisons or
+deliberately fixed scene-camera framing).
+
+Default `--fit bbox` / `fit="bbox"` segments the reference first, crops RGB and
+silhouette together to the foreground bounding box, then uniformly resizes
+and centers them at observe's `OCCUPANCY = 1 / 1.1` (0.9090909090909091).
+RGB and mask use pixel-center bilinear resizing; the mask is thresholded at
+0.5. Dimensions round to nearest integers, so a 512 tile targets 465 pixels
+while actual observation coverage can be 466 pixels. Empty foreground stays
+empty. This removes reference margins, not viewpoint, perspective or shape
+differences; it does not optimize against the rendered silhouette.
 
 `mask=auto` estimates the background by componentwise median RGB of the fitted
 image's four outer rows/columns (before padding). Let border RGB distances from
@@ -658,7 +672,7 @@ Preloaded into every `exec` namespace. The Phase 4 surface is:
 
 ```python
 agent.observe(views=("front",), passes=("color",), size=512, ref=None) -> {"image": path, ...}
-agent.compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False) -> {"view": …, "iou": …}
+agent.compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False, fit="bbox") -> {"view": …, "reference": …, "iou": …}
 agent.describe(path) -> {"kind": …, ...}
 agent.snapshot(label=None) -> "sha256:…"
 agent.rollback(snapshot_id) -> None
