@@ -125,6 +125,9 @@ class AgentCommand : public CommandHandler {
           "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
           "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
           "          [--layout sheet|separate] [--out PATH | --inline]\n"
+          "  compare --ref IMG --view V [--metric iou,chamfer,ssim,hist]\n"
+          "          [--mask auto|none] [--size 512|768|1024] [--frame OBJECT] [--debug-out DIR]\n"
+          "  describe RNA_PATH\n"
           "  Common: --file F --save [F] --json\n"
           "  --version: upstream version and fork tag");
       return 0;

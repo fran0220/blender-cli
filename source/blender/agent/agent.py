@@ -34,8 +34,9 @@ def observe(views=("front",), passes=("color",), size=512, ref=None):
     return render(views=views, passes=passes, size=size, ref=ref)
 
 
-def compare(ref, view, metrics=("iou",), mask="auto"):
-    raise NotImplementedError("agent.compare is delivered in Phase 4")
+def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False):
+    from agent_compare import compare as compare_render
+    return compare_render(ref, view, metrics=metrics, mask=mask, size=size, frame=frame, debug=debug)
 
 
 def describe(path):

@@ -37,10 +37,9 @@ def parse(arguments):
     parser.add_argument("--file")
     parser.add_argument("--save", nargs="?", const="")
     parser.add_argument("--json", action="store_true")
-    # Later-phase verbs must report NotImplemented even with their future arguments.
-    if arguments[0] in {"session", "compare"}:
-        raise NotImplemented(f"{arguments[0]} is not implemented in Phase 1")
-    if arguments[0] not in {"exec", "inspect", "observe", "describe"}:
+    if arguments[0] == "session":
+        raise NotImplemented("session requires an action, e.g. session open")
+    if arguments[0] not in {"exec", "inspect", "observe", "compare", "describe"}:
         raise ValueError(f"Unknown verb: {arguments[0]}")
     if arguments[0] == "exec":
         parser.add_argument("-c", dest="code")
@@ -59,6 +58,14 @@ def parse(arguments):
         parser.add_argument("--inline", action="store_true")
     elif arguments[0] == "describe":
         parser.add_argument("path")
+    elif arguments[0] == "compare":
+        parser.add_argument("--ref", required=True)
+        parser.add_argument("--view", required=True)
+        parser.add_argument("--metric", default="iou")
+        parser.add_argument("--mask", choices=("auto", "none"), default="auto")
+        parser.add_argument("--size", type=int, default=512)
+        parser.add_argument("--frame")
+        parser.add_argument("--debug-out")
     else:
         parser.add_argument("--object")
         parser.add_argument("--full", action="store_true")
@@ -271,6 +278,10 @@ def run(arguments, snapshot, fields, session=None):
                                     ("views", "passes", "size", "ref", "layout", "frame", "overlay", "out", "inline")})
             elif args.verb == "describe":
                 result = {"ok": True, **agent.describe(args.path)}
+            elif args.verb == "compare":
+                result = {"ok": True, **agent.compare(args.ref, args.view, metrics=args.metric,
+                                                     mask=args.mask, size=args.size, frame=args.frame,
+                                                     debug=args.debug_out or False)}
             else:
                 result = inspect(args)
             if session and args.verb == "exec":

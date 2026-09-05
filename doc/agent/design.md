@@ -447,6 +447,83 @@ Result: `{"view": "front", "iou": 0.83, "chamfer": 4.2, "ssim": 0.71, "hist": 0.
 The same computation is `agent.compare(ref, view, metrics=…)` inside `exec`,
 returning a dict.
 
+#### Phase 4 comparison contract
+
+CLI additionally accepts `--size 512|768|1024`, `--frame OBJECT` (bounds, not
+timeline frame, exactly as observe), and `--debug-out DIR`. The helper accepts
+the same settings as `size=512, frame=None, debug=False`; `debug=True` selects
+a new temporary directory, or a path chooses the directory. Only requested
+metric keys and `view` are returned (CLI adds `ok`). Debug alone adds
+`debug: {reference_silhouette: path}` for an unbordered binary RGB PNG. Normal
+comparison does not encode, write or return any image, even within `exec`.
+Each call freshly loads the reference and freshly evaluates/renders the scene;
+there is no stale image, scene, RNA-pointer or file-mtime cache.
+
+Reference loading uses `bpy.data.images` / ImBuf and compiled-in codecs,
+including PNG, JPEG and WebP. Byte buffers are straight display-referred sRGB;
+float buffers are unpremultiplied, converted from linear to sRGB and clamped.
+Alpha is resampled with premultiplied **display** RGB to avoid transparent-color
+bleeding, then unpremultiplied for segmentation. Reference image datablocks and
+render data are disposed under Phase 3's recalc/callback preservation boundary.
+
+A square 516/772/1028 image whose entire two-pixel opaque outer border is
+RGB(32,32,32) is recognized as a single observe tile and cropped by two pixels.
+No other border is removed; multi-view/pass sheets should be cropped by the
+caller. This makes observe→compare self-consistency independent of sheet chrome.
+Then pixel-center bilinear interpolation aspect-fits and centers the image in
+the chosen tile, just like Phase 3 overlay. Scaled dimensions are nearest
+integers (Python round, minimum 1); odd padding puts the extra pixel at right
+or bottom. Padding is background, never foreground. No silhouette alignment,
+translation or scale optimization happens implicitly.
+
+`mask=auto` estimates the background by componentwise median RGB of the fitted
+image's four outer rows/columns (before padding). Let border RGB distances from
+that median have median m and median absolute deviation d. Foreground is RGB
+Euclidean distance > max(0.08, m + 6d), on channels normalized to [0,1]. If any
+alpha is < 254/255, alpha ≥ 0.5 takes precedence. A 3×3 square opening followed
+by closing, with edge-replicated padding, removes isolated noise and closes
+one-pixel gaps. All surviving components are kept; large holes are retained,
+not filled, because an object can have real holes in its Phase 3 silhouette.
+This is deterministic classic CV, not semantic segmentation: textured borders,
+foreground touching most of the border, background-colored objects, and thin
+features can defeat it. Debug exposes that uncertainty instead of hiding it.
+
+`mask=none` uses alpha ≥ 0.5 when the loaded image has an alpha channel (even
+fully opaque alpha); otherwise display grayscale ≥ 0.5. It does no morphology.
+Grayscale is 0.2126R + 0.7152G + 0.0722B. RGB under alpha is composited onto
+the Phase 3 display background (rounded sRGB(0.035), 53/255). SSIM replaces
+pixels outside each image's own foreground mask with this same background;
+histograms exclude those pixels. Thus a removed colored background does not
+dominate either appearance metric.
+
+Let A and B be reference and exact Phase 3 render silhouettes:
+
+- **IoU** = |A ∩ B| / |A ∪ B|; both empty gives 1.
+- **Chamfer** uses inner four-connected silhouette boundaries E(A), E(B),
+  including foreground at tile edges (outside the tile is background).
+  D(E,p) = min over q in E of |px−qx| + |py−qy|, an exact city-block distance
+  transform computed by separable forward/backward minimum-prefix scans.
+  Score = ½(mean over p in E(A) of D(E(B),p) + mean over p in E(B) of D(E(A),p)).
+  Units are pixels, not normalized by size. Both empty gives 0; exactly one
+  empty gives the tile's maximum city-block distance, 2(size−1).
+- **SSIM** is the full-tile mean of
+  ((2μxμy+C1)(2σxy+C2))/((μx²+μy²+C1)(σx²+σy²+C2)), with population moments
+  from a uniform 7×7 window, reflect padding, L=1, K1=0.01, K2=0.03,
+  C1=(K1L)², C2=(K2L)². Float64 integral images compute window means;
+  roundoff-negative variances clamp to zero, final score to [−1,1].
+- **Hist** is 1 − Σ min(hA,hB), a joint 16×16×16-bin display-sRGB histogram
+  with uniform channel bins [k/16,(k+1)/16), inclusive at 1 in the last bin.
+  Each image uses its own foreground-only probability histogram. Both empty
+  gives 0; one empty gives 1. Range [0,1]; smaller is better, as for Chamfer.
+
+Pixel work uses shipped NumPy, not Python pixel loops or a new dependency.
+Distance transforms and SSIM are linear in tile pixel count. The small fixed
+morphology stencil iterates nine vectorized arrays. Performance evidence and
+real fit-loop timings are recorded in `PLAN.md`; rendering is the intended
+dominant cost. Automatic framing removes uniform scale, so fit loops must vary
+an identifiable parameter (e.g. cube X scale with fixed Z extent), use a fixed
+`frame` object's bounds, or use the `camera` view.
+
 ### `describe`
 
 ```
@@ -489,11 +566,11 @@ upstream operations, not synthetic errors. Descriptions still expose their range
 
 ## The `agent` helper module
 
-Preloaded into every `exec` namespace. The Phase 2 surface is:
+Preloaded into every `exec` namespace. The Phase 4 surface is:
 
 ```python
 agent.observe(views=("front",), passes=("color",), size=512, ref=None) -> {"image": path, ...}
-agent.compare(ref, view, metrics=("iou",), mask="auto") -> {"iou": …}
+agent.compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False) -> {"view": …, "iou": …}
 agent.describe(path) -> {"kind": …, ...}
 agent.snapshot(label=None) -> "sha256:…"
 agent.rollback(snapshot_id) -> None
