@@ -81,10 +81,38 @@ rendering; the renderer's determinism and `framing` contract are frozen).
 
 | Item | Status |
 |---|---|
-| Perception provider: counts, bounds, framing, changed region/fraction, silhouette delta, symmetry, at 256 px front view by default | todo |
-| Image provider: delta/overlay/full/error kinds, threshold, budget views/pass/size, region crop; overlay against the previous state | todo |
-| Perception caches the previous feedback render per view so deltas cost one render per action | todo |
-| `agent.perceive()` helper; provider registration at session start | todo |
+| Perception provider: counts, bounds, framing, changed region/fraction, silhouette delta, symmetry, at 256 px front view by default | done on Linux — `agent_feedback.Perception`, proven by `tests/agent/feedback.py` |
+| Image provider: delta/overlay/full/error kinds, threshold, budget views/pass/size, region crop; overlay against the previous state | done on Linux — `agent_feedback.Image`; a failed budget render is an `error` image event, never a failed request |
+| Perception caches the previous feedback render per view so deltas cost one render per action | done on Linux — one action costs exactly one budget render; see the measurements below |
+| `agent.perceive()` helper; provider registration at session start | unverified — `agent_feedback.perceive()` works and equals the event; it becomes `agent.perceive` and the providers are registered when K's registry lands, replacing the interim `agent_feedback.run()` driver |
+
+Feedback cycle cost, Linux orb (Release, xPack GCC 14.3.0, software Vulkan
+`lavapipe`), one action at the default 256 px front budget view, measured as
+the whole provider cycle and as the budget render alone inside it:
+
+| Scene | Cycle (ms) | Budget render alone (ms) |
+|---|---|---|
+| Cube, 8 vertices | 2742.6, 2685.7, 2639.0 | 2555.5, 2761.4, 2751.5 |
+| `primitive_grid_add(x_subdivisions=1000, y_subdivisions=1000)` — 1,002,001 vertices | 30987.2, 29141.5, 29536.4 | 30753.0, 29435.8, 29737.7 |
+
+The cycle is the render. Everything the providers add — the changed-region
+scan, IoU, symmetry, the crops and the PNGs — stays inside the render's own
+run-to-run variance; the only measurable addition is about 100 ms to encode a
+whole 256 px frame on an action's first image. The render cost is the
+observation renderer's, not the feedback channel's, and it is not resolution
+bound on this device: 512 px costs 3.36 s where 256 px costs 2.54 s. Two
+levers exist, both needing product-platform evidence before they are taken:
+
+- EEVEE samples. The budget render inherits observation's 32 samples. On the
+  cube, 32 samples cost 2537.9/2682.4 ms, 8 samples 858.2/857.5 ms and 1
+  sample 335.9 ms. This is a decision for the objective provider too, which
+  scores targets from the same buffers.
+- Skipping the render when Main did not change. The grid's remaining cost is
+  `render_scene` 3.8 s (per-action Python conversion and the framing point
+  list) and `aim` 1.3 s (1,002,001 `mathutils` projections) before EEVEE's
+  24 s. An action whose memfile hash is unchanged cannot have changed the
+  picture; that test needs K's post-request snapshot, and the ID diff is not
+  a safe substitute because an in-code rollback resets its accumulator.
 
 ### T — targets, objective and `fit`
 
