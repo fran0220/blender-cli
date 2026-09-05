@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+SECONDS=0
+if [[ "$(uname -m)" != x86_64 ]]; then
+  echo 'Blender orb setup requires Linux x86_64 precompiled libraries.' >&2
+  exit 1
+fi
+
+echo '[setup] Checking Debian build prerequisites'
+# Debian 12 GCC is too old for this checkout; Clang 19 meets Blender's minimum.
+packages=(build-essential clang-19 clang-format-19 clangd-19 lld-19 cmake ninja-build
+  ccache git-lfs pkg-config python3 libx11-dev libxxf86vm-dev libxcursor-dev
+  libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev
+  wayland-protocols libdbus-1-dev libgl-dev libegl-dev)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  sudo apt-get update -qq
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+echo "[setup] System packages ready (${SECONDS}s)"
+
+# Persist the compiler selection for Amp and services, scoped to this checkout.
+marker='# Blender orb compiler environment'
+if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$marker
+case "\$PWD" in
+  "$repo_root"|"$repo_root"/*)
+    export CC=clang-19 CXX=clang++-19
+    ;;
+esac
+EOF
+fi
+
+echo '[setup] Hydrating source assets and pinned Linux libraries'
+git lfs install --local
+git lfs pull
+# Override update=none for this invocation only; never update Blender's branch.
+GIT_LFS_SKIP_SMUDGE=1 git -c submodule.lib/linux_x64.update=checkout \
+  submodule update --init --depth 1 -- lib/linux_x64
+git -C lib/linux_x64 lfs pull
+echo "[setup] Dependencies ready (${SECONDS}s total); Blender compilation is on demand"
