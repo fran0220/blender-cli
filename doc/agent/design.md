@@ -283,14 +283,25 @@ An evicted memfile drops every prefix that named it and re-execution falls
 back to a shorter prefix, or to the base.
 
 `set`, `patch`, `run`, `rollback` and `program get` answer with a `digest`:
-`agent_program.digest()`, a sha256 over `Main`'s content — every ID list,
-then object transforms and relations, mesh vertex/edge/loop/polygon buffers,
-material node graphs, cameras, lights and collections. A partial re-run and
-a full run from the base of the same program produce the same `digest`, and
-that equality is what proves the prefix cache correct. Memfile snapshot IDs
-cannot serve: they hash retained buffers including allocation state, so two
-runs that build the same scene never share one. The `digest` is comparable
-across runs and across processes; the snapshot ID is not.
+`agent_program.digest()`, a sha256 over `Main`'s content. A partial re-run
+and a full run from the base of the same program produce the same `digest`,
+and that equality is what proves the prefix cache correct. Memfile snapshot
+IDs cannot serve: they hash retained buffers including allocation state, so
+two runs that build the same scene never share one. The `digest` is
+comparable across runs and across processes; the snapshot ID is not. It is
+the answer to "is this the same scene" everywhere in the process.
+
+It covers every ID list; object transforms, relations and material slots;
+mesh vertex, edge, loop and polygon buffers; material node graphs; cameras,
+lights and collections; curve spline points, metaball elements, lattice
+points and armature bones; and the RNA settings of every modifier, every
+constraint and every non-mesh data ID. That RNA walk is
+`agent_runtime.settings`, the one `inspect --full` already uses, so what an
+agent can read is what the digest distinguishes: two scenes differing only
+in a modifier's numeric setting have different digests even when the setting
+never reaches a mesh datablock. Meshes are excluded from the RNA walk
+because their content is the geometry buffers, and walking a million-vertex
+collection as RNA references would cost far more and say less.
 
 ### Versions
 

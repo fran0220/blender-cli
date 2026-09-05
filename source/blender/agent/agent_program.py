@@ -273,12 +273,19 @@ def digest():
 
     Memfile snapshot IDs are process-local identities that carry allocation state, so
     two runs that build the same scene do not share one. This walks the data instead:
-    every ID list, then object transforms and relations, mesh geometry buffers and
-    material node graphs. It is what proves a partial re-execution reached the state a
+    every ID list, then object transforms and relations, mesh geometry buffers,
+    material node graphs, and the RNA settings of modifiers, constraints and the
+    non-mesh data types. It is what proves a partial re-execution reached the state a
     full run from the base would have reached.
+
+    The RNA walk is `agent_runtime.settings`, the same one `inspect --full` uses, so
+    what an agent can read is what the digest distinguishes. Meshes are excluded from
+    it: their content is the geometry buffers below, and walking a million-vertex
+    collection as RNA references would cost far more and say less.
     """
     # Evaluated transforms and edit-mode meshes are only current at a request boundary.
     import agent
+    from agent_runtime import settings
     agent._native["flush"]()
     bpy.context.view_layer.update()
     stream = hashlib.sha256()
@@ -307,8 +314,13 @@ def digest():
              obj.parent.name if obj.parent else None,
              obj.data.name if obj.data else None,
              [round(value, 6) for row in obj.matrix_world for value in row],
-             [(modifier.type, modifier.name) for modifier in obj.modifiers],
              [slot.material.name if slot.material else None for slot in obj.material_slots])
+        # A modifier or constraint that differs only in a numeric setting is a
+        # different scene, so the settings themselves are hashed, not just the type.
+        for modifier in obj.modifiers:
+            feed("modifier", obj.name, modifier.name, sorted(settings(modifier).items()))
+        for constraint in obj.constraints:
+            feed("constraint", obj.name, constraint.name, sorted(settings(constraint).items()))
     for mesh in sorted(bpy.data.meshes, key=lambda item: item.name):
         feed("mesh", mesh.name, len(mesh.vertices), len(mesh.edges),
              len(mesh.loops), len(mesh.polygons),
@@ -325,6 +337,33 @@ def digest():
              sorted((link.from_node.name, link.from_socket.identifier,
                      link.to_node.name, link.to_socket.identifier)
                     for link in tree.links) if tree else None)
+    # Non-mesh data: the RNA walk, then the point buffers RNA collapses to references.
+    for name in ("curves", "metaballs", "lattices", "armatures", "volumes",
+                 "pointclouds", "hair_curves", "grease_pencils_v3", "grease_pencils"):
+        collection = getattr(bpy.data, name, None)
+        if collection is None:
+            continue
+        for item in sorted(collection, key=lambda entry: entry.name):
+            feed("data", name, item.name, sorted(settings(item).items()))
+    for curve in sorted(bpy.data.curves, key=lambda item: item.name):
+        for index, spline in enumerate(curve.splines):
+            feed("spline", curve.name, index, spline.type,
+                 len(spline.points), len(spline.bezier_points))
+            buffered(spline.points, "co", "f", 4)
+            for attribute in ("co", "handle_left", "handle_right"):
+                buffered(spline.bezier_points, attribute, "f", 3)
+    for ball in sorted(bpy.data.metaballs, key=lambda item: item.name):
+        for index, element in enumerate(ball.elements):
+            feed("element", ball.name, index, element.type, list(element.co), element.radius,
+                 element.size_x, element.size_y, element.size_z, element.stiffness)
+    for lattice in sorted(bpy.data.lattices, key=lambda item: item.name):
+        buffered(lattice.points, "co_deform", "f", 3)
+    for armature in sorted(bpy.data.armatures, key=lambda item: item.name):
+        for bone in sorted(armature.bones, key=lambda item: item.name):
+            feed("bone", armature.name, bone.name,
+                 bone.parent.name if bone.parent else None, bone.use_deform,
+                 [round(value, 6) for value in bone.head_local],
+                 [round(value, 6) for value in bone.tail_local])
     for camera in sorted(bpy.data.cameras, key=lambda item: item.name):
         feed("camera", camera.name, camera.type, round(camera.lens, 6),
              round(camera.ortho_scale, 6))

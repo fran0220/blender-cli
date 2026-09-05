@@ -221,6 +221,27 @@ def main():
             assert mixed["reproducible"] is False, mixed
             assert [record["reproducible"] for record in program("get")["steps"]] == [True, False]
 
+            # Scenes that differ only in a modifier setting are different scenes. The
+            # viewport level never reaches the mesh datablock, so only the RNA walk
+            # separates these two.
+            subsurf = ("# blender-cli program\n# base: factory-empty\n"
+                       'P = {"levels": 2}\n'
+                       "\n# step 1\nbpy.ops.mesh.primitive_cube_add()\n"
+                       'bpy.context.object.modifiers.new("Subsurf", "SUBSURF").levels = P["levels"]\n')
+            coarse = program("set", "--text", subsurf)
+            fine = program("set", "--text", subsurf.replace('"levels": 2', '"levels": 3'))
+            assert fine["ran"] == [1], fine
+            assert fine["digest"] != coarse["digest"], (coarse["digest"], fine["digest"])
+
+            # Curve control points are content too; RNA collapses them to references.
+            circle = ("# blender-cli program\n# base: factory-empty\n"
+                      'P = {"radius": 1.0}\n'
+                      "\n# step 1\n"
+                      'bpy.ops.curve.primitive_bezier_circle_add(radius=P["radius"])\n')
+            small = program("set", "--text", circle)
+            large = program("set", "--text", circle.replace('"radius": 1.0', '"radius": 2.0'))
+            assert large["digest"] != small["digest"], (small["digest"], large["digest"])
+
             # A crash loses nothing the program can rebuild.
             restored = program("set", "--text", text)
             steps_ran()
