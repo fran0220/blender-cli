@@ -22,7 +22,7 @@ def main():
 
         def call(*args, ok=True):
             process = raw(*args, "--json")
-            assert process.returncode == (0 if ok else 1), (args, process.returncode, process.stderr)
+            assert process.returncode == (0 if ok else 1), (args, process.returncode, process.stdout, process.stderr)
             try:
                 result = json.loads(process.stdout)
             except ValueError:
@@ -102,6 +102,9 @@ bone.tail.z = 1
 bpy.ops.object.mode_set(mode='OBJECT')
 bpy.ops.object.camera_add()
 bpy.ops.object.light_add(type='AREA')
+collection = bpy.data.collections.new('Agent Collection')
+bpy.context.scene.collection.children.link(collection)
+collection.objects.link(obj)
 """, "--file", blend, "--save")
         full = call("inspect", "--file", blend, "--object", "Cube", "--full")
         cube, = full["objects"]
@@ -110,6 +113,7 @@ bpy.ops.object.light_add(type='AREA')
         assert material["node_tree"]["nodes"] and isinstance(material["node_tree"]["links"], list), material
         assert full["armatures"][0]["bones"][0]["name"] == "Bone", full
         assert full["cameras"] and full["lights"] and full["collections"], full
+        assert full["collections"] == [{"name": "Agent Collection", "objects": ["Cube"], "children": []}], full
         selected = call("inspect", "--file", blend, "--select", 'objects["Cube"].location',
                         'objects["Cube"].modifiers["Subdivision"].levels')
         assert selected["selected"] == {'objects["Cube"].location': [0, 0, 0],

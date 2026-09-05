@@ -131,7 +131,7 @@ def object_state(obj, full):
 def inspect(args):
     if args.select:
         return {"ok": True, "selected": {
-            path: serialize(bpy.data.path_resolve(path, False)) for path in args.select}}
+            path: serialize(bpy.data.path_resolve(path)) for path in args.select}}
     objects = [bpy.data.objects[args.object]] if args.object else bpy.data.objects
     scene = bpy.context.scene
     return {
