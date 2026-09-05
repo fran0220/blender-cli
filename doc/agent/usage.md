@@ -30,18 +30,18 @@ Four requests in, and what came back on stdout:
 
 ```json
 {"id": 1, "event": "value", "value": "(0.800000011920929, 0.800000011920929, 2.0)"}
-{"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:7d8a8c2b…", "step": 1}
-{"id": 1, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.4, -0.4, -1.0], "high": [0.4, 0.4, 1.0]}, "dims": [0.8, 0.8, 2.0], "framing": {"bounds": {…}, "center": [0.0, 0.0, 0.0], "radius": 1.1489125391646506, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": null, "symmetry": {"x": 1.0, "y": null, "z": 1.0}}
-{"id": 1, "event": "image", "kind": "full", "view": "front", "pass": "color", "size": [256, 256], "region": [0, 0, 256, 256], "path": "/tmp/usage2/.blender-cli/feedback/3d2c211c….png"}
-{"id": 1, "event": "done", "ok": true, "ms": 2385.4672359993856}
+{"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:98459a73…", "step": 1}
+{"id": 1, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.4, -0.4, -1.0], "high": [0.4, 0.4, 1.0]}, "dims": [0.8, 0.8, 2.0], "framing": {"bounds": {…}, "center": [0.0, 0.0, 0.0], "radius": 1.1489125391646506, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": null, "symmetry": {"x": 0.9787234042553191, "y": null, "z": 1.0}}
+{"id": 1, "event": "image", "kind": "full", "view": "front", "pass": "color", "size": [256, 256], "region": [0, 0, 256, 256], "path": "/tmp/u4/.blender-cli/feedback/94e15039….png"}
+{"id": 1, "event": "done", "ok": true, "ms": 1419.8384599994824}
 {"id": 2, "event": "value", "value": null}
-{"id": 2, "event": "diff", "added": [], "changed": [{"type": "OBJECT", "name": "Handle", "fields": ["transform", "copy_on_eval", "parameters"]}], "removed": [], "snapshot": "sha256:9491f991…", "step": 2}
-{"id": 2, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.72, -0.4, -1.0], "high": [0.72, 0.4, 1.0]}, "dims": [1.4399999380111694, 0.8, 2.0], "framing": {…, "radius": 1.2955307658126247, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": {"objects": ["Handle"], "view": "front", "region": [43, 11, 213, 245], "fraction": 0.5002899169921875, "silhouette_delta": 0.44047619047619047}, "symmetry": {"x": 1.0, "y": null, "z": 1.0}}
-{"id": 2, "event": "image", "kind": "delta", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/ffd353f3….png"}
-{"id": 2, "event": "image", "kind": "overlay", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/437d0852….png"}
-{"id": 2, "event": "done", "ok": true, "ms": 1551.8952429993078}
+{"id": 2, "event": "diff", "added": [], "changed": [{"type": "OBJECT", "name": "Handle", "fields": ["transform", "copy_on_eval", "parameters"]}], "removed": [], "snapshot": "sha256:f3bf8e86…", "step": 2}
+{"id": 2, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.72, -0.4, -1.0], "high": [0.72, 0.4, 1.0]}, "dims": [1.4399999380111694, 0.8, 2.0], "framing": {…, "radius": 1.2955307658126247, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": {"objects": ["Handle"], "view": "front", "region": [43, 11, 213, 245], "fraction": 0.497772216796875, "silhouette_delta": 0.4464285714285714}, "symmetry": {"x": 1.0, "y": null, "z": 1.0}}
+{"id": 2, "event": "image", "kind": "delta", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/7c642250….png"}
+{"id": 2, "event": "image", "kind": "overlay", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/52413ccc….png"}
+{"id": 2, "event": "done", "ok": true, "ms": 629.0661460006959}
 {"id": 3, "event": "error", "ok": false, "type": "AttributeError", "message": "'Object' object has no attribute 'locaton'", "line": 1, "rna": {"struct": "Object", "nearest": ["location", "lock_rotation", "lock_location", "delta_location", "lock_rotation_w"], "type": "float[3]"}, "fix": {"code": "bpy.data.objects['Handle'].location", "reason": "Object has no 'locaton'; nearest 'location' (similarity 0.93)"}}
-{"id": 4, "event": "done", "ok": true, "ms": 0.03923099939129315, "session": "110661", "file": "/tmp/usage2/empty.blend", "dirty": false, "step": 2, "snapshot": "sha256:9491f991…", "feedback": {"perception": true, "objective": true, "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
+{"id": 4, "event": "done", "ok": true, "ms": 0.0430369991590851, "session": "139208", "file": "/tmp/u4/empty.blend", "dirty": false, "step": 2, "snapshot": "sha256:f3bf8e86…", "feedback": {"perception": true, "objective": true, "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
 ```
 
 Read that transcript for what the loop costs. Nothing in it was asked for.
@@ -70,11 +70,11 @@ exits:
 
 ```sh
 blender-cli session open --file empty.blend --json
-# {"session":"112002","socket":"/tmp/u3/.blender-cli/session.sock"}
+# {"session":"140957","socket":"/tmp/u5/.blender-cli/session.sock"}
 blender-cli exec -c "bpy.data.objects['Knob'].scale = (1.6, 1.6, 0.6)" --json
-# {"diff":{"added":[],"changed":[{"fields":["transform","copy_on_eval","parameters"],"name":"Knob","type":"OBJECT"}],"removed":[],"snapshot":"sha256:77e9f756…","step":3},"ms":2.8923299996677088,"ok":true,"value":null}
+# {"diff":{"added":[],"changed":[{"fields":["transform","copy_on_eval","parameters"],"name":"Knob","type":"OBJECT"}],"removed":[],"snapshot":"sha256:1d044ef4…","step":3},"ms":3.0733940002392046,"ok":true,"value":null}
 blender-cli inspect --select 'objects["Knob"].scale' --json
-# {"ms":0.06948900045244955,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
+# {"ms":0.04988100045011379,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
 ```
 
 `blender-cli --help` prints every verb with every flag it has; that list is
@@ -100,15 +100,16 @@ cost. The policy is per session:
 
 ```sh
 blender-cli session feedback image.size=128 image.mode=delta --json
-# {"feedback":{"perception":true,"objective":true,"image":{"mode":"delta","threshold":0.002,"views":["front"],"pass":"color","size":128,"overlay":true,"inline":false}},"ms":0.06954799937375356,"ok":true}
+# {"feedback":{"perception":true,"objective":true,"image":{"mode":"delta","threshold":0.002,"views":["front"],"pass":"color","size":128,"samples":8,"overlay":true,"inline":false}},"ms":0.060274000134086236,"ok":true}
 ```
 
 A setting is a dotted path into the policy and its value is JSON when it parses
 as JSON, so `image.views='["front","persp"]'` works and several settings merge
 in one request. `session status` reports the policy in force. The knobs that
-matter: `perception=false` stops the budget render altogether, `image.mode` is
-`delta`, `full` or `off`, `image.threshold` is the changed-pixel fraction below
-which no picture is worth sending, and `image.size` is what that render costs.
+matter: `perception` and `image.mode` decide whether there is a budget render at
+all, `image.threshold` is the changed-pixel fraction below which no picture is
+worth sending, and `image.size` and `image.samples` are what that render costs
+(8 samples by default, against `observe`'s 32).
 
 `exec` and `program` take `--image` to override the picture for one request —
 a whole frame when something needs looking at, nothing when the answer is
@@ -116,26 +117,35 @@ already known:
 
 ```sh
 blender-cli exec -c "bpy.data.objects['Handle'].scale.z = 0.5" --image full --json
-# {"ok":true,"images":[{"kind":"full","view":"front","pass":"color","region":[0,0,128,128],"size":[128,128],"path":"…/.blender-cli/feedback/3de7b338….png"}],"ms":2100.1907709996885}
+# {"ok":true,"images":[{"kind":"full","view":"front","pass":"color","region":[0,0,128,128],"size":[128,128],"path":"…/.blender-cli/feedback/b4eadf2e….png"}],"ms":713.6910519993762}
 blender-cli exec -c "bpy.data.objects['Handle'].scale.y = 1.4" --image off --json
-# {"ok":true,"ms":2246.1721820000093}
+# {"ok":true,"ms":711.387843999546}
 ```
 
-One budget render is what an action costs on a software GPU, and both channels
-read it, so switching off only one keeps paying for it. Both off is the cheap
-mode; either on is the ~2.4 s mode:
+Those two cost the same, because one budget render feeds both channels and
+`--image off` only stops the pixels coming back. Switching off both is what
+removes the render:
 
 ```sh
 blender-cli session feedback perception=false image.mode=off --json
-blender-cli exec -c "bpy.data.objects['Cube'].scale.y = 1.1" --json
-# {"ok":true,"ms":4.030269999930169}
+blender-cli exec -c "bpy.data.objects['Handle'].scale.y = 1.1" --json
+# {"ok":true,"ms":3.508742000121856}
 blender-cli session feedback perception=true image.mode=delta --json
-blender-cli exec -c "bpy.data.objects['Cube'].scale.z = 1.7" --json
-# {"ok":true,"ms":2403.6994280004365,  … "images":[{"kind":"delta",…},{"kind":"overlay",…}]}
+blender-cli exec -c "bpy.data.objects['Handle'].scale.z = 1.7" --json
+# {"ok":true,"ms":688.5190940001849, … "images":[{"kind":"delta",…},{"kind":"overlay",…}]}
 ```
 
 Use that for a run of edits whose outcome is already known — building a rig,
 importing, renaming — and switch back on for the change that needs looking at.
+An action that changes nothing is not charged for it either way: there is
+nothing to re-render, so it answers in under a millisecond and its perception
+still arrives, with the deltas at zero.
+
+```sh
+blender-cli exec -c "len(bpy.data.objects)" --json
+# {"ok":true,"value":"1","ms":0.6380220002029091,
+#  "perception":{…,"changed":{"view":"front","objects":[],"region":null,"fraction":0.0,"silhouette_delta":0.0}}}
+```
 
 ## The scene is a program
 
@@ -150,7 +160,7 @@ cat model.py
 
 ```python
 # blender-cli program
-# base: file /tmp/u3/empty.blend
+# base: file /tmp/u5/empty.blend
 P = {"radius": 0.4, "height": 2.0}
 
 # step 1
@@ -169,16 +179,16 @@ not what it looks like:
 
 ```sh
 blender-cli program set --text @model.py --json
-# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:df54899d…","version":"sha256:0eaeb54d…","ms":11.730881000403315,"ok":true,"diff":{"added":[{"name":"Cylinder","type":"MESH"},{"name":"Sphere","type":"MESH"},{"name":"Handle","type":"OBJECT"},{"name":"Knob","type":"OBJECT"}],…,"step":1}}
+# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:510e884d…","version":"sha256:7b78b83b…","ms":13.148849000572227,"ok":true,"diff":{"added":[{"name":"Cylinder","type":"MESH"},{"name":"Sphere","type":"MESH"},{"name":"Handle","type":"OBJECT"},{"name":"Knob","type":"OBJECT"}],…,"step":1}}
 blender-cli program patch --old '"height": 2.0' --new '"height": 3.0' --json
-# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:e29d076b…","version":"sha256:e3efc195…","ms":14.280104000135907,"ok":true,"diff":{…,"step":2}}
+# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:8e2638d1…","version":"sha256:a533bbbd…","ms":16.626302000076976,"ok":true,"diff":{…,"step":2}}
 blender-cli program run --json
-# {"cached":2,"ran":[],"from_step":3,"steps":2,"reproducible":true,"digest":"sha256:e29d076b…","version":"sha256:e3efc195…","ms":1.612144000318949,"ok":true,"diff":{"added":[],"changed":[],"removed":[],…}}
+# {"cached":2,"ran":[],"from_step":3,"steps":2,"reproducible":true,"digest":"sha256:8e2638d1…","version":"sha256:a533bbbd…","ms":1.5858120004850207,"ok":true,"diff":{"added":[],"changed":[],"removed":[],…}}
 ```
 
 `ran` is the steps that actually executed and `cached` the ones the prefix cache
 supplied. The patch changed `P["height"]`, which both steps read, so both re-ran
-— in 14 ms; the following `run` found nothing to do and answered in 1.6 ms with
+— in 17 ms; the following `run` found nothing to do and answered in 1.6 ms with
 an empty diff and the same `digest`. That digest is content, not timing: a
 prefix-cached re-execution that lands where a full run would lands on the same
 value, which is what makes editing the text safe.
@@ -188,10 +198,10 @@ silently hits the wrong place impossible. Every change writes a version:
 
 ```sh
 blender-cli program history --json
-# {"current":"sha256:e3efc195…","ok":true,"versions":[
-#  {"version":"sha256:0eaeb54d…","parent":null,"message":"set","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788649138.701867},
-#  {"version":"sha256:e3efc195…","parent":"sha256:0eaeb54d…","message":"patch","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788649138.7205396}]}
-blender-cli program rollback 'sha256:0eaeb54d…' --json
+# {"current":"sha256:a533bbbd…","ok":true,"versions":[
+#  {"version":"sha256:7b78b83b…","parent":null,"message":"set","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788651129.85441},
+#  {"version":"sha256:a533bbbd…","parent":"sha256:7b78b83b…","message":"patch","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788651129.8751857}]}
+blender-cli program rollback 'sha256:7b78b83b…' --json
 ```
 
 A version is named by its hash, by a `--label` given when it was made, or by a
@@ -211,29 +221,17 @@ numeric part to the process. Start with a reference image bound to a view:
 ```sh
 blender-cli target set front --ref reference.png --view front --metrics iou,chamfer --json
 # {"ok":true,"name":"front","view":"front","mask":"auto","fit":"bbox","metrics":["iou","chamfer"],
-#  "ref":"/tmp/fit/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
+#  "ref":"/tmp/fit2/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
 #  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
 #  "objective":{"targets":{"front":{"iou":0.7012100026888949,"chamfer":11.675981348770343,"delta":null,
 #    "worst":{"region":[64,64,128,128],"iou":0.5487231182795699,"missing":0.0,"extra":1.0}}},
-#   "best":{"front":{"iou":0.7012100026888949,"snapshot":"sha256:43600a3f…","step":1}}}}
+#   "best":{"front":{"iou":0.7012100026888949,"snapshot":"sha256:7613b09c…","step":1}}}}
 ```
 
 Registering already scores: `iou` 0.70, and the worst 4×4 cell is the
 bottom-right quadrant with `extra: 1.0` — every pixel wrong there is model that
-the reference does not have. From here every action that changes data carries an
-`objective` with the deltas:
-
-```sh
-blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
-# {"ok":true,…,"objective":{"targets":{"front":{"iou":0.8148220570981619,"chamfer":6.888223595125254,
-#   "delta":{"iou":-0.16003911654734315,"chamfer":5.46266995445313},
-#   "worst":{"region":[64,64,128,128],"iou":0.6360015929908402,"missing":0.03938730853391685,"extra":0.9606126914660832}}},
-#  "best":{"front":{"iou":0.9748611736455051,"snapshot":"sha256:fd2651a5…","step":2}}}}
-```
-
-That move cost 0.16 of `iou`, and `best` still names the snapshot that scored
-0.97, so returning to it is `session rollback 'sha256:fd2651a5…'` — no
-bookkeeping of your own.
+the reference does not have. Every action from here carries an `objective`, so
+the agent never asks how it is doing.
 
 The numeric part is `fit`. Name the program parameters to search, the objective
 to optimise and a budget, and the search runs inside the process:
@@ -243,15 +241,15 @@ blender-cli fit --params '[{"name": "height", "min": 1.0, "max": 4.0}]' \
                 --objective '{"target": "front", "metric": "iou"}' \
                 --budget '{"evals": 12}' --json
 # {"ok":true,"method":"coordinate","evals":12,"failed":0,"cancelled":false,"applied":true,
-#  "best":{"params":{"height":2.97265625},"score":0.9789726644638029,"snapshot":"sha256:fd2651a5…"},
+#  "best":{"params":{"height":2.97265625},"score":0.9789726644638029,"snapshot":"sha256:7edb9e50…"},
 #  "curve":[[1,0.6950339558573854],[2,0.9118549511854951],[4,0.9192771084337349],[6,0.9766606822262118],
 #           [9,0.9780714929408231],[11,0.978391356542617],[12,0.9789726644638029]],
 #  "error_map":{"target":"front","view":"front","image":"…/.blender-cli/fit/ae1f384d….png","region":[32,32,64,64],"size":[128,128]},
 #  "objective":{"metric":"iou","targets":["front"],"weights":[1.0]},
-#  "diff":{…,"snapshot":"sha256:fd2651a5…","step":2},"ms":27221.57925099964}
+#  "diff":{…,"snapshot":"sha256:7edb9e50…","step":2},"ms":24294.854452000436}
 ```
 
-Twelve evaluations, 27 s, `iou` 0.695 → 0.979, and the answer is a number the
+Twelve evaluations, 24 s, `iou` 0.695 → 0.979, and the answer is a number the
 agent never had to guess: the model was built with `height` 2.0 and the
 reference was rendered from 3.0. The best parameters are applied to the live
 scene and written into the program's `P` block, so `program get` now reports
@@ -259,6 +257,21 @@ scene and written into the program's `P` block, so `program get` now reports
 scene. `curve` is the improvement per evaluation — a flat tail says the budget
 was enough — and `error_map` is a picture of what is still wrong, at the region
 that contributes most of it.
+
+Afterwards the objective keeps scoring, so a change that undoes the progress
+says so immediately:
+
+```sh
+blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
+# {"ok":true,"ms":507.78301999980613,…,"objective":{"targets":{"front":{"iou":0.8148751711100971,"chamfer":6.864698995712029,
+#   "delta":{"iou":-0.16057896490551615,"chamfer":5.454629848015657},
+#   "worst":{"region":[64,64,128,128],"iou":0.6373801916932907,"missing":0.040748898678414094,"extra":0.9592511013215859}}},
+#  "best":{"front":{"iou":0.9754541360156133,"snapshot":"sha256:7edb9e50…","step":2}}}}
+```
+
+That cost 0.16 of `iou`, and `best` still names the snapshot that scored 0.98,
+so returning to it is `session rollback 'sha256:7edb9e50…'` — the process did
+the bookkeeping.
 
 `--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
 0.5, "max": 2}`) for values that are not program parameters, `--objective` takes
@@ -273,12 +286,12 @@ anywhere. A labelled snapshot is written to disk and survives a crash:
 
 ```sh
 blender-cli session snapshot --label two-parts --json
-# {"label":"two-parts","snapshot":"sha256:b664070b…","version":"sha256:e3efc195…","ms":8.290518000649172,"ok":true}
+# {"label":"two-parts","snapshot":"sha256:50ced3d3…","version":"sha256:a533bbbd…","ms":8.388486000512785,"ok":true}
 blender-cli exec -c "bpy.data.objects['Knob'].scale = (1.6, 1.6, 0.6)" --json
 blender-cli session rollback two-parts --json
-# {"diff":{"added":[],"changed":[],"removed":[],"snapshot":"sha256:b664070b…","step":3},"ms":4.232639000292693,"ok":true,"snapshot":"sha256:b664070b…"}
+# {"diff":{"added":[],"changed":[],"removed":[],"snapshot":"sha256:50ced3d3…","step":3},"ms":4.163031999269151,"ok":true,"snapshot":"sha256:50ced3d3…"}
 blender-cli inspect --select 'objects["Knob"].scale' --json
-# {"ms":0.06948900045244955,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
+# {"ms":0.04988100045011379,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
 ```
 
 `session history` lists every snapshot with the op that produced it;
@@ -297,13 +310,13 @@ dead PID and the autosave, and so does every request after it:
 
 ```sh
 blender-cli exec -c 'import os; os._exit(1)' --json
-# {"autosave":"/tmp/usage/.blender-cli/autosave-76247.blend","error":{"message":"Session 76247 exited unexpectedly; see .blender-cli/session.log. Recover with `session open --file <autosave>` or discard with `session close`","type":"SessionError"},"ok":false}
-blender-cli session open --file .blender-cli/autosave-76247.blend --json
-# {"previous_autosave":"/tmp/usage/.blender-cli/autosave-76247.blend","recovered_from":"autosave","session":"76902","socket":"/tmp/usage/.blender-cli/session.sock"}
+# {"autosave":"/tmp/u5/.blender-cli/autosave-140957.blend","error":{"message":"Session 140957 exited unexpectedly; see .blender-cli/session.log. Recover with `session open --file <autosave>` or discard with `session close`","type":"SessionError"},"ok":false}
+blender-cli session open --file .blender-cli/autosave-140957.blend --json
+# {"previous_autosave":"/tmp/u5/.blender-cli/autosave-140957.blend","recovered_from":"autosave","session":"141175","socket":"/tmp/u5/.blender-cli/session.sock"}
 blender-cli session status --json
-# {"file":"/tmp/usage/empty.blend","dirty":false,"recovered_from":"autosave","session":"76902","snapshot":"sha256:b9d973da…","step":0,…}
+# {"file":"/tmp/u5/empty.blend","dirty":false,"recovered_from":"autosave","session":"141175","snapshot":"sha256:ac193f44…","step":0,…}
 blender-cli inspect --select 'objects["Knob"].location' --json
-# {"ms":0.05549400020754547,"ok":true,"selected":{"objects[\"Knob\"].location":[0.0,0.0,1.5]}}
+# {"ms":0.05440199947770452,"ok":true,"selected":{"objects[\"Knob\"].location":[0.0,0.0,1.5]}}
 ```
 
 Recovery is explicit: `session open` on its own starts a **new empty session**
@@ -330,11 +343,11 @@ view, a different pass, or a file to feed back as a reference. It renders
 offscreen with fixed cameras, a fixed light rig and fixed colour management, so
 the same scene state always produces the same PNG — the two runs behind this
 page, in different directories, wrote the same `060bef51…` bytes. It is
-deterministic, not fast: a 512 px pair on a software Vulkan device took 5.2 s.
+deterministic, not fast: a 512 px pair on a software Vulkan device took 4.8 s.
 
 ```sh
 blender-cli observe --views front,persp --json
-# {"image":"/tmp/u3/.blender-cli/observe/060bef51….png","views":["front","persp"],"passes":["color"],"size":[516,1032],"ms":5181.582458999401,"ok":true,
+# {"image":"/tmp/u5/.blender-cli/observe/060bef51….png","views":["front","persp"],"passes":["color"],"size":[516,1032],"ms":4782.478429000548,"ok":true,
 #  "framing":{"bounds":{"low":[-0.64,-0.64,-1.5],"high":[0.64,0.64,2.14]},"center":[0.0,0.0,0.32],"objects":["Handle","Knob"],"occupancy":0.9090909090909091,"radius":2.032633603644515}}
 ```
 
