@@ -16,6 +16,8 @@
 
 #  include <afunix.h>
 #else
+#  include <cerrno>
+#  include <fcntl.h>
 #  include <sys/socket.h>
 #  include <sys/un.h>
 #  include <unistd.h>
@@ -93,16 +95,34 @@ inline bool socket_write(Socket fd, const std::string &text)
 inline std::string socket_read_line(Socket fd)
 {
   std::string text;
-  char c;
-  while (recv(fd, &c, 1, 0) == 1) {
-    if (c == '\n') {
-      return text;
-    }
-    text += c;
-    if (text.size() > 16 * 1024 * 1024) {
-      throw std::runtime_error("Session message exceeds 16 MiB");
+  char buffer[8192];
+  int count;
+  while ((count = recv(fd, buffer, sizeof(buffer), 0)) > 0) {
+    text.append(buffer, count);
+    const auto end = text.find('\n');
+    if (end != std::string::npos) {
+      return text.substr(0, end);
     }
   }
   throw std::runtime_error("Session disconnected before answering");
+}
+
+inline bool socket_nonblocking(Socket fd)
+{
+#ifdef _WIN32
+  u_long enabled = 1;
+  return ioctlsocket(fd, FIONBIO, &enabled) == 0;
+#else
+  return fcntl(fd, F_SETFL, O_NONBLOCK) == 0;
+#endif
+}
+
+inline bool socket_would_block()
+{
+#ifdef _WIN32
+  return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+  return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+#endif
 }
 }  // namespace blender::agent

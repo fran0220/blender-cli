@@ -71,7 +71,7 @@ class Transport {
 #ifndef _WIN32
           full |= fd >= FD_SETSIZE;
 #endif
-          if (full) {
+          if (full || !socket_nonblocking(fd)) {
             socket_close(fd);
           }
           else {
@@ -98,7 +98,7 @@ class Transport {
                          peer->output.data(),
                          int(std::min<size_t>(peer->output.size(), 4096)),
                          flags);
-            closed = n <= 0;
+            closed = n == 0 || (n < 0 && !socket_would_block());
             if (n > 0) {
               peer->output.erase(0, n);
             }
@@ -107,7 +107,7 @@ class Transport {
         if (!closed && FD_ISSET(peer->fd, &readers)) {
           char buffer[8192];
           int n = recv(peer->fd, buffer, sizeof(buffer), 0);
-          closed = n <= 0;
+          closed = n == 0 || (n < 0 && !socket_would_block());
           if (n > 0) {
             peer->input.append(buffer, n);
             size_t end;
