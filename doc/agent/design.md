@@ -351,16 +351,21 @@ the answer to "is this the same scene" everywhere in the process.
 It covers every ID list; object transforms, relations and material slots;
 mesh vertex, edge, loop and polygon buffers; material node graphs; cameras,
 lights and collections; curve spline points, metaball elements, lattice
-points and armature bones; the attribute domains of grease-pencil drawings,
-point clouds and hair curves, read as values rather than as the bare
-references RNA reports; and the RNA settings of every modifier, every
-constraint and every non-mesh data ID. That RNA walk is
-`agent_runtime.settings`, the one `inspect --full` already uses, so what an
-agent can read is what the digest distinguishes: two scenes differing only
-in a modifier's numeric setting have different digests even when the setting
-never reaches a mesh datablock. Meshes are excluded from the RNA walk
-because their content is the geometry buffers, and walking a million-vertex
-collection as RNA references would cost far more and say less.
+points and armature bones; the attribute domains of meshes, grease-pencil
+drawings, point clouds and hair curves, read as values rather than as the
+bare references RNA reports; and the RNA settings of every modifier, every
+constraint and every non-mesh data ID. A mesh's `position` and its
+dot-prefixed topology attributes are the geometry buffers and are not read
+twice; everything else on the mesh — UV and colour layers, sharpness,
+creases, and whatever geometry nodes stored by name — is.
+
+The settings walk is `agent_runtime.settings`, the one `inspect --full`
+already uses, so what an agent can read is what the digest distinguishes:
+two scenes differing only in a modifier's numeric setting have different
+digests even when the setting never reaches a mesh datablock. A `Mesh` is
+the one ID that walk skips, because its content is the geometry buffers and
+its attribute domains, and walking a million-vertex collection as RNA
+references would cost far more and say less.
 
 ### Versions
 

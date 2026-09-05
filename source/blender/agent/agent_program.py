@@ -49,6 +49,11 @@ ATTRIBUTE_BUFFERS = {
 }
 
 
+def _topology(name):
+    """Mesh attributes the vertex, edge, loop and polygon buffers already carry."""
+    return name == "position" or name.startswith(".")
+
+
 def _fatal(error):
     """Cancellation and interpreter exits end the request; they are not step failures."""
     from agent_runtime import Cancelled
@@ -309,9 +314,14 @@ def digest():
             collection.foreach_get(attribute, buffer)
         stream.update(buffer.tobytes())
 
-    def attributes(group, *identity):
-        """Hash a geometry attribute domain: the values, not a list of references."""
+    def attributes(group, *identity, covered=None):
+        """Hash a geometry attribute domain: the values, not a list of references.
+
+        `covered` names the attributes another walk already carries.
+        """
         for name in sorted(group.keys()):
+            if covered is not None and covered(name):
+                continue
             attribute = group[name]
             feed("attribute", *identity, name, attribute.domain, attribute.data_type,
                  len(attribute.data))
@@ -348,6 +358,10 @@ def digest():
         buffered(mesh.edges, "vertices", "i", 2)
         buffered(mesh.loops, "vertex_index", "i", 1)
         buffered(mesh.polygons, "loop_start", "i", 1)
+        # Everything else on the mesh: UV and colour layers, sharpness, creases and
+        # whatever geometry nodes stored by name. `position` and the dot-prefixed
+        # topology attributes are the buffers above, so they are not read twice.
+        attributes(mesh.attributes, "mesh", mesh.name, covered=_topology)
     for material in sorted(bpy.data.materials, key=lambda item: item.name):
         tree = material.node_tree
         feed("material", material.name, [round(value, 6) for value in material.diffuse_color],

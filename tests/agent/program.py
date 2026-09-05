@@ -241,6 +241,35 @@ def main():
             assert fine["ran"] == [1], fine
             assert fine["digest"] != coarse["digest"], (coarse["digest"], fine["digest"])
 
+            # A named attribute geometry nodes stored moves no vertex, so only the mesh
+            # attribute walk separates these two.
+            stored = ("# blender-cli program\n# base: factory-empty\n"
+                      'P = {"density": 0.25}\n'
+                      "\n# step 1\n"
+                      "bpy.ops.mesh.primitive_cube_add()\n"
+                      '_group = bpy.data.node_groups.new("Store", "GeometryNodeTree")\n'
+                      '_group.interface.new_socket("Geometry", in_out="INPUT",\n'
+                      '                            socket_type="NodeSocketGeometry")\n'
+                      '_group.interface.new_socket("Geometry", in_out="OUTPUT",\n'
+                      '                            socket_type="NodeSocketGeometry")\n'
+                      '_in = _group.nodes.new("NodeGroupInput")\n'
+                      '_out = _group.nodes.new("NodeGroupOutput")\n'
+                      '_store = _group.nodes.new("GeometryNodeStoreNamedAttribute")\n'
+                      '_store.data_type, _store.domain = "FLOAT", "POINT"\n'
+                      '_store.inputs["Name"].default_value = "density"\n'
+                      '_store.inputs["Value"].default_value = P["density"]\n'
+                      '_group.links.new(_in.outputs[0], _store.inputs["Geometry"])\n'
+                      '_group.links.new(_store.outputs["Geometry"], _out.inputs[0])\n'
+                      '_modifier = bpy.context.object.modifiers.new("GN", "NODES")\n'
+                      "_modifier.node_group = _group\n"
+                      'bpy.ops.object.modifier_apply(modifier="GN")\n')
+            sparse = program("set", "--text", stored)
+            dense = program("set", "--text", stored.replace('"density": 0.25', '"density": 0.75'))
+            assert dense["ran"] == [1], dense
+            assert dense["digest"] != sparse["digest"], (sparse["digest"], dense["digest"])
+            # The vertices are identical: only the stored attribute differs.
+            assert call("inspect")["objects"][0]["mesh"]["vertices"] == 8
+
             # Grease pencil keeps its strokes in attribute domains RNA reports as bare
             # references, so a digest that skipped them would miss the drawing itself.
             strokes = ("# blender-cli program\n# base: factory-empty\n"
