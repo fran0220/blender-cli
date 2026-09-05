@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 blender-cli Authors
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Exercise all six verbs before/after packaging, including exact render equality."""
+"""Exercise the request set before/after packaging, including exact render equality."""
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -36,8 +37,11 @@ def smoke(executable, root, image, reference=None, gpu=True):
         call("describe", "bpy.types.Object")
         if gpu:
             call("observe", "--views", "front", "--out", image)
-            result = call("compare", "--ref", reference or image, "--view", "front")
-            assert result["iou"] > 0.98, result
+            # There is no comparison verb: the metrics are the objective's
+            # computation, reached from code as `agent.compare`.
+            scored = call("exec", "-c",
+                          f"agent.compare({str(reference or image)!r}, 'front')")
+            assert ast.literal_eval(scored["value"])["iou"] > 0.98, scored
     finally:
         call("session", "close")
 

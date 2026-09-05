@@ -172,15 +172,15 @@ def main():
             assert history["current"] == versions[-1]["version"], history
             assert {"version", "parent", "label", "at", "steps", "reproducible", "message",
                     "failed"} == set(versions[-1]), versions[-1]
-            program("rollback", "--version", first_set, "--label", "shape")
+            program("rollback", first_set, "--label", "shape")
             steps_ran()
             assert program("get")["params"] == {"radius": 0.4, "height": 2.0, "shift": 0.5}
             scaled, = call("inspect")["objects"]
             assert scaled["name"] == "Cylinder" and scaled["scale"][2] == 2.0, scaled
             assert scaled["location"][2] == 0.5, scaled
             # A digest prefix and a label name the same version.
-            program("rollback", "--version", first_set.removeprefix("sha256:")[:12])
-            assert program("rollback", "--version", "shape")["version"] == first_set
+            program("rollback", first_set.removeprefix("sha256:")[:12])
+            assert program("rollback", "shape")["version"] == first_set
             steps_ran()
 
             # `patch` needs exactly one match.

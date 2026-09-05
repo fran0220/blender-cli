@@ -7,17 +7,24 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include <json.hpp>
 
+#include "agent_cli_table.hh"
+
 namespace blender::agent {
 
-/* Every CLI verb is one request; its flags are that request's fields. This is
- * the only place that mapping exists, so the launcher (talking to a session)
- * and the in-process one-shot verb build byte-identical requests. Field names
- * and types are validated once, by the request table in `agent_runtime.py`.
+/* Every CLI verb is one request; its flags are that request's fields. The
+ * mapping is not written here: `agent_cli_table.hh` is generated from the
+ * request table in the runtime module, so a field added to the contract gets a
+ * flag with no edit to this file, and the launcher (which talks to a session)
+ * and the in-process one-shot verb build byte-identical requests. Field names,
+ * types and enums are validated once, by that same table, in Python.
  *
  * `--file`, `--save` and `--json` are not request fields except where a verb
  * declares them: they select the one-shot scene and the output format. */
@@ -29,29 +36,6 @@ struct CommandLine {
   bool compact = false; /* --json */
   std::string error;
 };
-
-/* The one usage text, printed by `--help`. */
-inline void cli_usage()
-{
-  puts(
-      "Usage: blender-cli <repl|exec|inspect|observe|describe|session|target|program|fit>\n"
-      "  repl [--file F] [--standalone]   one pipe of JSON-line requests and events\n"
-      "  exec -c CODE | FILE.py [--no-record] [--timeout S] [--image delta|full|off]\n"
-      "  inspect [--object NAME] [--full] [--select PATH ...]\n"
-      "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
-      "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
-      "          [--layout sheet|separate] [--out PATH | --inline]\n"
-      "  describe RNA_PATH | channel | --schema\n"
-      "  session open|status|feedback|save|close|snapshot|rollback|history\n"
-      "          [--label L] [--file F] [--json-file F | KEY=VALUE ...]\n"
-      "  target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none]\n"
-      "         [--metrics iou,chamfer,ssim,hist] | target list | target clear [NAME]\n"
-      "  program get|set|patch|run|history|rollback|record [--text T] [--old O] [--new N]\n"
-      "          [--label L] [--version V] [--from-step N]\n"
-      "  fit --params JSON [--objective JSON] [--budget JSON] [--method M]\n"
-      "  Common: --file F --save [F] --json\n"
-      "  --version: upstream version and fork tag");
-}
 
 inline void cli_assign(nlohmann::json &request, const std::string &path, nlohmann::json value)
 {
@@ -81,8 +65,39 @@ inline std::string cli_absolute(const std::string &path)
   return std::filesystem::absolute(std::filesystem::path(path)).lexically_normal().string();
 }
 
+/* A statement or a program is too long for one shell word, so a text value may
+ * name its source: `@FILE` is that file's contents and `-` is stdin. `@@`
+ * begins a literal value, for the rare argument that starts with an at sign. */
+inline bool cli_text(const std::string &argument, std::string &text, std::string &error)
+{
+  if (argument == "-") {
+    std::ostringstream buffer;
+    buffer << std::cin.rdbuf();
+    text = buffer.str();
+    return true;
+  }
+  if (argument.starts_with("@@")) {
+    text = argument.substr(1);
+    return true;
+  }
+  if (argument.starts_with("@")) {
+    const std::string path = argument.substr(1);
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+      error = "Could not read " + path;
+      return false;
+    }
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    text = buffer.str();
+    return true;
+  }
+  text = argument;
+  return true;
+}
+
 /* KEY=VALUE for `session feedback`; the value is JSON when it parses as JSON. */
-inline bool cli_setting(nlohmann::json &request, const std::string &pair)
+inline bool cli_setting(nlohmann::json &request, const std::string &field, const std::string &pair)
 {
   const auto equals = pair.find('=');
   if (equals == std::string::npos || equals == 0) {
@@ -92,8 +107,109 @@ inline bool cli_setting(nlohmann::json &request, const std::string &pair)
   if (value.is_discarded()) {
     value = pair.substr(equals + 1);
   }
-  cli_assign(request, "feedback." + pair.substr(0, equals), value);
+  cli_assign(request, field + "." + pair.substr(0, equals), value);
   return true;
+}
+
+inline const CliVerb *cli_verb(const std::string &name)
+{
+  for (const CliVerb &verb : CLI_VERBS) {
+    if (name == verb.name) {
+      return &verb;
+    }
+  }
+  return nullptr;
+}
+
+inline std::string cli_verb_list()
+{
+  std::string names;
+  for (const CliVerb &verb : CLI_VERBS) {
+    if (std::string(verb.name).find(' ') == std::string::npos) {
+      names += (names.empty() ? "" : "|") + std::string(verb.name);
+    }
+  }
+  return names;
+}
+
+/* The synopsis of one verb, in the order its fields are declared, wrapped so a
+ * verb with many fields stays readable. */
+inline std::string cli_synopsis(const CliVerb &verb)
+{
+  const std::string indent(10, ' ');
+  std::string line = "  " + std::string(verb.name);
+  std::string text;
+  for (int i = 0; i < verb.field_count; i++) {
+    const CliField &field = verb.fields[i];
+    std::string item = field.flag[0] ? std::string(field.flag) : std::string();
+    if (field.value[0]) {
+      item += (item.empty() ? "" : " ") + std::string(field.value);
+    }
+    if (field.required) {
+      item = field.position >= 0 ? "<" + item + ">" : item;
+    }
+    else {
+      item = "[" + item + "]";
+    }
+    if (line.size() + item.size() + 1 > 78) {
+      text += line + "\n";
+      line = indent;
+    }
+    line += " " + item;
+  }
+  return text + line + "\n";
+}
+
+/* The one usage text, printed by `--help`; every line of it comes from the
+ * generated table, so it cannot describe a flag the parser does not have. */
+inline void cli_usage()
+{
+  std::string text =
+      "blender-cli — one Blender process serving an agent over one channel.\n"
+      "Every verb below is one request; it prints the events that request\n"
+      "produced, folded into one document.\n\n";
+  for (const CliVerb &verb : CLI_VERBS) {
+    text += cli_synopsis(verb) + "      " + verb.doc + "\n";
+  }
+  text +=
+      "\n  Common: --json prints one compact line instead of indented JSON.\n"
+      "  Without a session, --file F is the scene the verb loads and --save [F]\n"
+      "  writes it afterwards. A value written @FILE is read from that file and\n"
+      "  - is read from stdin; @@ starts a literal value.\n"
+      "  --version prints the upstream version and the fork tag.\n";
+  fputs(text.c_str(), stdout);
+}
+
+inline const CliField *cli_flag(const CliVerb &verb, const std::string &flag)
+{
+  for (int i = 0; i < verb.field_count; i++) {
+    if (flag == verb.fields[i].flag) {
+      return &verb.fields[i];
+    }
+  }
+  return nullptr;
+}
+
+/* The field at one positional index. An action-specific field wins over the
+ * general one, so `session feedback k=v` and `session rollback ~1` share a slot. */
+inline const CliField *cli_positional(const CliVerb &verb, int index, const std::string &action)
+{
+  const CliField *general = nullptr;
+  for (int i = 0; i < verb.field_count; i++) {
+    const CliField &field = verb.fields[i];
+    if (field.position != index) {
+      continue;
+    }
+    if (field.when[0]) {
+      if (action == field.when) {
+        return &field;
+      }
+    }
+    else {
+      general = &field;
+    }
+  }
+  return general;
 }
 
 inline CommandLine cli_parse(const std::vector<std::string> &args)
@@ -103,29 +219,32 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
     parsed.error = message;
     return parsed;
   };
+  /* The output format is decided before anything can go wrong with the rest,
+   * so a rejected command line is reported in the format it asked for. */
+  parsed.compact = std::find(args.begin(), args.end(), "--json") != args.end();
   if (args.empty()) {
-    return fail(
-        "A verb is required: exec|inspect|observe|describe|session|target|program|fit|repl");
+    return fail("A verb is required: " + cli_verb_list());
   }
-  const std::string op = args[0];
-  static const std::vector<std::string> ops = {
-      "exec", "inspect", "observe", "describe", "session", "target", "program", "fit"};
-  if (std::find(ops.begin(), ops.end(), op) == ops.end()) {
-    return fail("Unknown verb: " + op);
+  const CliVerb *verb = cli_verb(args[0]);
+  if (!verb) {
+    return fail("Unknown verb: " + args[0]);
   }
-  parsed.request["op"] = op;
+  if (!verb->op[0]) {
+    return fail(std::string(verb->name) + " is answered by the launcher, not by a request");
+  }
+  parsed.request["op"] = verb->op;
   std::vector<std::string> positional;
   for (size_t i = 1; i < args.size(); i++) {
     const std::string &arg = args[i];
-    auto value = [&](const char *flag) -> std::string {
+    auto value = [&](const std::string &flag) -> std::string {
       if (i + 1 >= args.size()) {
-        parsed.error = std::string(flag) + " requires a value";
+        parsed.error = flag + " requires a value";
         return "";
       }
       return args[++i];
     };
     if (arg == "--json") {
-      parsed.compact = true;
+      /* Read before the loop. */
     }
     else if (arg == "--save") {
       parsed.has_save = true;
@@ -133,115 +252,80 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
         parsed.save = cli_absolute(args[++i]);
       }
     }
-    else if (arg == "--file" && op != "session") {
-      parsed.load = cli_absolute(value("--file"));
+    else if (const CliField *field = cli_flag(*verb, arg)) {
+      std::string text;
+      switch (field->kind) {
+        case CliKind::Flag:
+          cli_assign(parsed.request, field->assign, true);
+          break;
+        case CliKind::NoFlag:
+          cli_assign(parsed.request, field->assign, false);
+          break;
+        case CliKind::Path:
+          cli_assign(parsed.request, field->assign, cli_absolute(value(arg)));
+          break;
+        case CliKind::List:
+          cli_assign(parsed.request, field->assign, cli_split(value(arg)));
+          break;
+        case CliKind::Int:
+        case CliKind::Num:
+          try {
+            text = value(arg);
+            if (parsed.error.empty()) {
+              cli_assign(parsed.request,
+                         field->assign,
+                         field->kind == CliKind::Int ? nlohmann::json(std::stoi(text)) :
+                                                       nlohmann::json(std::stod(text)));
+            }
+          }
+          catch (const std::exception &) {
+            return fail(arg + " requires a number");
+          }
+          break;
+        case CliKind::Text:
+        case CliKind::Json: {
+          text = value(arg);
+          if (!parsed.error.empty()) {
+            break;
+          }
+          std::string body;
+          if (!cli_text(text, body, parsed.error)) {
+            return parsed;
+          }
+          if (field->kind == CliKind::Text) {
+            cli_assign(parsed.request, field->assign, body);
+            break;
+          }
+          auto document = nlohmann::json::parse(body, nullptr, false);
+          if (document.is_discarded()) {
+            return fail(arg + " requires a JSON value");
+          }
+          cli_assign(parsed.request, field->assign, document);
+          break;
+        }
+        case CliKind::Words: {
+          auto &items = parsed.request[field->assign];
+          if (!items.is_array()) {
+            items = nlohmann::json::array();
+          }
+          while (i + 1 < args.size() && !args[i + 1].starts_with("--")) {
+            items.push_back(args[++i]);
+          }
+          if (items.empty()) {
+            return fail(arg + " requires at least one value");
+          }
+          break;
+        }
+        default:
+          cli_assign(parsed.request, field->assign, value(arg));
+          break;
+      }
     }
     else if (arg == "--file") {
-      parsed.request["file"] = cli_absolute(value("--file"));
-    }
-    else if (op == "exec" && arg == "-c") {
-      parsed.request["code"] = value("-c");
-    }
-    else if (op == "exec" && arg == "--timeout") {
-      const std::string text = value("--timeout");
-      try {
-        parsed.request["timeout"] = std::stod(text);
-      }
-      catch (const std::exception &) {
-        return fail("--timeout requires a number");
-      }
-    }
-    else if (op == "exec" && arg == "--no-record") {
-      parsed.request["record"] = false;
-    }
-    else if (op == "exec" && arg == "--image") {
-      /* A per-request `feedback` is an image policy, so the key is its `mode`. */
-      cli_assign(parsed.request, "feedback.mode", value("--image"));
-    }
-    else if (op == "inspect" && arg == "--object") {
-      parsed.request["object"] = value("--object");
-    }
-    else if (op == "inspect" && arg == "--full") {
-      parsed.request["full"] = true;
-    }
-    else if (op == "inspect" && arg == "--select") {
-      auto &select = parsed.request["select"];
-      if (!select.is_array()) {
-        select = nlohmann::json::array();
-      }
-      while (i + 1 < args.size() && !args[i + 1].starts_with("--")) {
-        select.push_back(args[++i]);
-      }
-      if (select.empty()) {
-        return fail("--select requires at least one RNA path");
-      }
-    }
-    else if (op == "observe" && (arg == "--views" || arg == "--passes")) {
-      parsed.request[arg.substr(2)] = cli_split(value(arg.c_str()));
-    }
-    else if (op == "observe" && arg == "--size") {
-      try {
-        parsed.request["size"] = std::stoi(value("--size"));
-      }
-      catch (const std::exception &) {
-        return fail("--size requires an integer");
-      }
-    }
-    else if (op == "observe" &&
-             (arg == "--ref" || arg == "--layout" || arg == "--frame" || arg == "--out"))
-    {
-      parsed.request[arg.substr(2)] = value(arg.c_str());
-    }
-    else if (op == "observe" && (arg == "--overlay" || arg == "--inline")) {
-      parsed.request[arg.substr(2)] = true;
-    }
-    else if (op == "describe" && arg == "--schema") {
-      parsed.request["path"] = "schema";
-    }
-    else if (op == "session" && arg == "--label") {
-      parsed.request["label"] = value("--label");
-    }
-    else if (op == "session" && arg == "--json-file") {
-      std::ifstream stream(value("--json-file"));
-      auto policy = nlohmann::json::parse(stream, nullptr, false);
-      if (!policy.is_object()) {
-        return fail("--json-file must contain a JSON object");
-      }
-      parsed.request["feedback"] = policy;
-    }
-    else if (op == "target" &&
-             (arg == "--ref" || arg == "--view" || arg == "--mask" || arg == "--fit"))
-    {
-      parsed.request[arg.substr(2)] = value(arg.c_str());
-    }
-    else if (op == "target" && arg == "--metrics") {
-      parsed.request["metrics"] = cli_split(value("--metrics"));
-    }
-    else if (op == "program" && (arg == "--text" || arg == "--old" || arg == "--new" ||
-                                 arg == "--label" || arg == "--version"))
-    {
-      parsed.request[arg.substr(2)] = value(arg.c_str());
-    }
-    else if (op == "program" && arg == "--from-step") {
-      try {
-        parsed.request["from_step"] = std::stoi(value("--from-step"));
-      }
-      catch (const std::exception &) {
-        return fail("--from-step requires an integer");
-      }
-    }
-    else if (op == "fit" && arg == "--method") {
-      parsed.request["method"] = value("--method");
-    }
-    else if (op == "fit" && (arg == "--params" || arg == "--objective" || arg == "--budget")) {
-      auto body = nlohmann::json::parse(value(arg.c_str()), nullptr, false);
-      if (body.is_discarded()) {
-        return fail(arg + " requires a JSON value");
-      }
-      parsed.request[arg.substr(2)] = body;
+      parsed.load = cli_absolute(value(arg));
     }
     else if (arg.starts_with("-") && arg != "-") {
-      return fail("Unknown option for " + op + ": " + arg);
+      return fail("Unknown option for " + std::string(verb->name) + ": " + arg);
     }
     else {
       positional.push_back(arg);
@@ -250,55 +334,46 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
       return parsed;
     }
   }
-  auto take = [&](size_t index, const char *field) {
-    if (positional.size() > index) {
-      parsed.request[field] = positional[index];
+  for (size_t index = 0; index < positional.size();) {
+    const std::string action = parsed.request.value("action", std::string());
+    const CliField *field = cli_positional(*verb, int(index), action);
+    if (!field) {
+      return fail(index == 0 ? std::string(verb->name) + " takes no positional arguments: " +
+                                   positional[index] :
+                               std::string(verb->name) + " takes too many positional arguments");
     }
-  };
-  if (op == "exec") {
-    if (!positional.empty()) {
-      parsed.request["script"] = cli_absolute(positional[0]);
-    }
-  }
-  else if (op == "describe") {
-    take(0, "path");
-  }
-  else if (op == "session") {
-    take(0, "action");
-    if (parsed.request.value("action", std::string()) == "feedback") {
-      for (size_t i = 1; i < positional.size(); i++) {
-        if (!cli_setting(parsed.request, positional[i])) {
-          return fail("session feedback takes KEY=VALUE settings, not: " + positional[i]);
+    if (field->kind == CliKind::Settings) {
+      for (; index < positional.size(); index++) {
+        if (!cli_setting(parsed.request, field->assign, positional[index])) {
+          return fail(std::string(verb->name) + " " + action + " takes " + field->value +
+                      " settings, not: " + positional[index]);
         }
       }
+      break;
     }
-    else {
-      take(1, "snapshot");
-    }
-  }
-  else if (op == "target") {
-    take(0, "action");
-    take(1, "name");
-  }
-  else if (op == "program") {
-    take(0, "action");
-    if (parsed.request.value("action", std::string()) == "record") {
-      if (positional.size() < 2 || (positional[1] != "on" && positional[1] != "off")) {
-        return fail("program record requires on or off");
+    if (field->kind == CliKind::OnOff) {
+      if (positional[index] != "on" && positional[index] != "off") {
+        return fail(std::string(verb->name) + " " + action + " requires " + field->value);
       }
-      parsed.request["on"] = positional[1] == "on";
+      cli_assign(parsed.request, field->assign, positional[index] == "on");
+    }
+    else if (field->kind == CliKind::Path) {
+      cli_assign(parsed.request, field->assign, cli_absolute(positional[index]));
     }
     else {
-      take(1, "version");
+      cli_assign(parsed.request, field->assign, positional[index]);
     }
+    index++;
   }
-  else if (!positional.empty()) {
-    return fail(op + " takes no positional arguments: " + positional[0]);
-  }
-  /* `session feedback` consumes every remaining word as a KEY=VALUE setting. */
-  const size_t allowed = op == "exec" || op == "describe" ? 1 : 2;
-  if (parsed.request.value("action", std::string()) != "feedback" && positional.size() > allowed) {
-    return fail(op + " takes too many positional arguments: " + positional[allowed]);
+  /* A field an action needs is missing when its slot was never filled. */
+  const std::string action = parsed.request.value("action", std::string());
+  for (int i = 0; i < verb->field_count; i++) {
+    const CliField &field = verb->fields[i];
+    if (field.when[0] && action == field.when && field.kind == CliKind::OnOff &&
+        !parsed.request.contains(field.field))
+    {
+      return fail(std::string(verb->name) + " " + action + " requires " + field.value);
+    }
   }
   if (parsed.has_save && parsed.save.empty()) {
     if (parsed.load.empty()) {
