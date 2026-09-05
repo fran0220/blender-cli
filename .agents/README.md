@@ -6,6 +6,8 @@ these in its project snapshot. Warm setup checks installed packages and reuses
 Git/LFS objects; it does not update the source branch or build Blender. Initial
 library downloads are substantial and require network access to GitHub and
 projects.blender.org. No application secrets or backing services are required.
+Source assets are fetched from Blender's upstream LFS remote because this GitHub
+fork does not host those objects. The fallback remote has pushing disabled.
 
 New login shells inside this checkout select `clang-19` / `clang++-19` via `CC`
 and `CXX`. Existing CMake build directories retain their original compiler; use a
@@ -26,5 +28,5 @@ ctest --test-dir build/orb -N
 
 Compilation can be expensive; select parallelism appropriate for the orb's RAM.
 Run selected tests with `ctest --test-dir build/orb --output-on-failure -R PATTERN`.
-Some integration tests require the separate upstream `tests/data` checkout, not
-provisioned here. GPU execution requires GPU hardware and is not provided by setup.
+The tracked `tests/files` LFS fixtures are included. GPU execution requires GPU
+hardware and is not provided by setup.
