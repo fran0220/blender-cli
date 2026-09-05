@@ -49,4 +49,5 @@ else()
 endif()
 install(TARGETS blender-cli RUNTIME DESTINATION ${agent_exe_dir})
 install(FILES agent_runtime.py agent.py agent_observe.py agent_rna.py agent_compare.py
+  agent_program.py
   DESTINATION ${agent_scripts_dir})

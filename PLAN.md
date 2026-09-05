@@ -124,10 +124,11 @@ the file).
 
 | Item | Status |
 |---|---|
-| Program file layout, parameter block parsing, step recording, `reproducible` flag | todo |
-| `program get/set/patch/run/history/rollback/record`; versions and `index.json` | todo |
-| Prefix-cached re-execution using snapshots per step; hash equality with a full run | todo |
-| Crash recovery via program replay when it is newer than the autosave; `agent.program()` helper | todo |
+| Program file layout (`# base:` header, literal `P` block read by `ast.literal_eval`, `# step N` blocks), step recording, static `reproducible` verdict | done on Linux — `tests/agent/program.py` |
+| `program get/set/patch/run/history/rollback/record`; versions and `index.json` | done on Linux — driven through `agent_program.request`; K's `program` op and W's CLI projection call the same function |
+| Prefix-cached re-execution using snapshots per step; hash equality with a full run | done on Linux — a parameter change re-runs only its readers and later steps; the resulting snapshot equals a full run from the base |
+| Crash recovery via program replay when it is newer than the autosave; `agent.program()` helper | unverified — `agent_program.on_session_open` rebuilds and reports `recovered_from: "program"` under test; K must call it from `Session.__init__` and add the `agent.program()` wrapper |
+| Recording from the `exec` path | unverified — `agent_program.record_from_exec` is proven with the exec's own code, diff and snapshots; K must call it from the exec path and add `exec --no-record` |
 
 ### D — describe schema and corrective errors
 

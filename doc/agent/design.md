@@ -201,44 +201,159 @@ last result through `session.last_perception`.
 
 ## Program model
 
-`.blender-cli/program/model.py` is the session's program. It is plain
-Python executed in the session namespace from a factory-empty `Main`
-(`bpy.ops.wm.read_factory_settings(use_empty=True)` is the implicit first
-step). Layout:
+`.blender-cli/program/model.py` is the session's program: a re-executable
+Python file whose steps are the actions that produced the scene. Layout:
 
 ```python
 # blender-cli program
+# base: factory-empty
 P = {"handle_x": 0.43, "body_r": 0.35}      # parameters (fit targets these by name)
+
 # step 1
 bpy.ops.mesh.primitive_cylinder_add(radius=P["body_r"], depth=1.0)
+
 # step 2
-...
+bpy.data.objects["Cylinder"].location.x = P["handle_x"]
 ```
+
+Everything before the first `# step N` line is the **header**; it is the
+parameter block and it must not change `Main`, because it is re-executed at
+the start of every run. `P` is a literal `dict` with string keys, read by
+`ast.literal_eval`; the program is never executed to be parsed. Steps are
+the text between `# step N` lines, renumbered on every write.
+
+`# base:` names the state step 1 starts from and is written when the program
+is created: `factory` for a session opened without `--file`, `file <path>`
+for one opened with it, `factory-empty` when the line is absent. The base is
+a re-executable statement (`wm.read_factory_settings`, `wm.open_mainfile`),
+not a snapshot, so a program rebuilds its scene in any process.
 
 - `program record on` (default on in a session) appends every `exec` whose
   diff is non-empty as the next `# step N` block; an `exec` with an empty
-  diff is not recorded. `exec` with `"record": false` never records.
-- `program get` returns `{text, version, steps, params}`. `program set`
-  replaces the text; `program patch` applies one `old`→`new` replacement
-  (must match exactly once). Both re-execute.
-- Re-execution runs step blocks in order from the longest prefix whose
-  memfile snapshot is cached (cache key: sha256 of the parameter block plus
-  the concatenated steps up to that point), then continues executing the
-  remaining steps; each executed step's snapshot is cached. A step that
-  raises stops execution; the `error` names the step and the program is
-  left at the last good step with the failing text intact.
-- Every `set|patch|run|rollback` and every recorded `exec` creates a
-  version: `versions/<sha256>.py` plus a row in `index.json`
-  `{version, parent, label, at, steps, message}`. `program history` lists
-  the tree; `program rollback <version|label>` checks a version out and
-  re-executes it. `session snapshot --label L` labels the current version.
-- Nondeterministic calls (random without seed, time, file reads of changing
-  files) are the agent's responsibility; `program run` reports
-  `reproducible: false` when re-executing the same version yields a
-  different memfile hash.
-- After a crash, `session open` in the same directory reloads the program
-  and re-executes its current version; the autosave `.blend` is the fast
-  path when its hash matches, else the program is the truth.
+  diff, a failed `exec` and `exec` with `"record": false` are never
+  recorded.
+- `program get` returns `{text, params, steps, version, base, record,
+  reproducible}`, where `steps` is `[{n, code, reproducible}…]`.
+  `program set` replaces the text; `program patch` applies one `old`→`new`
+  replacement and fails when the match count is not exactly one. Both
+  re-execute.
+- `program run` re-executes; `program run --from-step N` forces execution to
+  begin at step N. `program history` lists the version tree; `program
+  rollback <version|label>` checks a version out and re-executes it.
+  `program record on|off` answers `{record}`.
+- `set`, `patch`, `run` and `rollback` answer
+  `{version, steps, from_step, cached, ran, reproducible, ms}`. A step that
+  raises stops execution and answers `ok: false` with
+  `error: {type, message, step, line}`, where `line` is relative to that
+  step; the program keeps the failing text and `Main` is left at the last
+  good step.
+
+### Prefix-cached re-execution
+
+Re-execution runs from the longest prefix whose memfile snapshot is still
+cached. The key of the state after `N` steps is
+
+```
+sha256( "# blender-cli program" ∥ base ∥ header-without-P ∥ step₁ … step_N
+        ∥ canonical JSON of the parameters those texts read )
+```
+
+The parameters that enter the key are exactly the names appearing as
+`P["name"]` in the header or in steps 1..N; any other use of `P` (a computed
+key, `P.get`, passing `P` along) makes the prefix depend on every parameter.
+Changing one parameter therefore invalidates the first step that reads it
+and everything after it, and nothing before. Each executed step's snapshot
+is cached under its prefix key, so the same prefix is never recomputed.
+Rolling back to a cached prefix restores `Main`, **not** Python variables:
+a step that reads a variable a skipped step defined sees that variable's
+value from the last time the skipped step ran, and RNA references in it are
+stale, exactly as after `session rollback`.
+
+An evicted memfile drops every prefix that named it and re-execution falls
+back to a shorter prefix, or to the base.
+
+`set`, `patch`, `run`, `rollback` and `program get` answer with a `digest`:
+`agent_program.digest()`, a sha256 over `Main`'s content — every ID list,
+then object transforms and relations, mesh vertex/edge/loop/polygon buffers,
+material node graphs, cameras, lights and collections. A partial re-run and
+a full run from the base of the same program produce the same `digest`, and
+that equality is what proves the prefix cache correct. Memfile snapshot IDs
+cannot serve: they hash retained buffers including allocation state, so two
+runs that build the same scene never share one. The `digest` is comparable
+across runs and across processes; the snapshot ID is not.
+
+### Versions
+
+Every `set|patch|run|rollback` and every recorded `exec` writes
+`versions/<sha256 of the text>.py` and appends a row to `index.json`:
+`{version, parent, label, at, steps, reproducible, message}`. `current`
+names the checked-out version. Identical text reuses its version file and
+still appends a row, so the tree records the move. `program rollback` takes
+a version, a `sha256:`-less digest prefix or a label; `session snapshot
+--label L` labels the current version.
+
+### `reproducible`
+
+`reproducible` is a static, conservative verdict per step and for the
+program: a step is reproducible unless its source shows something a re-run
+cannot replay. It is false when the step
+
+- imports or names `time`, `datetime`, `uuid`, `secrets`, `socket`,
+  `subprocess`, `urllib`, `requests`, `http`, `getpass`, `tempfile` or
+  `webbrowser`, or names `os.urandom`, `os.environ`, `os.getpid` or
+  `bpy.app.timers`;
+- imports or names `random` or `numpy` and the program contains no `seed()`
+  call with a literal argument;
+- calls `input()`, or reads a file the program cannot carry: `open`,
+  `bpy.ops.wm.open_mainfile|append|link|revert_mainfile`, `bpy.data.*.load`
+  or a `bpy.ops` importer whose path argument is not a literal relative path
+  inside the program directory (absolute paths, `//`-relative paths and
+  computed paths all count as outside);
+- fails to parse.
+
+A program is reproducible when its header and every step are. The verdict is
+recorded in each `index.json` row. It is only ever downgraded at run time:
+when two full runs from the base of the same version land on different
+`digest`s, that version becomes irreproducible for the rest of the session.
+The observed digests are session state, so this dynamic downgrade does not
+survive a restart; the static verdict does.
+
+### Crash recovery
+
+`session open` in a session directory that holds a program compares the
+program's newest version time with the modification time of the recovered
+autosave. When the program is newer, or no autosave survived, the open
+result carries `recovered_from: "program"` with `program`, `steps` and
+`ran`, and the scene is rebuilt by running the program from its base.
+Otherwise the autosave path applies unchanged. The runtime calls
+`agent_program.on_session_open(session, previous_autosave=path_or_None)`
+after its first snapshot and merges the returned dict into the open result;
+an empty dict means the program did not take over.
+
+### Python API
+
+`agent.program()` returns `{text, params, steps, version, reproducible}`.
+The `fit` request drives program parameters through the same objects:
+
+```python
+program = agent_program.attach(session)   # the session's Program, created on demand
+program.set_params({"handle_x": 0.5})     # rewrite P and re-execute the affected suffix
+program.run(from_step=None)               # re-execute; both answer the run result above
+program.version                           # current "sha256:…"
+program.params                            # the parsed P dict
+```
+
+`set_params` merges named values into `P`, rewrites only the `P = {…}`
+statement in the header, commits a version and re-executes. It is the
+supported way to evaluate a program parameter, and it costs one partial
+re-execution per evaluation.
+
+The `exec` path records through
+`agent_program.record_from_exec(session, code, before, after, diff)`, where
+`before` and `after` are the snapshots on either side of the request; the
+step's snapshot enters the prefix cache only when `before` is the snapshot
+the program's own prefix produced, so a recording made after a rollback
+never poisons the cache.
 
 ## Targets and `fit`
 
