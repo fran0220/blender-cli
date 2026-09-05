@@ -16,6 +16,8 @@ import tempfile
 import time
 import zlib
 
+from gpu import require_device
+
 
 EDIT = """
 bpy.context.view_layer.objects.active = bpy.data.objects['Cube']
@@ -55,6 +57,7 @@ def read_png(data):
 
 
 def main():
+    require_device()
     executable = str(Path(sys.argv[1]).resolve())
     with tempfile.TemporaryDirectory(prefix="agent observe ") as directory:
         root = Path(directory)
