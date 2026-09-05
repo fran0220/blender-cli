@@ -19,7 +19,7 @@ def require_device(executable):
         # Blender ships its own loader; the test interpreter's DLL search path
         # need not include it. A missing bundled DLL is a packaging failure,
         # not evidence of device absence and must not turn tests into skips.
-        vulkan = ctypes.WinDLL(str(Path(executable).resolve().parent / "vulkan-1.dll"))
+        vulkan = ctypes.WinDLL(str(Path(executable).resolve().parent / "blender.shared" / "vulkan-1.dll"))
         class InstanceInfo(ctypes.Structure):
             _fields_ = [("type", ctypes.c_uint32), ("next", ctypes.c_void_p),
                         ("flags", ctypes.c_uint32), ("app", ctypes.c_void_p),

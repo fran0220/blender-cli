@@ -181,8 +181,24 @@ len(mesh.vertices)
             time.sleep(0.1)
             assert call("session", "close")["forced"] is True
         assert not Path(endpoint).exists()
-        call("session", "open")
-        execute("import os; os._exit(0)", ok=False)
+        crashed = call("session", "open")
+        if sys.platform == "win32":
+            import ctypes
+
+            kernel = ctypes.WinDLL("kernel32.dll")
+            kernel.OpenProcess.restype = ctypes.c_void_p
+            kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            process = kernel.OpenProcess(0x00100000, False, int(crashed["session"]))  # SYNCHRONIZE
+            assert process, "Could not open daemon process for exit synchronization"
+            try:
+                execute("import os; os._exit(0)", ok=False)
+                # Socket EOF can precede process teardown completion on Windows.
+                assert kernel.WaitForSingleObject(process, 10000) == 0, "Daemon did not exit"
+            finally:
+                kernel.CloseHandle(process)
+        else:
+            execute("import os; os._exit(0)", ok=False)
         # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
         call("session", "open")
         execute("import os; os.chdir('..')")
