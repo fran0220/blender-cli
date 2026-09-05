@@ -52,7 +52,7 @@ evidence until run there.
 |---|---|
 | Session endpoint: `AF_UNIX` socket (macOS, Linux, Windows 10 1803+), JSON lines, one request in flight | done — Linux real endpoint, ordered pipelined IDs and full 200 KB response pass; product platforms unverified |
 | Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | done — idle Python timer, second-connection cancellation and subsequent exec pass |
-| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; observation is delivered below, Phase 4 compare still raises an explicit error |
+| Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; observation and comparison are delivered in Phases 3–4 below |
 | Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | done — cube 8 → 26 → 8 vertices; branch retention, labels, ~N, operator undo coexistence, Main replacement and save/reload pass |
 | `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | done — normal/forced close, duplicate-open refusal, stale recovery, file-open and one-shot fallback pass; median round trip 5.453 ms |
 
@@ -88,12 +88,38 @@ Done when: agent code inside `exec` calls `agent.compare(ref, "front")` in
 a loop over a parameter range and returns the best IoU without a single
 image leaving the process.
 
+Proven on Debian 12 x86_64, xPack GCC 14.3.0 and Mesa 25.0.7 software
+Vulkan: agent-profile configure/install returns `BUILD_EXIT=0`. The real
+`agent_compare` CTest passes (136.37s), as do the three earlier protocol,
+session and observation regressions. No upstream files changed. Product
+Metal/macOS and Vulkan/Windows remain **unverified**, owned by Phase 5.
+
+The saved X-scale-0.6 cube front reference scores IoU 0.9999693439607603,
+Chamfer 0.0013440860215053765 px, SSIM 0.9999552715896969 and histogram
+distance 0.00003065603923968485. Bounds are IoU ≥ 0.98, Chamfer ≤ 1 px,
+SSIM ≥ 0.98 and histogram ≤ 0.02. The non-perfect silhouette differs at
+exactly four corner pixels: thresholded antialiased color has 130480 foreground
+pixels, native depth/coverage has 130476. This is not resampling or camera drift.
+A red-sphere reference scores 0.682835025523083 / 40.85824683145036 px /
+0.7060183742050152 / 1.0 (bounds < 0.8 / > 10 px / < 0.9 / > 0.3).
+The uniform blue-background composite recovers the native silhouette exactly:
+IoU 1, Chamfer 0, SSIM 0.9999999997841629, histogram 0 (required IoU ≥ 0.95).
+
+NumPy is retained deliberately: fresh reference loading, preprocessing and all
+four pixel metrics average 120.998 ms over 20 runs on real rendered buffers,
+versus 3318.741 ms for a warm all-metric comparison including render (~3.6%).
+The 20-candidate X-scale loop (0.20 through 0.96, step 0.04) selects 0.60,
+IoU 0.9999693439607603, with exec `ms=66474.6604`, wall 66.4818s. It emits
+only numbers and creates no PNGs. Compare preserves snapshots and empty diffs
+without edits and retains actual transform edits during fitting. Metric formulas,
+mask limitations and resizing policy are defined only in `doc/agent/design.md`.
+
 | Item | Status |
 |---|---|
-| `compare --ref --view [--metric]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | todo |
-| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | todo |
-| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | todo |
-| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | todo |
+| `compare --ref --view [--metric]`: silhouette IoU, edge Chamfer distance, SSIM, color-histogram distance; same functions exposed in the `agent` module | done — self/wrong references, 20-candidate numeric fit, requested-only metrics, all sizes and named framing pass |
+| Reference preprocessing in-process: background removal (classic CV), silhouette extraction | done — colored-background IoU 1, debug mask visually inspected, alpha/luminance policies, portrait centering and PNG/JPEG/WebP pass |
+| RNA-aware errors: on `AttributeError` / wrong enum / out-of-range, answer with the nearest valid identifiers and types from RNA | done — instance/type/module typos, enum descriptions, integer overflow ranges, wrong array type and unknown operator keyword pass; unrelated errors have no RNA block |
+| `describe <rna path>`: signature, properties, enum items, ranges, from live RNA | done — operator/property/struct/instance/module and helper pass; bevel poll false in object mode, true in edit mode, GPU-selection poll includes upstream reason |
 
 ## Phase 5 — size, packaging, platforms
 
