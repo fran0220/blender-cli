@@ -10,9 +10,9 @@ if [[ "$(uname -m)" != x86_64 ]]; then
 fi
 
 echo '[setup] Checking Debian build prerequisites'
-# Debian 12 GCC is too old for this checkout; Clang 19 meets Blender's minimum.
+# Keep Clang tooling for formatting and editor integration; GCC below builds Blender.
 packages=(build-essential clang-19 clang-format-19 clangd-19 lld-19 cmake ninja-build
-  ccache git-lfs pkg-config python3 libx11-dev libxxf86vm-dev libxcursor-dev
+  ccache curl ca-certificates git-lfs pkg-config python3 libx11-dev libxxf86vm-dev libxcursor-dev
   libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev
   wayland-protocols libdbus-1-dev libgl-dev libegl-dev)
 missing=()
@@ -27,15 +27,38 @@ if ((${#missing[@]})); then
 fi
 echo "[setup] System packages ready (${SECONDS}s)"
 
+echo '[setup] Checking xPack GCC 14.3.0 and its runtime'
+# Upstream requires GCC >= 14. Debian 12's libstdc++ also cannot compile its
+# constexpr std::string with Clang; xPack uses the existing system sysroot.
+if [[ "$(/opt/xpack-gcc/bin/g++ -dumpfullversion 2>/dev/null || true)" != 14.3.0 ]]; then
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  curl -fsSL --retry 3 -o "$archive" \
+    https://github.com/xpack-dev-tools/gcc-xpack/releases/download/v14.3.0-1/xpack-gcc-14.3.0-1-linux-x64.tar.gz
+  sudo mkdir -p /opt/xpack-gcc
+  sudo tar -xzf "$archive" -C /opt/xpack-gcc --strip-components=1
+  rm -f "$archive"
+  trap - EXIT
+fi
+sudo cp -a /opt/xpack-gcc/lib64/libstdc++.so.6 \
+  /opt/xpack-gcc/lib64/libstdc++.so.6.0.33 \
+  /opt/xpack-gcc/lib64/libgcc_s.so.1 /usr/local/lib/
+sudo ldconfig
+echo "[setup] GCC runtime ready (${SECONDS}s)"
+
 # Persist the compiler selection for Amp and services, scoped to this checkout.
 marker='# Blender orb compiler environment'
+if [[ -f "$HOME/.bash_profile" ]]; then
+  # Migrate the old scoped hook, not unrelated compiler selections in the profile.
+  sed -i '/^# Blender orb compiler environment$/,/^esac$/s|export CC=clang-19 CXX=clang++-19|export CC=/opt/xpack-gcc/bin/gcc CXX=/opt/xpack-gcc/bin/g++|' "$HOME/.bash_profile"
+fi
 if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
   cat >> "$HOME/.bash_profile" <<EOF
 
 $marker
 case "\$PWD" in
   "$repo_root"|"$repo_root"/*)
-    export CC=clang-19 CXX=clang++-19
+    export CC=/opt/xpack-gcc/bin/gcc CXX=/opt/xpack-gcc/bin/g++
     ;;
 esac
 EOF

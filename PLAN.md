@@ -15,7 +15,7 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 | `build_files/cmake/config/blender_agent.cmake` build profile | unverified — written from option names in `CMakeLists.txt`, not yet configured on any platform |
 | GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
-| Orb setup (`.agents/setup`): Debian packages + clang-19, upstream LFS fallback, `lib/linux_x64` submodule at the checkout's pin | done — verified on Debian 12 x86_64 against upstream `main` |
+| Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
 | CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | todo |
 
 ## Phase 1 — a process that answers
