@@ -126,6 +126,8 @@ collection.objects.link(obj)
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
         for verb in ("session", "compare", "describe"):
             assert call(verb, ok=False)["error"]["type"] == "NotImplemented"
+        separate_inline = call("observe", "--layout", "separate", "--inline", ok=False)
+        assert "one image" in separate_inline["error"]["message"], separate_inline
         assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"
         human = raw("exec", "-c", "42")
         assert human.returncode == 0 and json.loads(human.stdout)["value"] == "42", human

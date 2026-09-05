@@ -213,6 +213,8 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
         raise ValueError("--overlay requires --ref")
     if inline and out:
         raise ValueError("--inline and --out are mutually exclusive")
+    if inline and layout == "separate":
+        raise ValueError("--inline requires sheet layout: only one image crosses the agent boundary")
     source = bpy.context.scene
     if "camera" in views and source.camera is None:
         raise ValueError("The camera view requires scene.camera")

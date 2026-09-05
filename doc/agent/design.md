@@ -416,8 +416,10 @@ only the first gets a reference/overlay. The result additionally has
 at the top level. Default session outputs are content-addressed files under
 `<cwd>/.blender-cli/observe/`; one-shot outputs use a new system temporary
 directory. `--out PATH` chooses a sheet filename, or a directory for separate
-layout. `--inline` writes no files and substitutes a `base64` string for each
-`image` path (mutually exclusive with `--out`). All results include `ok: true`,
+layout. `--inline` writes no files and substitutes a `base64` string for the
+sheet's `image` path. It is mutually exclusive with `--out` and requires sheet
+layout: separate layout writes files, never multiple image payloads across the
+one-image boundary. All results include `ok: true`,
 requested views/passes and actual output dimensions. `exec --observe VIEWS`
 attaches this result as `observe`; `agent.observe(views, passes, size, ref)`
 uses the same implementation and returns the dict directly.
