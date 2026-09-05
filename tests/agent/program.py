@@ -241,6 +241,24 @@ def main():
             assert fine["ran"] == [1], fine
             assert fine["digest"] != coarse["digest"], (coarse["digest"], fine["digest"])
 
+            # Grease pencil keeps its strokes in attribute domains RNA reports as bare
+            # references, so a digest that skipped them would miss the drawing itself.
+            strokes = ("# blender-cli program\n# base: factory-empty\n"
+                       'P = {"y": 2.0}\n'
+                       "\n# step 1\n"
+                       'bpy.ops.object.grease_pencil_add(type="EMPTY")\n'
+                       "_pencil = bpy.data.grease_pencils[0]\n"
+                       '_layer = _pencil.layers[0] if _pencil.layers else _pencil.layers.new("L")\n'
+                       "_frame = _layer.frames[0] if _layer.frames else _layer.frames.new(1)\n"
+                       "_frame.drawing.add_strokes([3])\n"
+                       "for _point, _co in zip(_frame.drawing.strokes[0].points,\n"
+                       '                       [(0.0, 0.0, 0.0), (1.0, P["y"], 3.0), (4.0, 5.0, 6.0)]):\n'
+                       "    _point.position = _co\n")
+            drawn = program("set", "--text", strokes)
+            moved = program("set", "--text", strokes.replace('"y": 2.0', '"y": 9.0'))
+            assert moved["ran"] == [1], moved
+            assert moved["digest"] != drawn["digest"], (drawn["digest"], moved["digest"])
+
             # Curve control points are content too; RNA collapses them to references.
             circle = ("# blender-cli program\n# base: factory-empty\n"
                       'P = {"radius": 1.0}\n'

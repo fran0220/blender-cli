@@ -39,6 +39,14 @@ NONDETERMINISTIC_PATHS = frozenset(
 READERS = frozenset({"open", "bpy.ops.wm.open_mainfile", "bpy.ops.wm.append",
                      "bpy.ops.wm.link", "bpy.ops.wm.revert_mainfile"})
 PATH_KEYWORDS = ("filepath", "filename", "file", "directory", "path")
+# How to read a geometry attribute's values in bulk: property, array code, width.
+ATTRIBUTE_BUFFERS = {
+    "FLOAT": ("value", "f", 1), "INT": ("value", "i", 1), "INT8": ("value", "i", 1),
+    "BOOLEAN": ("value", "b", 1), "FLOAT_VECTOR": ("vector", "f", 3),
+    "FLOAT2": ("vector", "f", 2), "FLOAT_COLOR": ("color", "f", 4),
+    "BYTE_COLOR": ("color", "f", 4), "QUATERNION": ("value", "f", 4),
+    "INT32_2D": ("value", "i", 2), "FLOAT4X4": ("value", "f", 16),
+}
 
 
 def _fatal(error):
@@ -301,6 +309,16 @@ def digest():
             collection.foreach_get(attribute, buffer)
         stream.update(buffer.tobytes())
 
+    def attributes(group, *identity):
+        """Hash a geometry attribute domain: the values, not a list of references."""
+        for name in sorted(group.keys()):
+            attribute = group[name]
+            feed("attribute", *identity, name, attribute.domain, attribute.data_type,
+                 len(attribute.data))
+            spelling = ATTRIBUTE_BUFFERS.get(attribute.data_type)
+            if spelling:
+                buffered(attribute.data, *spelling)
+
     for prop in sorted(bpy.data.bl_rna.properties, key=lambda item: item.identifier):
         if prop.type == "COLLECTION":
             items = getattr(bpy.data, prop.identifier)
@@ -358,6 +376,23 @@ def digest():
                  element.size_x, element.size_y, element.size_z, element.stiffness)
     for lattice in sorted(bpy.data.lattices, key=lambda item: item.name):
         buffered(lattice.points, "co_deform", "f", 3)
+    # Grease pencil, point clouds and hair curves keep their geometry in attribute
+    # domains that RNA reports as bare references, so the values are read in bulk.
+    for pencil in sorted(getattr(bpy.data, "grease_pencils", ()), key=lambda item: item.name):
+        for layer in sorted(pencil.layers, key=lambda item: item.name):
+            feed("gplayer", pencil.name, layer.name, round(layer.opacity, 6),
+                 layer.blend_mode, layer.hide,
+                 [round(value, 6) for row in layer.matrix_local for value in row])
+            for frame in layer.frames:
+                drawing = frame.drawing
+                feed("gpframe", pencil.name, layer.name, frame.frame_number,
+                     frame.keyframe_type, len(drawing.curve_offsets))
+                buffered(drawing.curve_offsets, "value", "i", 1)
+                attributes(drawing.attributes, "gp", pencil.name, layer.name,
+                           frame.frame_number)
+    for name in ("pointclouds", "hair_curves"):
+        for item in sorted(getattr(bpy.data, name, ()), key=lambda entry: entry.name):
+            attributes(item.attributes, name, item.name)
     for armature in sorted(bpy.data.armatures, key=lambda item: item.name):
         for bone in sorted(armature.bones, key=lambda item: item.name):
             feed("bone", armature.name, bone.name,

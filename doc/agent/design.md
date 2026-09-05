@@ -351,7 +351,9 @@ the answer to "is this the same scene" everywhere in the process.
 It covers every ID list; object transforms, relations and material slots;
 mesh vertex, edge, loop and polygon buffers; material node graphs; cameras,
 lights and collections; curve spline points, metaball elements, lattice
-points and armature bones; and the RNA settings of every modifier, every
+points and armature bones; the attribute domains of grease-pencil drawings,
+point clouds and hair curves, read as values rather than as the bare
+references RNA reports; and the RNA settings of every modifier, every
 constraint and every non-mesh data ID. That RNA walk is
 `agent_runtime.settings`, the one `inspect --full` already uses, so what an
 agent can read is what the digest distinguishes: two scenes differing only
