@@ -6,8 +6,11 @@
 
 Every helper returns the same dict its event or request carries. Helpers whose
 computation belongs to another module resolve through the runtime's helper
-registry, so a build without that module answers `NotImplemented` by name
-instead of failing obscurely.
+registry: a module registers `agent_runtime.register_helper(name, function)`
+in its `register(session)`, and every registered function takes the session as
+its first argument. A build without that module answers `NotImplemented` by
+name instead of failing obscurely, and no sibling workstream ever edits this
+file to add one.
 """
 
 _session = None
@@ -21,7 +24,8 @@ def _active():
 
 def _helper(name):
     import agent_runtime
-    return agent_runtime.helper(name)
+    function = agent_runtime.helper(name)
+    return lambda *args, **kwargs: function(_active(), *args, **kwargs)
 
 
 def snapshot(label=None):

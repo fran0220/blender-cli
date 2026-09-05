@@ -31,17 +31,35 @@ the dispatch or the event assembly:
                            fields of its `done` event and may emit events of
                            its own. Workstream P owns `program`; workstream T
                            owns `target` and `fit`.
-  register_helper(name, f) Backs an `agent.<name>` helper.
+  register_helper(name, f) Backs an `agent.<name>` helper as `f(session, ...)`.
+                           `agent.py` forwards every helper it declares through
+                           this registry, so adding one never edits that file.
+                           Current names: `perceive` (F), `objective` and `fit`
+                           (T), `program` (P).
+  error.agent_type         An exception attribute naming the wire error type
+                           when the Python class name is not it, as
+                           `NotImplemented` is.
+  error.agent_fields       An exception attribute carrying extra `error` event
+                           fields, merged as-is. This is how any module says
+                           what failed — P's step errors add `step`, `version`
+                           and `cached_through`. It never overrides `type`,
+                           `message` or `line`.
   register_record_hook(f)  `f(session, code, step)` runs after an `exec` whose
                            diff is non-empty and whose `record` is not false.
                            Workstream P records the program step there.
   Session.last_perception  Written by F's perception provider, read by F's
                            image provider.
   Session.last_diff        The diff dict of the request being answered.
+  Session.previous_snapshot
+                           The snapshot current when the request started, so a
+                           record hook has both ends of the step it records.
   Session.request_feedback The feedback policy in force for this request.
   Session.targets          Target storage, owned by workstream T.
   Session.recovered_from   "autosave", "program" or None; reported by
                            `session status` and by `session open`.
+  Session.opened_file      The `.blend` this session was opened with, or None.
+                           A session opened with an explicit file starts from
+                           that file: nothing may replay over it.
 """
 
 import ast
@@ -60,258 +78,8 @@ import bmesh
 import mathutils
 import agent
 
-
-# ---------------------------------------------------------------------------
-# The contract as data: requests, events and the shapes they share.
-
-DEFS = {
-    "image_policy": {
-        "doc": "How pictures of a change are returned.",
-        "fields": {
-            "mode": {"type": "string", "enum": ["delta", "full", "off"], "default": "delta",
-                     "doc": "delta crops the changed region; off sends no image event."},
-            "threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.002,
-                          "doc": "Changed-pixel fraction below which no image is sent."},
-            "views": {"type": "array", "items": {"type": "string"}, "default": ["front"],
-                      "doc": "Budget views rendered for feedback."},
-            "pass": {"type": "string", "default": "color", "doc": "Render pass of the image."},
-            "size": {"type": "integer", "minimum": 1, "default": 256,
-                     "doc": "Budget tile size in pixels."},
-            "overlay": {"type": "boolean", "default": True,
-                        "doc": "Emit a before/after overlay of the changed region."},
-        },
-    },
-    "feedback_policy": {
-        "doc": "The per-session feedback budget.",
-        "fields": {
-            "perception": {"type": "boolean", "default": True,
-                           "doc": "Emit a perception event after every action."},
-            "objective": {"type": "boolean", "default": True,
-                          "doc": "Score registered targets after every action."},
-            "image": {"ref": "image_policy", "doc": "Image budget."},
-        },
-    },
-    "fit_param": {
-        "doc": "One searched parameter: a program parameter or an RNA path.",
-        "fields": {
-            "name": {"type": "string", "doc": "Program parameter name in the P block."},
-            "path": {"type": "string", "doc": "RNA path assigned directly instead."},
-            "min": {"type": "number", "required": True, "doc": "Lower bound."},
-            "max": {"type": "number", "required": True, "doc": "Upper bound."},
-        },
-    },
-    "fit_objective": {
-        "doc": "What the search minimises or maximises.",
-        "fields": {
-            "target": {"type": "string", "doc": "Single target name."},
-            "targets": {"type": "array", "items": {"type": "string"},
-                        "doc": "Several target names, combined by weights."},
-            "weights": {"type": "array", "items": {"type": "number"}, "doc": "Per-target weights."},
-            "metric": {"type": "string", "enum": ["iou", "chamfer", "ssim", "hist"],
-                       "default": "iou", "doc": "Metric to optimise."},
-            "code": {"type": "string", "doc": "Python expression returning a score instead."},
-        },
-    },
-    "fit_budget": {
-        "doc": "The bound on a search.",
-        "fields": {
-            "evals": {"type": "integer", "minimum": 1, "default": 200,
-                      "doc": "Maximum evaluations."},
-            "seconds": {"type": "number", "minimum": 0, "exclusive_minimum": True,
-                        "doc": "Wall-clock bound."},
-            "size": {"type": "integer", "minimum": 1, "default": 128,
-                     "doc": "Tile size used while searching."},
-        },
-    },
-}
-
-REQUESTS = {
-    "exec": {
-        "doc": "Run Python in the session namespace and push its consequences.",
-        "mutates": True,
-        "fields": {
-            "code": {"type": "string",
-                     "doc": "Python source; exactly one of code or script is required."},
-            "script": {"type": "string",
-                       "doc": "Absolute path of a Python file to run instead of code."},
-            "record": {"type": "boolean", "default": True,
-                       "doc": "Record this statement as the program's next step."},
-            "timeout": {"type": "number", "minimum": 0, "exclusive_minimum": True,
-                        "doc": "Cooperative wall-clock deadline in seconds."},
-            "feedback": {"ref": "image_policy",
-                         "doc": "Image policy override for this request only."},
-        },
-        "events": ["log", "value", "diff", "perception", "objective", "image", "done", "error"],
-        "example": {"id": 7, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add()",
-                    "record": True},
-    },
-    "program": {
-        "doc": "Read or edit the program that reproduces the scene.",
-        "mutates": {"set", "patch", "run", "rollback"},
-        "fields": {
-            "action": {"type": "string", "required": True,
-                       "enum": ["get", "set", "patch", "run", "history", "rollback", "record"],
-                       "doc": "Program operation."},
-            "text": {"type": "string", "doc": "Replacement program text for set."},
-            "old": {"type": "string", "doc": "Text to replace for patch; must match exactly once."},
-            "new": {"type": "string", "doc": "Replacement text for patch."},
-            "label": {"type": "string", "doc": "Label for the version this creates."},
-            "version": {"type": "string", "doc": "Version hash or label for rollback."},
-            "on": {"type": "boolean", "doc": "Recording state for record."},
-            "feedback": {"ref": "image_policy",
-                         "doc": "Image policy override for this request only."},
-        },
-        "events": ["log", "diff", "perception", "objective", "image", "done", "error"],
-        "example": {"id": 8, "op": "program", "action": "get"},
-    },
-    "target": {
-        "doc": "Bind a reference image to a view; targets are scored after every action.",
-        "mutates": False,
-        "fields": {
-            "action": {"type": "string", "required": True, "enum": ["set", "list", "clear"],
-                       "doc": "Target operation."},
-            "name": {"type": "string", "doc": "Target name."},
-            "ref": {"type": "string", "doc": "Reference image path."},
-            "view": {"type": "string", "default": "front",
-                     "doc": "Preset view the reference is bound to."},
-            "mask": {"type": "string", "enum": ["auto", "none"], "default": "auto",
-                     "doc": "Reference background removal."},
-            "fit": {"type": "string", "enum": ["bbox", "none"], "default": "bbox",
-                    "doc": "Reference normalisation."},
-            "metrics": {"type": "array", "items": {"type": "string",
-                                                   "enum": ["iou", "chamfer", "ssim", "hist"]},
-                        "default": ["iou"], "doc": "Metrics scored for this target."},
-        },
-        "events": ["log", "done", "error"],
-        "example": {"id": 9, "op": "target", "action": "set", "name": "front",
-                    "ref": "reference.png", "view": "front"},
-    },
-    "fit": {
-        "doc": "Search parameters against the registered targets inside the process.",
-        "mutates": True,
-        "fields": {
-            "params": {"type": "array", "required": True, "items": {"ref": "fit_param"},
-                       "doc": "Parameters to search."},
-            "objective": {"ref": "fit_objective", "doc": "What to optimise."},
-            "budget": {"ref": "fit_budget", "doc": "Search bound."},
-            "method": {"type": "string", "enum": ["coordinate", "nelder-mead", "random"],
-                       "default": "coordinate", "doc": "Search method."},
-        },
-        "events": ["log", "progress", "diff", "perception", "objective", "image", "done", "error"],
-        "example": {"id": 10, "op": "fit",
-                    "params": [{"name": "handle_x", "min": 0.2, "max": 0.6}],
-                    "objective": {"target": "front", "metric": "iou"},
-                    "budget": {"evals": 40}, "method": "coordinate"},
-    },
-    "inspect": {
-        "doc": "Read scene state from RNA.",
-        "mutates": False,
-        "fields": {
-            "object": {"type": "string", "doc": "Restrict the objects array to this name."},
-            "full": {"type": "boolean", "default": False,
-                     "doc": "Expand node trees and modifier settings."},
-            "select": {"type": "array", "items": {"type": "string"},
-                       "doc": "RNA paths resolved relative to bpy.data."},
-        },
-        "events": ["log", "done", "error"],
-        "example": {"id": 11, "op": "inspect", "object": "Cube", "full": False},
-    },
-    "observe": {
-        "doc": "Render deterministic offscreen views.",
-        "mutates": False,
-        "fields": {
-            "views": {"type": "array", "items": {"type": "string"}, "default": ["front", "persp"],
-                      "doc": "Preset views."},
-            "passes": {"type": "array", "items": {"type": "string"}, "default": ["color"],
-                       "doc": "Render passes."},
-            "size": {"type": "integer", "enum": [512, 768, 1024], "default": 512,
-                     "doc": "Tile size."},
-            "ref": {"type": "string", "doc": "Reference image placed beside the first view."},
-            "layout": {"type": "string", "enum": ["sheet", "separate"], "default": "sheet",
-                       "doc": "One contact sheet or one file per view and pass."},
-            "overlay": {"type": "boolean", "default": False,
-                        "doc": "Blend the reference over the first tile."},
-            "frame": {"type": "string", "doc": "Object whose bounds frame the views."},
-            "out": {"type": "string", "doc": "Output file, or directory for separate layout."},
-            "inline": {"type": "boolean", "default": False,
-                       "doc": "Return base64 instead of writing files."},
-        },
-        "events": ["log", "done", "error"],
-        "example": {"id": 12, "op": "observe", "views": ["front"], "passes": ["color"],
-                    "size": 512},
-    },
-    "describe": {
-        "doc": "Answer from live RNA, the agent helpers or the channel registry.",
-        "mutates": False,
-        "fields": {
-            "path": {"type": "string", "required": True,
-                     "doc": "RNA path, agent path, `channel` or `schema`."},
-        },
-        "events": ["log", "done", "error"],
-        "example": {"id": 13, "op": "describe", "path": "bpy.ops.mesh.bevel"},
-    },
-    "session": {
-        "doc": "Session state: snapshots, history, feedback policy and lifetime.",
-        "mutates": {"rollback"},
-        "fields": {
-            "action": {"type": "string", "required": True,
-                       "enum": ["status", "feedback", "save", "close", "snapshot", "rollback",
-                                "history"],
-                       "doc": "Session operation."},
-            "label": {"type": "string",
-                      "doc": "Snapshot label; a labelled snapshot is also written to disk."},
-            "snapshot": {"type": "string", "doc": "Snapshot hash, label or ~N for rollback."},
-            "file": {"type": "string", "doc": "Path for save."},
-            "feedback": {"ref": "feedback_policy", "doc": "Feedback policy to merge."},
-        },
-        "events": ["log", "diff", "perception", "objective", "image", "done", "error"],
-        "example": {"id": 14, "op": "session", "action": "status"},
-    },
-    "cancel": {
-        "doc": "Stop the running request. Answered on the transport thread, out of order.",
-        "mutates": False,
-        "fields": {
-            "target": {"type": "integer", "required": True,
-                       "doc": "id of the request to stop."},
-        },
-        "events": ["done"],
-        "example": {"id": 15, "op": "cancel", "target": 10},
-    },
-}
-
-EVENTS = {
-    "log": {"doc": "Captured Python stdout or stderr, emitted line by line as it is produced.",
-            "fields": {"stream": {"type": "string", "enum": ["stdout", "stderr"]},
-                       "text": {"type": "string"}}},
-    "value": {"doc": "repr of the statement's final expression, or null when there is none.",
-              "fields": {"value": {"type": "string"}}},
-    "diff": {"doc": "Datablocks the request added, changed or removed, and the new state.",
-             "fields": {"added": {"type": "array"}, "changed": {"type": "array"},
-                        "removed": {"type": "array"}, "snapshot": {"type": "string"},
-                        "step": {"type": "integer"}}},
-    "perception": {"doc": "Counts, bounds, framing and what changed in the budget view.",
-                   "fields": {"objects": {"type": "integer"}, "verts": {"type": "integer"},
-                              "faces": {"type": "integer"}, "bounds": {"type": "object"},
-                              "dims": {"type": "array"}, "framing": {"type": "object"},
-                              "changed": {"type": "object"}, "symmetry": {"type": "object"}}},
-    "objective": {"doc": "Per-target metrics, their deltas and the best state so far.",
-                  "fields": {"targets": {"type": "object"}, "best": {"type": "object"}}},
-    "image": {"doc": "A picture of the change, or a requested frame.",
-              "fields": {"kind": {"type": "string", "enum": ["delta", "full", "overlay", "error"]},
-                         "view": {"type": "string"}, "pass": {"type": "string"},
-                         "path": {"type": "string"}, "inline": {"type": "string"},
-                         "size": {"type": "array"}, "region": {"type": "array"}}},
-    "progress": {"doc": "Search progress, at most every 0.5 s.",
-                 "fields": {"eval": {"type": "integer"}, "of": {"type": "integer"},
-                            "best": {"type": "number"}, "params": {"type": "object"}}},
-    "done": {"doc": "Terminal success event, carrying the op-specific result fields.",
-             "fields": {"ok": {"type": "boolean"}, "ms": {"type": "number"}}},
-    "error": {"doc": "Terminal failure event.",
-              "fields": {"ok": {"type": "boolean"}, "type": {"type": "string"},
-                         "message": {"type": "string"}, "line": {"type": "integer"},
-                         "rna": {"type": "object"}, "fix": {"type": "object"},
-                         "autosave": {"type": "string"}}},
-}
+# The contract itself is data, in a module a plain interpreter can read.
+from agent_contract import DEFS, EVENTS, REQUESTS
 
 TYPES = {"string": str, "number": (int, float), "integer": int, "boolean": bool,
          "object": dict, "array": list}
@@ -327,6 +95,24 @@ class Cancelled(Exception):
 
 class NotImplementedRequest(Exception):
     agent_type = "NotImplemented"
+
+
+def check_fields(where, spec, value):
+    """One object against one table entry: names, types, requirements, choices."""
+    fields = spec["fields"]
+    for name, item in value.items():
+        if name not in fields:
+            raise ProtocolError(f"Unknown field for {where}: {name!r}; "
+                                f"{where} accepts {', '.join(sorted(fields))}")
+        check_value(f"{where}.{name}", fields[name], item)
+    for name, field_spec in fields.items():
+        if field_spec.get("required") and name not in value:
+            choices = field_spec.get("enum")
+            raise ProtocolError(f"{where} requires {name}" +
+                                (f": " + "|".join(str(item) for item in choices) if choices else ""))
+    exclusive = spec.get("exactly_one_of")
+    if exclusive and sum(name in value for name in exclusive) != 1:
+        raise ProtocolError(f"{where} requires exactly one of {' or '.join(exclusive)}")
 
 
 def check_value(where, spec, value):
@@ -350,6 +136,8 @@ def check_value(where, spec, value):
     if kind == "array" and "items" in spec:
         for index, item in enumerate(value):
             check_value(f"{where}[{index}]", spec["items"], item)
+    if kind == "object" and "fields" in spec:
+        check_fields(where, spec, value)
 
 
 def validate(request):
@@ -361,19 +149,8 @@ def validate(request):
     op = request.get("op")
     if op not in REQUESTS:
         raise ProtocolError(f"Unknown op: {op!r}; expected one of {', '.join(sorted(REQUESTS))}")
-    fields = REQUESTS[op]["fields"]
-    for name, value in request.items():
-        if name in ("id", "op"):
-            continue
-        if name not in fields:
-            raise ProtocolError(f"Unknown field for {op}: {name!r}; "
-                                f"{op} accepts {', '.join(sorted(fields))}")
-        check_value(f"{op}.{name}", fields[name], value)
-    for name, spec in fields.items():
-        if spec.get("required") and name not in request:
-            raise ProtocolError(f"{op} requires {name}")
-    if op == "exec" and ("code" in request) == ("script" in request):
-        raise ProtocolError("exec requires exactly one of code or script")
+    check_fields(op, REQUESTS[op],
+                 {name: value for name, value in request.items() if name not in ("id", "op")})
 
 
 def mutating(request):
@@ -389,6 +166,10 @@ def mutating(request):
 PROVIDERS = []
 HANDLERS = {}
 HELPERS = {}
+# A module is listed here once it exposes `register(session)`. A module that is
+# not built yet is skipped; a listed module without the hook is a bug and fails
+# the session, because a feedback channel that silently contributes nothing is
+# worse than a session that will not open.
 PROVIDER_MODULES = ["agent_feedback", "agent_target", "agent_program"]
 RECORD_HOOK = None
 
@@ -408,7 +189,7 @@ def register_op(op, handler):
 
 
 def register_helper(name, function):
-    """Back an `agent.<name>` helper from a workstream module."""
+    """Back an `agent.<name>` helper. Every helper takes the session first."""
     HELPERS[name] = function
 
 
@@ -651,10 +432,8 @@ def observe_op(request, session, emit):
 
 
 def describe_op(request, session, emit):
-    path = request["path"]
-    if path in ("channel", "schema"):
-        return helper("describe_channel")(path)
-    return agent.describe(path)
+    # `channel` and `schema` are paths like any other; RNA answers them first.
+    return agent.describe(request["path"])
 
 
 def merge(policy, changes):
@@ -670,7 +449,18 @@ def session_op(request, session, emit):
     action = request["action"]
     if action == "snapshot":
         label = request.get("label")
-        return {"snapshot": session.snapshot(label, "snapshot"), "label": label}
+        result = {"snapshot": session.snapshot(label, "snapshot"), "label": label}
+        # A label names one state; when a program records that state, it names
+        # the same version. `session.program` is the program workstream's hook,
+        # and a program that cannot take the name does not lose the snapshot.
+        program = getattr(session, "program", None)
+        if label is not None and program is not None:
+            try:
+                result["version"] = program.label(label)
+            except BaseException as error:
+                emit({"event": "log", "stream": "stderr",
+                      "text": f"program label: {type(error).__name__}: {error}\n"})
+        return result
     if action == "rollback":
         target = request.get("snapshot")
         if not target:
@@ -725,7 +515,7 @@ def fresh_namespace():
 def default_feedback():
     return {"perception": True, "objective": True,
             "image": {"mode": "delta", "threshold": 0.002, "views": ["front"],
-                      "pass": "color", "size": 256, "overlay": True}}
+                      "pass": "color", "size": 256, "overlay": True, "inline": False}}
 
 
 class LogStream(io.TextIOBase):
@@ -765,8 +555,10 @@ class Session:
         self.before = {}
         self.last_diff = None
         self.last_code = ""
+        self.previous_snapshot = None
         self.last_perception = None
         self.recovered_from = None
+        self.opened_file = config.get("file") or None
         self.snapshot_taken = False
         self.closing = False
         self.save_after = config.get("save")
@@ -785,7 +577,9 @@ class Session:
                 raise FileNotFoundError(path)
             bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
             metadata_path = os.path.splitext(path)[0] + ".json"
-            if os.path.basename(path).startswith("autosave-") and os.path.isfile(metadata_path):
+            # One-shot loading of a recovery file is ordinary file loading.
+            if ("restore_metadata" in native and os.path.basename(path).startswith("autosave-")
+                    and os.path.isfile(metadata_path)):
                 with open(metadata_path, encoding="utf-8") as stream:
                     metadata = json.load(stream)
                 native["restore_metadata"](metadata["filepath"], metadata["dirty"])
@@ -802,7 +596,13 @@ class Session:
                 module = __import__(name)
             except ModuleNotFoundError:
                 continue
-            module.register(self)
+            attach = getattr(module, "register", None)
+            if attach is None:
+                raise AttributeError(
+                    f"{name} is registered as a provider module but exposes no "
+                    f"register(session); it must call agent_runtime.register_provider, "
+                    f"register_op, register_helper or register_record_hook there")
+            attach(self)
 
     # -- snapshots ----------------------------------------------------------
 
@@ -913,6 +713,7 @@ class Session:
             changes = mutating(request)
             self.snapshot_taken = False
             self.last_diff = None
+            self.previous_snapshot = self.current
             self.request_feedback = self.feedback
             if "feedback" in request and request["op"] in ("exec", "program"):
                 self.request_feedback = merge(json.loads(json.dumps(self.feedback)),
@@ -940,19 +741,25 @@ class Session:
         except BaseException as error:
             stdout.flush()
             stderr.flush()
-            frames = traceback.extract_tb(error.__traceback__)
-            user_frames = [frame for frame in frames if frame.filename != __file__]
+            source = getattr(error, "_agent_source", None)
+            # Only the request's own source has line numbers an agent can act on;
+            # a line inside the runtime or a helper module is not the agent's.
+            frames = [frame for frame in traceback.extract_tb(error.__traceback__)
+                      if source and frame.filename == source[1]]
             event = {"event": "error", "ok": False,
                      "type": getattr(error, "agent_type", type(error).__name__),
                      "message": str(error),
                      "line": getattr(error, "lineno", None) or (
-                         user_frames[-1].lineno if user_frames else None)}
-            source = getattr(error, "_agent_source", None)
+                         frames[-1].lineno if frames else None)}
             if source:
                 from agent_rna import error_context
                 rna = error_context(error, *source)
                 if rna:
                     event["rna"] = rna
+            # Any module may name what failed by attaching fields to its exception.
+            event.update({name: value for name, value
+                          in (getattr(error, "agent_fields", None) or {}).items()
+                          if name not in ("type", "message", "line")})
             # A failed request leaves no partial edit: the pre-request state returns.
             if changes and self.current and "rollback" in self.native:
                 try:
