@@ -64,6 +64,12 @@ void context_ensure(bContext *C)
   }
   /* Never cache these pointers across a file load or memfile decode. */
   CTX_wm_window_set(C, win);
+  if (!screen->context) {
+    /* Background refresh only installs screen context callbacks, without drawing.
+     * Without it, selected_objects is empty even after object.select_all succeeds. */
+    ED_screen_refresh(C, wm, win);
+  }
+  ED_area_and_region_types_init(area);
   CTX_wm_area_set(C, area);
   CTX_wm_region_set(C, BKE_area_find_region_type(area, RGN_TYPE_WINDOW));
 }
