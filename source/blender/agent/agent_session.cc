@@ -12,15 +12,24 @@
 #include "BKE_blender_undo.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 #include "BKE_undo_system.hh"
 #include "BKE_wm_runtime.hh"
 #include "BLI_listbase.hh"
 #include "BLI_timer.hh"
+#include "BLO_readfile.hh"
 #include "BLO_undofile.hh"
+#include "BLO_writefile.hh"
 #include "BPY_extern.hh"
 #include "DNA_windowmanager_types.h"
 #include "ED_util.hh"
+
+#ifdef _WIN32
+#  include <process.h>
+#else
+#  include <unistd.h>
+#endif
 
 namespace blender::agent {
 
@@ -31,6 +40,50 @@ struct Session {
   std::deque<std::string> order;
   size_t bytes = 0;
   static constexpr size_t budget = 256 * 1024 * 1024;
+  std::string current;
+  std::filesystem::path autosave;
+  bool dirty = false;
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point last_write = Clock::now(), last_request = Clock::now();
+
+  void autosave_write()
+  {
+    const auto start = Clock::now();
+    auto *snapshot = snapshots.at(current);
+    /* Memfiles now retain shared arrays outside the chunk stream. Decode into an
+     * isolated Main before normal serialization; never borrow IDs from live Main. */
+    Main *empty = BKE_main_new();
+    BlendFileReadParams read_params{};
+    read_params.skip_flags = BLO_READ_SKIP_UNDO_OLD_MAIN;
+    read_params.undo_direction = STEP_UNDO;
+    BlendFileData *data = BLO_read_from_memfile(
+        empty, snapshot->filepath, &snapshot->memfile, &read_params, nullptr);
+    BKE_main_free(empty);
+    bool success = false;
+    if (data && !data->main->is_read_invalid) {
+      BKE_main_id_refcount_recompute(data->main, false);
+      if (data->curscene) {
+        BLI_remlink(&data->main->scenes, data->curscene);
+        BLI_addhead(&data->main->scenes, data->curscene);
+      }
+      BlendFileWriteParams write_params{};
+      success = BLO_write_file(data->main,
+                               autosave.string().c_str(),
+                               G.fileflags | G_FILE_RECOVER_WRITE | G_FILE_COMPRESS,
+                               &write_params,
+                               nullptr);
+    }
+    if (data) {
+      BLO_blendfiledata_free(data);
+    }
+    last_write = Clock::now();
+    dirty = !success;
+    fprintf(stderr,
+            "Agent autosave: %s %.3f ms\n",
+            success ? "written" : "failed",
+            std::chrono::duration<double, std::milli>(last_write - start).count());
+    fflush(stderr);
+  }
 
   void init_undo(bool reset)
   {
@@ -119,6 +172,8 @@ static PyObject *snapshot_create(PyObject *self, PyObject *)
   BKE_undosys_step_push_with_type(
       stack, state.context, "Agent snapshot", UndoEncodeHints::None, BKE_UNDOSYS_TYPE_MEMFILE);
   BKE_undosys_stack_limit_steps_and_memory(stack, 2, 32 * 1024 * 1024);
+  state.current = id;
+  state.dirty = true;
   return PyUnicode_FromString(id.c_str());
 }
 
@@ -141,6 +196,8 @@ static PyObject *snapshot_restore(PyObject *self, PyObject *arg)
   context_ensure(state.context);
   BPY_context_set(state.context);
   state.init_undo(true);
+  state.current = id;
+  state.dirty = true;
   Py_RETURN_NONE;
 }
 
@@ -178,6 +235,7 @@ int session_serve(
   }
   const auto directory = std::filesystem::current_path() / ".blender-cli";
   const auto path = directory / "session.sock";
+  state.autosave = directory / ("autosave-" + std::to_string(getpid()) + ".blend");
   int status = 0;
   try {
     Transport transport(path.string());
@@ -206,9 +264,21 @@ int session_serve(
         Py_XDECREF(closed);
         BLI_timer_execute();
         transport.answer(request, result);
+        state.last_request = Session::Clock::now();
+        if (!closing && state.dirty &&
+            state.last_request - state.last_write >= std::chrono::seconds(2))
+        {
+          state.autosave_write();
+        }
       }
       else {
         BLI_timer_execute();
+        const auto now = Session::Clock::now();
+        if (state.dirty && now - state.last_request >= std::chrono::seconds(1) &&
+            now - state.last_write >= std::chrono::seconds(1))
+        {
+          state.autosave_write();
+        }
       }
     }
     state.transport = nullptr;
@@ -225,6 +295,10 @@ int session_serve(
   Py_DECREF(runtime);
   std::filesystem::remove(path);
   std::filesystem::remove(directory / "session.pid");
+  std::filesystem::remove(directory / "session.lock");
+  if (status == 0) {
+    std::filesystem::remove(state.autosave);
+  }
   return status;
 }
 }  // namespace blender::agent

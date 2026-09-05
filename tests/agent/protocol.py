@@ -124,7 +124,11 @@ collection.objects.link(obj)
         assert not bad_path["ok"], bad_path
         missing_file = call("inspect", "--file", root / "absent.blend", ok=False)
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
-        assert call("session", ok=False)["error"]["type"] == "NotImplemented"
+        usage = call("session", ok=False)["error"]
+        assert usage["type"] == "ValueError" and usage["message"] == (
+            "session requires an action: open|save|close|snapshot|rollback|history"), usage
+        selection = call("inspect", "--select", "location", ok=False)["error"]
+        assert selection["type"] == "ValueError" and "relative to bpy.data" in selection["message"], selection
         assert call("compare", ok=False)["error"]["type"] == "ValueError"
         described = call("describe", "bpy.types.Object.location")
         assert described["type"] == "float" and described["array_length"] == 3, described

@@ -65,12 +65,23 @@ def main():
             cube = next(obj for obj in call("inspect")["objects"] if obj["name"] == "Cube")
             return cube["mesh"]["vertices"]
 
+        def wait_autosave(path, previous=None):
+            deadline = time.monotonic() + 2.5
+            while time.monotonic() < deadline:
+                if path.is_file() and path.stat().st_size > 0 and path.stat().st_mtime_ns != previous:
+                    return path.stat().st_mtime_ns
+                time.sleep(0.02)
+            raise AssertionError(f"Idle autosave did not update: {path}")
+
         opened = call("session", "open")
         endpoint = opened["socket"]
         assert endpoint == str(root / ".blender-cli" / "session.sock"), opened
         local_endpoint = str(Path(endpoint).relative_to(root))
         try:
             call("session", "open", ok=False)
+            usage = call("session", ok=False)["error"]
+            assert usage == {"type": "ValueError", "message":
+                             "session requires an action: open|save|close|snapshot|rollback|history"}, usage
             for index in range(10):
                 code = "x = 0; x" if index == 0 else "x += 1; x"
                 result = execute(code)
@@ -163,6 +174,7 @@ len(mesh.vertices)
             call("session", "close")
         assert not Path(endpoint).exists()
         assert not (root / ".blender-cli" / "session.pid").exists()
+        assert not (root / ".blender-cli" / f'autosave-{opened["session"]}.blend').exists()
         assert call("inspect", "--file", blend)["ok"]
         fallback = execute("'x' in globals()")
         assert fallback["value"] == "False" and "snapshot" not in fallback, fallback
@@ -182,6 +194,19 @@ len(mesh.vertices)
             assert call("session", "close")["forced"] is True
         assert not Path(endpoint).exists()
         crashed = call("session", "open")
+        autosave = root / ".blender-cli" / f'autosave-{crashed["session"]}.blend'
+        first_write = wait_autosave(autosave)
+        execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(); "
+                "bpy.context.object.name = 'RecoveredCube'; held = bpy.context.object; "
+                "saved_state = (bpy.data.filepath, bpy.data.is_dirty)")
+        # A failed edit must not contaminate the pending successful snapshot.
+        execute("held.location.x = 9; raise RuntimeError('not a snapshot')", ok=False)
+        wait_autosave(autosave, first_write)
+        assert execute("(bpy.data.filepath, bpy.data.is_dirty) == saved_state and held.location.x == 9")["value"] == "True"
+        # Rollback itself dirties the autosave, even without another successful exec.
+        call("session", "rollback", "~1")
+        stamp = autosave.stat().st_mtime_ns
+        wait_autosave(autosave, stamp)
         if sys.platform == "win32":
             import ctypes
 
@@ -198,11 +223,34 @@ len(mesh.vertices)
             finally:
                 kernel.CloseHandle(process)
         else:
-            execute("import os; os._exit(0)", ok=False)
+            killed = execute("import os; os._exit(3)", ok=False)
+            assert killed["error"]["type"] == "SessionError", killed
         # Abrupt exit leaves a real stale endpoint. Open must clean it and restart.
-        call("session", "open")
+        for args in (("exec", "-c", "42"), ("session", "history")):
+            dead = call(*args, ok=False)
+            assert dead["error"]["type"] == "SessionError" and "exited unexpectedly" in dead["error"]["message"], dead
+            assert dead["autosave"] == str(autosave), dead
+        recovered = call("session", "open", "--file", autosave)
+        assert recovered["previous_autosave"] == str(autosave), recovered
+        cube, = call("inspect")["objects"]
+        assert cube["name"] == "RecoveredCube" and cube["location"][0] == 0, cube
+        new_autosave = root / ".blender-cli" / f'autosave-{recovered["session"]}.blend'
+        wait_autosave(new_autosave)
         execute("import os; os.chdir('..')")
         call("session", "close")
+        assert not new_autosave.exists() and autosave.exists()
+        cube, = call("inspect", "--file", autosave)["objects"]
+        assert cube["name"] == "RecoveredCube", cube
+        stale = call("session", "open")
+        stale_autosave = root / ".blender-cli" / f'autosave-{stale["session"]}.blend'
+        wait_autosave(stale_autosave)
+        execute("import os; os._exit(3)", ok=False)
+        time.sleep(0.1)
+        closed = call("session", "close")
+        assert closed["stale"] and closed["autosave"] == str(stale_autosave), closed
+        assert stale_autosave.exists()
+        assert not (root / ".blender-cli" / "session.lock").exists()
+        assert not (root / ".blender-cli" / "session.pid").exists()
         assert not Path(endpoint).exists(), "Daemon cwd changes must not redirect endpoint cleanup"
     print("agent session: all assertions passed")
 

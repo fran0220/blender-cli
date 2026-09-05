@@ -134,8 +134,28 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     const auto pidfile = directory / "session.pid";
     int pid = 0;
     std::ifstream(pidfile) >> pid;
+    const auto autosave = directory / ("autosave-" + std::to_string(pid) + ".blend");
+    auto with_autosave = [&](nlohmann::json result, const char *key = "autosave") {
+      if (std::filesystem::is_regular_file(autosave)) {
+        result[key] = autosave.string();
+      }
+      return result;
+    };
     const bool opening = args.size() >= 2 && args[0] == "session" && args[1] == "open";
     const bool closing = args.size() >= 2 && args[0] == "session" && args[1] == "close";
+    auto dead_session = [&]() {
+      return print(with_autosave(
+          {{"ok", false},
+           {"error",
+            {{"type", "SessionError"},
+             {"message",
+              "Session " + std::to_string(pid) +
+                  " exited unexpectedly; see .blender-cli/session.log. Recover with "
+                  "`session open --file <autosave>` or discard with `session close`"}}}}));
+    };
+    if (!opening && !closing && std::filesystem::exists(pidfile) && !process_alive(pid)) {
+      return dead_session();
+    }
     if (opening) {
       std::filesystem::create_directories(directory);
 #ifndef _WIN32
@@ -165,7 +185,8 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
         Socket fd = socket_connect(path.string());
         if (fd != invalid_socket) {
           socket_close(fd);
-          return print({{"session", std::to_string(pid)}, {"socket", path.string()}});
+          return print(with_autosave({{"session", std::to_string(pid)}, {"socket", path.string()}},
+                                     "previous_autosave"));
         }
         if (!process_alive(pid)) {
           break;
@@ -181,15 +202,23 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     Socket fd = socket_connect(path.string());
     if (fd == invalid_socket) {
       if (closing) {
+        const bool stale = std::filesystem::exists(pidfile) && !process_alive(pid);
         if (std::filesystem::exists(directory)) {
           SessionLock lock(directory / "session.lock");
           terminate_process(pid);
           std::filesystem::remove(path);
           std::filesystem::remove(pidfile);
         }
+        std::filesystem::remove(directory / "session.lock");
+        if (stale) {
+          return print(with_autosave({{"ok", true}, {"stale", true}}));
+        }
         return print({{"ok", true}});
       }
-      if (process_alive(pid)) {
+      if (std::filesystem::exists(pidfile)) {
+        if (!process_alive(pid)) {
+          return dead_session();
+        }
         throw std::runtime_error("Session process is alive but endpoint is unavailable");
       }
       return -1;

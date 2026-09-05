@@ -27,8 +27,7 @@ class ArgumentParser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
-class NotImplemented(Exception):
-    pass
+SESSION_USAGE = "session requires an action: open|save|close|snapshot|rollback|history"
 
 
 def parse(arguments):
@@ -38,7 +37,7 @@ def parse(arguments):
     parser.add_argument("--save", nargs="?", const="")
     parser.add_argument("--json", action="store_true")
     if arguments[0] == "session":
-        raise NotImplemented("session requires an action, e.g. session open")
+        raise ValueError(SESSION_USAGE)
     if arguments[0] not in {"exec", "inspect", "observe", "compare", "describe"}:
         raise ValueError(f"Unknown verb: {arguments[0]}")
     if arguments[0] == "exec":
@@ -151,8 +150,16 @@ def object_state(obj, full):
 
 def inspect(args):
     if args.select:
-        return {"ok": True, "selected": {
-            path: serialize(bpy.data.path_resolve(path)) for path in args.select}}
+        selected = {}
+        for path in args.select:
+            try:
+                value = bpy.data.path_resolve(path)
+            except ValueError:
+                raise ValueError(
+                    f'--select {json.dumps(path)} could not be resolved relative to bpy.data; '
+                    'use a path such as objects["Cube"].location') from None
+            selected[path] = serialize(value)
+        return {"ok": True, "selected": selected}
     objects = [bpy.data.objects[args.object]] if args.object else bpy.data.objects
     scene = bpy.context.scene
     return {
@@ -377,12 +384,14 @@ class Session:
                 text, status = run([verb, *arguments, "--json"], self.id_state, self.fields, self)
                 return text
             parser = ArgumentParser(add_help=False, allow_abbrev=False)
-            parser.add_argument("action", choices=["snapshot", "rollback", "history", "save", "close"])
+            parser.add_argument("action", nargs="?", choices=["snapshot", "rollback", "history", "save", "close"])
             parser.add_argument("target", nargs="?")
             parser.add_argument("--label")
             parser.add_argument("--file")
             parser.add_argument("--json", action="store_true")
             args = parser.parse_args(arguments)
+            if args.action is None:
+                raise ValueError(SESSION_USAGE)
             if args.action == "snapshot":
                 result = {"snapshot": self.snapshot(args.label, "snapshot"), "label": args.label}
             elif args.action == "rollback":
