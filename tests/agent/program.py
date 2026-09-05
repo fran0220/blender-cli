@@ -54,9 +54,17 @@ def main():
             counters.unlink(missing_ok=True)
             return [int(number) for number in ran]
 
+        # One-shot mode has no session and so no program: a bare exec must not leave a
+        # model.py behind for the next session to replay.
+        call("exec", "-c", "bpy.ops.mesh.primitive_cube_add()")
+        assert not (root / ".blender-cli" / "program").exists(), "one-shot wrote a program"
+        assert "not implemented" in call("program", "get", ok=False)["error"]["message"]
+
         opened = call("session", "open")
         try:
             assert program("get")["text"] == "# blender-cli program\n# base: factory\nP = {}\n"
+            # An empty program has no version to label, and that is not an error.
+            assert call("session", "snapshot", "--label", "start")["snapshot"]
 
             # Three actions become three steps, recorded by the exec path itself.
             execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
@@ -282,6 +290,28 @@ def main():
         finally:
             call("session", "close")
         assert reopened["session"] != opened["session"]
+
+        # A session opened on a file gets that file. The program is the truth only
+        # when recovering, never over a scene the agent asked for by name.
+        scene = root / "explicit.blend"
+        call("session", "open")
+        try:
+            execute("bpy.ops.wm.read_factory_settings(use_empty=True); "
+                    "bpy.ops.mesh.primitive_torus_add()", "--no-record")
+            call("session", "save", "--file", scene)
+        finally:
+            call("session", "close")
+        # That plain open recovered from the program, as it should; drain its counters
+        # so the next open's silence is the thing being measured.
+        assert steps_ran() == [1, 2, 3]
+        call("session", "open", "--file", scene)
+        try:
+            assert call("session", "status")["recovered_from"] is None, "replayed over --file"
+            loaded, = call("inspect")["objects"]
+            assert loaded["name"] == "Torus", loaded
+            assert steps_ran() == [], "opening a file must not run the program"
+        finally:
+            call("session", "close")
     print("agent program: all assertions passed")
 
 

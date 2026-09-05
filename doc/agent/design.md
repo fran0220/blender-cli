@@ -413,7 +413,17 @@ leaves the session open rather than making its directory unopenable.
 
 `agent_program.register(session)` is the `PROVIDER_MODULES` entry point. It
 installs the `program` request handler, backs `agent.program()`, installs the
-record hook, and performs crash recovery. The record hook is the runtime's
+record hook, and performs crash recovery.
+
+A program belongs to a session, so `register` does nothing in one-shot mode,
+where there is no snapshot store to cache prefixes in: a one-shot `exec`
+leaves no `model.py` behind for the next session to replay, and the
+`program` request there answers that it is not implemented. Recovery is also
+skipped when the session was opened on a file. `session open --file F` asked
+for `F`; the program is the truth only when recovering, never over a scene
+the agent named.
+
+The record hook is the runtime's
 `register_record_hook(f)`: `f(session, code, step)` runs after an `exec`
 whose diff was non-empty and whose `record` was not false, so a failed exec,
 an exec that changed nothing and `exec --no-record` are never steps. The hook

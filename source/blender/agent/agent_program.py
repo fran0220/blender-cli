@@ -648,8 +648,9 @@ class Program:
         raise KeyError(f"Unknown program version: {reference!r}")
 
     def label(self, name):
+        """Name the current version, or answer None when the program has none yet."""
         if not self.index["versions"]:
-            raise KeyError("The program has no version to label")
+            return None
         self.index["versions"][-1]["label"] = name
         self.write()
         return self.current
@@ -725,8 +726,11 @@ def record_hook(session, code, step):
     program.record_exec(code, event.get("parent"), session.current)
 
 
-def helper(session):
-    """Backs `agent.program()`."""
+def helper(session=None):
+    """Backs `agent.program()`; the registry passes the session first."""
+    if session is None:
+        import agent
+        session = agent._active()
     program = attach(session)
     return {"text": program.text, "params": program.params, "steps": program.step_records(),
             "version": program.version, "reproducible": program.reproducible}
@@ -743,12 +747,16 @@ def previous_autosave(root):
 
 
 def recover(program, session):
-    """Rebuild the scene from the program when it is newer than the recovered autosave."""
+    """Rebuild the scene from the program when it is newer than the recovered autosave.
+
+    The program is the truth only when recovering. A session opened on a file asked
+    for that file, and replaying over it would destroy what the agent loaded.
+    """
     if not program.steps:
         # An empty program starts in sync with the session, so the base prefix is cached.
         program.cache[program.key(0)] = session.current
         return
-    if session.recovered_from == "autosave":
+    if session.opened_file or session.recovered_from == "autosave":
         return
     autosave = previous_autosave(os.path.dirname(program.directory))
     if autosave and os.path.getmtime(autosave) >= program.modified:
@@ -764,10 +772,16 @@ def recover(program, session):
 
 
 def register(session):
-    """`PROVIDER_MODULES` entry point: install the `program` op, the recorder and the helper."""
+    """`PROVIDER_MODULES` entry point: install the `program` op, the recorder and the helper.
+
+    A program belongs to a session. One-shot mode has no snapshot store, so it gets no
+    program: a bare `blender-cli exec` must not leave a `model.py` in the working
+    directory for the next session to replay.
+    """
+    if "snapshot" not in session.native:
+        return
     import agent_runtime
     agent_runtime.register_op("program", program_op)
-    agent_runtime.register_helper("program", lambda: helper(session))
+    agent_runtime.register_helper("program", helper)
     agent_runtime.register_record_hook(record_hook)
-    if "snapshot" in session.native:
-        recover(attach(session), session)
+    recover(attach(session), session)
