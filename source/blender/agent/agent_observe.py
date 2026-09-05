@@ -125,7 +125,11 @@ def render_scene(source, size, frame):
         obj = instance.object
         if not instance.show_self or obj.hide_render or obj.type in {"CAMERA", "LIGHT", "EMPTY", "ARMATURE", "LATTICE"}:
             continue
-        if obj.type in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
+        if instance.is_instance and obj.type == "MESH":
+            # Temporary GN objects retain the instancer's data_orig. Re-evaluating
+            # for all layers would rebuild that object, not this evaluated instance.
+            data = obj.data.copy()
+        elif obj.type in {"MESH", "CURVE", "SURFACE", "FONT", "META"}:
             data = bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True, depsgraph=graph)
         else:
             data = obj.data.copy()

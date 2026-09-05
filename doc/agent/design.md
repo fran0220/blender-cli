@@ -420,6 +420,11 @@ Observation builds a disposable scene from evaluated geometry and instance
 world transforms of the current view layer, excluding hidden-render objects,
 cameras and lights. Mesh-convertible objects are frozen to evaluated meshes;
 other geometry data is copied. Existing materials are retained for color.
+Mesh instances copy evaluated `object.data`, including its material slots:
+`new_from_object(..., preserve_all_data_layers=True)` can re-evaluate a temporary
+Geometry Nodes object's instancer instead of its instance mesh. Framing uses
+the instance transform and instance mesh bounds; real objects still use mesh
+conversion so modifiers and curve tessellation remain applied.
 The original scene's camera, world, render/color settings and object data are
 not edited. All temporary IDs are removed even on failure. Render, frame and
 depsgraph Python callbacks are suspended and restored, so observation does

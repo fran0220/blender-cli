@@ -34,6 +34,54 @@ mat.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = 
 bpy.context.object.data.materials.append(mat)
 """
 
+SCATTER = """
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_plane_add()
+plane = bpy.context.object
+tree = bpy.data.node_groups.new('Scatter', 'GeometryNodeTree')
+tree.interface.new_socket(name='Geometry', in_out='INPUT', socket_type='NodeSocketGeometry')
+tree.interface.new_socket(name='Geometry', in_out='OUTPUT', socket_type='NodeSocketGeometry')
+input_node = tree.nodes.new('NodeGroupInput')
+output_node = tree.nodes.new('NodeGroupOutput')
+points = tree.nodes.new('GeometryNodeDistributePointsOnFaces')
+points.inputs['Density'].default_value = 3
+ico = tree.nodes.new('GeometryNodeMeshIcoSphere')
+ico.inputs['Radius'].default_value = 0.15
+ico.inputs['Subdivisions'].default_value = 1
+material = bpy.data.materials.new('Red instances')
+material.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value = (0.8, 0.015, 0.005, 1)
+set_material = tree.nodes.new('GeometryNodeSetMaterial')
+set_material.inputs['Material'].default_value = material
+instances = tree.nodes.new('GeometryNodeInstanceOnPoints')
+tree.links.new(input_node.outputs['Geometry'], points.inputs['Mesh'])
+tree.links.new(ico.outputs['Mesh'], set_material.inputs['Geometry'])
+tree.links.new(set_material.outputs['Geometry'], instances.inputs['Instance'])
+tree.links.new(points.outputs['Points'], instances.inputs['Points'])
+tree.links.new(instances.outputs['Instances'], output_node.inputs['Geometry'])
+plane.modifiers.new('Scatter', 'NODES').node_group = tree
+bpy.context.view_layer.update()
+instance_points = []
+for instance in bpy.context.evaluated_depsgraph_get().object_instances:
+    if instance.is_instance:
+        obj = instance.object
+        assert len(obj.data.vertices) == 12
+        for axis in range(3):
+            vertices = [v.co[axis] for v in obj.data.vertices]
+            corners = [c[axis] for c in obj.bound_box]
+            # Upstream ico construction has small (~2e-6) conservative bounds.
+            assert abs(min(vertices) - min(corners)) < 1e-5
+            assert abs(max(vertices) - max(corners)) < 1e-5
+        instance_points.extend(instance.matrix_world @ v.co for v in obj.data.vertices)
+assert len(instance_points) > 12
+from agent_observe import isolated_data, render_scene
+with isolated_data():
+    scene, framed_points, center, radius = render_scene(bpy.context.scene, 512, 'Plane')
+    for axis in range(3):
+        assert abs(min(p[axis] for p in framed_points) - min(p[axis] for p in instance_points)) < 1e-5
+        assert abs(max(p[axis] for p in framed_points) - max(p[axis] for p in instance_points)) < 1e-5
+len(instance_points) // 12
+"""
+
 
 def read_png(data):
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
@@ -180,6 +228,23 @@ def main():
             empty = call("observe", "--views", "front", "--passes", "silhouette", "--inline")
             _, _, _, rows = image(empty)
             assert set(b"".join(row[6:1542] for row in rows[2:514])) == {0}
+            scatter = execute(SCATTER)
+            print("GN scatter instances:", scatter["value"], flush=True)
+            before = call("session", "snapshot")["snapshot"]
+            silhouette = call("observe", "--views", "front", "--passes", "silhouette")
+            _, _, _, rows = image(silhouette)
+            white = sum(row[6:1542].count(255) for row in rows[2:514]) // 3
+            assert white > 512 * 512 * 0.01, white
+            framed = call("observe", "--views", "front", "--passes", "silhouette", "--frame", "Plane")
+            assert image(framed)[0] == image(silhouette)[0], "Named framing lost GN instances"
+            color = call("observe", "--views", "front", "--frame", "Plane")
+            _, _, _, rows = image(color)
+            pixels = b"".join(row[6:1542] for row in rows[2:514])
+            red = sum(r > 80 and r > 2 * g and r > 2 * b
+                      for r, g, b in zip(pixels[0::3], pixels[1::3], pixels[2::3]))
+            assert red > white * 0.5, (red, white)
+            assert call("session", "snapshot")["snapshot"] == before
+            print("GN front pixels (white/red):", white, red, flush=True)
         finally:
             call("session", "close")
         assert "observe" in execute("42", "--observe", "front", "--file", blend)
