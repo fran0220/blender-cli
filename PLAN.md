@@ -12,7 +12,7 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 | Item | Status |
 |---|---|
 | `AGENTS.md`, `PLAN.md`, `doc/agent/{design,build-profile,upstream}.md` | done |
-| `build_files/cmake/config/blender_agent.cmake` build profile | unverified — written from option names in `CMakeLists.txt`, not yet configured on any platform |
+| `build_files/cmake/config/blender_agent.cmake` build profile | done — configures and builds on Linux x86_64 (Debian 12, xPack GCC 14.3.0); `cmake --build build/orb --target install` exits 0 |
 | GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
 | Orb setup (`.agents/setup`): Debian packages + xPack GCC 14.3.0 and runtime, upstream LFS fallback, `lib/linux_x64` at the checkout's pin | done — Debian 12 x86_64: setup twice (20s / 2s), clean login selects GCC 14.3.0; upstream requires GCC/libstdc++ 14, replacing the configure-only Clang recipe |
@@ -20,18 +20,20 @@ Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name:
 
 ## Phase 1 — a process that answers
 
-Done when: `blender-cli exec -c 'import bpy; bpy.ops.mesh.primitive_cube_add()'`
-followed by `blender-cli inspect` (one-shot, state through a `.blend`
-file) prints the cube as JSON, on Linux.
+Done when: starting with an empty `s.blend`,
+`blender-cli exec -c 'import bpy; bpy.ops.mesh.primitive_cube_add()' --file s.blend --save --json`
+followed by `blender-cli inspect --file s.blend --json` prints the cube as JSON,
+on Linux. Proven on Debian 12 x86_64 with GCC 14.3.0; product-platform evidence
+remains Phase 5.
 
 | Item | Status |
 |---|---|
-| `WITH_AGENT` CMake option; `source/blender/agent/` subdirectory wired from `source/blender/CMakeLists.txt` | todo |
-| `agent` `CommandHandler` registered from `creator.cc` (`BKE_blender_cli_command_register`), dispatching the six verbs; `blender-cli` is a launcher that runs `blender --command agent …` | todo |
-| `exec` one-shot: run code on the main thread, capture stdout/stderr, return the ID diff (added / changed / removed datablocks) | todo |
-| `inspect` from RNA: scene, objects, materials, modifiers, armatures; `--object`, `--full`; never truncated | todo |
-| `--file` load / `--save` write around a one-shot call | todo |
-| First protocol test in `tests/agent/` | todo |
+| `WITH_AGENT` CMake option; `source/blender/agent/` subdirectory wired from `source/blender/CMakeLists.txt` | done — agent-profile configure, compile, link and install pass |
+| `agent` `CommandHandler` registered from `creator.cc` (`BKE_blender_cli_command_register`), dispatching the six verbs; `blender-cli` is a launcher that runs `blender --command agent …` | done — installed `--help`, `--version` and six-verb protocol checks pass; future verbs return `NotImplemented` |
+| `exec` one-shot: run code on the main thread, capture stdout/stderr, return the ID diff (added / changed / removed datablocks) | done — real cube add/remove, evaluated transform/geometry tags, no-op, captures, final expression, exceptions and cooperative timeout pass |
+| `inspect` from RNA: scene, objects, materials, modifiers, armatures; `--object`, `--full`; never truncated | done — saved cube reports 8 vertices / 12 edges / 6 faces; full nodes/modifiers, bones, cameras, lights, collections and scalar/array RNA selection pass |
+| `--file` load / `--save` write around a one-shot call | done — real installed-process round-trip, paths with spaces, factory startup, missing-file error and no save after failure pass |
+| First protocol test in `tests/agent/` | done — `ctest --test-dir build/orb -R agent --output-on-failure`: agent_protocol passes (11.67s) |
 
 ## Phase 2 — session
 

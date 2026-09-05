@@ -28,7 +28,7 @@ cmake -S . -B build/orb -G Ninja \
   -C build_files/cmake/config/blender_agent.cmake \
   -DCMAKE_BUILD_TYPE=Release -DWITH_GTESTS=ON \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-amp orb service start blender-build --command 'cd /home/user/workspace/repo && cmake --build build/orb --target install --parallel 12 2>&1 | tee build/orb/build.log; echo BUILD_EXIT=${PIPESTATUS[0]}; sleep infinity'
+amp orb service start blender-build --command 'cd /home/user/workspace/repo && set -o pipefail && { if cmake --build build/orb --target install --parallel 12 2>&1 | tee build/orb/build.log; then echo BUILD_SUCCEEDED; else echo BUILD_FAILED; fi; sleep infinity; }'
 build/orb/bin/blender --background --factory-startup --python-exit-code 1 \
   --python-expr 'import bpy; print(bpy.app.version_string)'
 ctest --test-dir build/orb -N
@@ -36,6 +36,8 @@ ctest --test-dir build/orb -N
 
 The build service stays idle after completion so supervision does not restart a
 failed build repeatedly. Read `build/orb/build.log` and service logs for status.
+`pipefail` preserves compiler failures through `tee`; the success/failure marker
+does not depend on shell-variable expansion by the service manager.
 Compilation can be expensive; 12 jobs fits a 16-core / 31 GB orb.
 Run selected tests with `ctest --test-dir build/orb --output-on-failure -R PATTERN`.
 The tracked `tests/files` LFS fixtures are included. GPU execution requires GPU
