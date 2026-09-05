@@ -95,6 +95,8 @@ def isolated_data():
 def render_scene(source, size, frame):
     graph = bpy.context.evaluated_depsgraph_get()
     scene = bpy.data.scenes.new("Agent observation")
+    scene.frame_current = source.frame_current
+    scene.frame_subframe = source.frame_subframe
     scene.render.engine = "BLENDER_EEVEE"
     scene.render.resolution_x = scene.render.resolution_y = size
     scene.render.resolution_percentage = 100
@@ -160,6 +162,8 @@ def aim(scene, source, view, points, center, radius):
         camera.data.dof.use_dof = False
         camera.matrix_world = original.matrix_world.copy()
     else:
+        # A preceding `camera` tile must not leak sensor fit, shift or panorama settings.
+        camera.data = bpy.data.cameras.new("Agent preset")
         direction = Vector({"front": (0, -1, 0), "back": (0, 1, 0), "left": (-1, 0, 0),
                             "right": (1, 0, 0), "side": (1, 0, 0), "top": (0, 0, 1),
                             "bottom": (0, 0, -1), "persp": (1, -1, 0.8)}[view]).normalized()
@@ -177,9 +181,10 @@ def aim(scene, source, view, points, center, radius):
         camera.data.ortho_scale = max(camera.data.ortho_scale, 0.02)
         camera.data.clip_start = max(radius * 0.001, 0.0001)
         camera.data.clip_end = distance + radius * 4
-    # EEVEE Z is axial camera depth, not Euclidean ray distance.
+    # EEVEE Z is axial depth except for panoramic cameras, which use radial depth.
     transform = camera.matrix_world.inverted()
-    depths = [-(transform @ point).z for point in points]
+    depths = [(transform @ point).length if camera.data.type == "PANO" else -(transform @ point).z
+              for point in points]
     return min(depths), max(max(depths), min(depths) + 0.001)
 
 

@@ -81,6 +81,9 @@ def main():
         cube = call("inspect", "--object", "Cube", "--file", blend)["objects"][0]
         assert cube["mesh"]["vertices"] > 26, cube
         print("one-shot edited mesh:", cube["mesh"], flush=True)
+        execute("bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT'); "
+                "bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={'value': (0, 0, 0.2)}); "
+                "bpy.ops.transform.translate(value=(0.1, 0, 0)); bpy.ops.object.mode_set(mode='OBJECT')")
         first = call("observe", "--views", "front,side,top,persp", "--file", blend, "--out", root / "a.png")
         second = call("observe", "--views", "front,side,top,persp", "--file", blend, "--out", root / "b.png")
         a, w, h, _ = image(first)
@@ -121,12 +124,26 @@ def main():
             over = call("observe", "--views", "front", "--ref", ref, "--overlay")
             assert image(over)[1:3] == (516, 516)
             assert image(over)[0] != image(call("observe", "--views", "front"))[0]
+            wide_ref = call("observe", "--views", "front", "--ref", sheet["image"])
+            assert image(wide_ref)[1:3] == (3080, 516)
             inline = call("observe", "--views", "front", "--passes", "silhouette", "--inline")
             assert "image" not in inline and image(inline)[1:3] == (516, 516)
             assert image(execute("1 + 1", "--observe", "front")["observe"])[1:3] == (516, 516)
             helper = execute("agent.observe(); agent.diff()")
             assert ast.literal_eval(helper["value"]) == {"added": [], "changed": [], "removed": []}, helper
             assert helper["diff"] == {"added": [], "changed": [], "removed": []}, helper
+            pending = execute("bpy.data.objects['Cube'].location.x += 0.1; agent.observe(); agent.diff()")
+            assert any(item["name"] == "Cube" and "transform" in item["fields"]
+                       for item in ast.literal_eval(pending["value"])["changed"]), pending
+            # Every camera preset and resolution rung; camera settings cannot leak to later presets.
+            execute("bpy.context.scene.camera.data.shift_x = 0.2")
+            ordered = call("observe", "--views", "camera,front,back,left,right,bottom", "--passes", "silhouette")
+            _, w, h, rows = image(ordered)
+            assert (w, h) == (516, 3096)
+            standalone = image(call("observe", "--views", "front", "--passes", "silhouette"))
+            assert rows[516:1032] == standalone[3]
+            assert image(call("observe", "--views", "persp", "--frame", "Cube", "--size", "768"))[1:3] == (772, 772)
+            assert image(call("observe", "--views", "front", "--size", "1024", "--inline"))[1:3] == (1028, 1028)
             # Failure cleanup also preserves Main and Python callbacks.
             before = call("session", "snapshot")["snapshot"]
             call("observe", "--views", "front", "--ref", root / "missing.png", ok=False)
@@ -154,7 +171,9 @@ def main():
             assert execute("bpy.context.area.type")["value"] == "'VIEW_3D'"
             call("session", "rollback", before)
             assert execute("bpy.context.area.type")["value"] == "'VIEW_3D'"
-            execute("bpy.ops.object.select_all(action='SELECT'); bpy.ops.object.delete(use_global=False)")
+            deleted = execute("bpy.ops.object.select_all(action='SELECT'); bpy.ops.object.delete(use_global=False); "
+                              "len(bpy.context.scene.objects)")
+            assert deleted["value"] == "0", deleted
             empty = call("observe", "--views", "front", "--passes", "silhouette", "--inline")
             _, _, _, rows = image(empty)
             assert set(b"".join(row[6:1542] for row in rows[2:514])) == {0}

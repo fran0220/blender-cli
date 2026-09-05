@@ -92,7 +92,7 @@ PyObject *render(bContext *C, PyObject *scene_name)
   Render *re = RE_NewSceneRender(scene);
   G.is_break = false;
   Py_BEGIN_ALLOW_THREADS RE_RenderFrame(
-      re, bmain, scene, nullptr, nullptr, scene->r.cfra, 0.0f, false);
+      re, bmain, scene, nullptr, nullptr, scene->r.cfra, scene->r.subframe, false);
   Py_END_ALLOW_THREADS RenderResult *rr = RE_AcquireResultRead(re);
   PyObject *result = nullptr;
   if (rr && !rr->layers.is_empty() && !G.is_break && !rr->error) {

@@ -383,8 +383,10 @@ Lighting is a built-in three-SUN key/fill/rim rig: directions (−3, −4, 6),
 (4, −1, 2), (1, 4, 5), energies 3/1/2, 10° angular size, white light. This is
 scale-independent and uses no preference studio lights. The neutral world
 has linear RGB 0.05, strength 1; transparent film is composited over linear
-RGB 0.035. EEVEE uses 32 render samples, a fresh render at fixed frame 1
-(fixed sampling sequence), no compositor, sequencer, stamps or dithering.
+RGB 0.035. EEVEE uses 32 render samples with a fresh sampling sequence starting
+at sample zero (there is no user EEVEE seed), no compositor, sequencer, stamps
+or dithering. The temporary scene uses the source frame/subframe so animated
+materials are evaluated at the observed time, without advancing the source.
 Standard/sRGB, exposure 0, gamma 1 and no look are fixed. Color is converted
 from linear Combined with the standard sRGB transfer function and clamped to
 RGB8; data passes bypass that transfer. Tile size is 512 by default, or
@@ -398,7 +400,7 @@ Exact pass definitions (all RGB8):
 | `wire` | Color darkened by up to 90% at evaluated triangle edges. A second EEVEE material-override render uses the upstream Wireframe shader, pixel size 1; its antialiased coverage supplies the overlay mask. This is a diagnostic tessellation wire, not original polygon-edge topology. |
 | `silhouette` | Binary white (255) where native Depth is inside the camera far clip and Combined alpha ≥ 0.5; black (0) otherwise. No intermediate gray/antialiasing survives. Transparent surfaces follow this coverage rule, not a semantic object-ID mask. |
 | `normal` | Native EEVEE world-space shading normal mapped componentwise by 0.5n + 0.5; black outside the silhouette. Normal/depth use EEVEE's nearest-to-pixel-center data sample, not color's antialiasing average. |
-| `depth` | Axial camera depth d mapped to clamp(1 − (d − near)/(far − near), 0, 1), repeated in RGB; near/far are the min/max camera-space depths of the framing bounds (range at least 0.001). Near is white, far/background black; the silhouette masks background. |
+| `depth` | Camera depth d mapped to clamp(1 − (d − near)/(far − near), 0, 1), repeated in RGB; near/far are the min/max depths of the framing-bound corners (range at least 0.001). Depth is axial, or radial for a panoramic `camera`, matching EEVEE. Near is white, far/background black; the silhouette masks background. |
 
 Sheet rows follow requested **view order**, columns **pass order**. Each tile
 has a 2-pixel RGB (32,32,32) border on every side: dimensions are
@@ -478,6 +480,10 @@ window with `wm_window_new`, a workspace/layout with `BKE_workspace_add` /
 `ED_workspace_layout_add`, and space/regions through the upstream space-type
 constructor. It never calls `WM_window_open` (which tries to create a native
 GHOST window) or initializes screen drawing.
+`ED_screen_refresh`'s background-only branch installs the screen context
+callback when missing; area/region type callbacks are resolved without drawing.
+This is required for `selected_objects`, not just operator polls, particularly
+after restoring a newly created layout.
 
 C++ resolves the hierarchy at each `exec`, at session startup and after
 memfile rollback. No window, screen, area or region pointer is cached across
