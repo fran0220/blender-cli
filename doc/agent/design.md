@@ -223,16 +223,24 @@ caller's capture pipes, so the detached daemon cannot hold their EOF open.
 `.blender-cli/session.pid` records the daemon PID, also used as the
 returned session ID. A process-held `.blender-cli/session.lock` serializes
 open/forced-close operations. The directory is owner-only on POSIX. Opening
-an already-live session fails; a dead PID permits stale socket cleanup.
+an already-live session fails; a dead PID permits stale socket cleanup. Opening
+over a dead session reports `previous_autosave` (absolute path) when its recovery
+file exists, and preserves that file. Closing a dead session reports
+`{ok: true, stale: true, autosave?: path}`, removes the socket/PID/lock, and
+preserves its recovery file.
 `session close` does not save. It requests normal loop termination through
 the command handler and `WM_exit`; if the daemon cannot answer within two
 seconds, the launcher terminates it (SIGTERM then SIGKILL on POSIX,
 TerminateProcess on Windows) and reports `forced: true`.
 
 Other CLI calls connect directly when the endpoint accepts. They do not
-launch Blender. A missing/dead endpoint falls back to the original one-shot
-invocation; a live PID with an unavailable endpoint reports an error rather
-than silently editing a different scene. Common `--json` and human output
+launch Blender. Only absence of the PID file permits one-shot fallback. A dead
+PID returns exit 1 and `{ok: false, error: {type: "SessionError", message: …},
+autosave?: path}` for every verb except open/close. The message identifies the
+PID, `.blender-cli/session.log`, `session open --file <autosave>` and
+`session close`. A live PID with an unavailable endpoint also reports an error,
+never edits a different scene. `autosave` is present only for an existing file.
+Common `--json` and human output
 remain compact/indented JSON respectively. Session result objects without an
 `ok` field and the history array are successful; `ok: false` exits 1.
 
@@ -278,6 +286,33 @@ in seconds. `agent.diff()` samples the current exec boundary, with the Phase 1
 ID-tag semantics (explicit undo/snapshot operations can reset accumulated tags).
 `--file` loads only at `session open`; `session save --file F` writes without
 reloading, and bare save uses the current Blender filepath.
+
+The session maintains `<initial cwd>/.blender-cli/autosave-<pid>.blend` from
+the current agent snapshot, not unsnapshotted live edits. Snapshot creation
+(including open, successful exec and manual snapshot) and rollback mark it dirty.
+The main thread writes after queuing a response if at least two seconds have
+elapsed since the last write; otherwise the idle pump writes after one second
+without a request. Explicit `session save` does not trigger a snapshot or a
+pre-response autosave. A clean close deletes only that session's autosave;
+crash files survive recovery and later closes. The most recent completed write
+is recoverable; this is not synchronous durability for every acknowledged edit.
+Write failures are logged and retried, without turning a successful exec into a
+failed response.
+
+Upstream 5.3 no longer supplies `BLO_memfile_write_file`: memfiles contain
+out-of-stream shared arrays and cannot be dumped as blend files. The agent
+decodes its retained memfile into an isolated Main using an empty old Main and
+`BLO_READ_SKIP_UNDO_OLD_MAIN`, recomputes user counts, then uses upstream's
+`BLO_write_file` recovery/compression path. It never saves through an operator,
+replaces live Main, or changes live filepath/dirty state or Python references.
+The active snapshot scene is placed first for loading without saved UI.
+Non-memfile-undo data (UI and brushes) is not recovered; linked libraries are
+reloaded from their files, and ordinary blend-save orphan rules apply. Python
+variables/history/hashes do not survive a process crash. Both `session open
+--file` and one-shot `--file` can load the autosave.
+
+`session` without an action returns `ValueError` in both modes, with message
+`session requires an action: open|save|close|snapshot|rollback|history`.
 
 The content-addressed store retains independent upstream memfiles, not a
 linear undo tail: rolling back then executing does not delete the former
@@ -329,6 +364,9 @@ references rather than recursively following cyclic graphs. Arrays/collections
 are complete; non-finite RNA floats are strings (`nan`, `inf`, `-inf`) so JSON
 remains valid. `--select` paths resolve relative to `bpy.data` (not `eval`) and
 replace the scene response with `{ok: true, selected: {path: value, ...}}`.
+Resolution failures retain `ValueError` and explain the base, for example
+`--select "location" could not be resolved relative to bpy.data; use a path
+such as objects["Cube"].location`.
 
 ### `observe`
 

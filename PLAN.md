@@ -54,6 +54,7 @@ evidence until run there.
 | Main loop: dequeue → execute → `BLI_timer_execute` → answer; cancellation via `G.is_break` | done — idle Python timer, second-connection cancellation and subsequent exec pass |
 | Persistent Python namespace per session (`agent` helper module preloaded) | done — ten dependent execs and helper snapshot/rollback/diff/history pass; observation and comparison are delivered in Phases 3–4 below |
 | Snapshot chain on memfile undo; `snapshot`, `rollback <id>`, `history`; `session save` writes the `.blend` | done — cube 8 → 26 → 8 vertices; branch retention, labels, ~N, operator undo coexistence, Main replacement and save/reload pass |
+| Crash recovery: explicit dead-PID errors and isolated snapshot autosaves | doing — implementation and real crash/idle/reload regressions landed; cold Linux build and cost measurements pending; session usage and select-base diagnostics included |
 | `blender-cli <verb>` auto-connects to the session for the current directory when one exists, else runs one-shot | done — normal/forced close, duplicate-open refusal, stale recovery, file-open and one-shot fallback pass; median round trip 5.453 ms |
 
 ## Phase 3 — observation
