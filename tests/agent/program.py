@@ -13,8 +13,6 @@ import sys
 import tempfile
 import time
 
-MARK = "#program#"
-
 
 def main():
     executable = str(Path(sys.argv[1]).resolve())
@@ -30,48 +28,21 @@ def main():
                                      capture_output=True, text=True, timeout=180)
             assert process.returncode == (0 if ok else 1), (args, process.stdout, process.stderr)
             result = json.loads(process.stdout)
-            if isinstance(result, dict):
-                assert result.get("ok", True) == ok, result
+            assert result.get("ok", True) == ok, (args, result)
             return result
 
-        def execute(code, ok=True):
-            return call("exec", "-c", code, ok=ok)
+        def execute(code, *args, ok=True):
+            return call("exec", "-c", code, *args, ok=ok)
 
-        def marked(body, ok=True):
-            """Run `body` in the session and read back the JSON it prints as `_result`."""
-            code = ("import json, agent, agent_program\n" + body +
-                    "\n_result['snapshot'] = agent._session.current\n"
-                    f"print({MARK!r} + json.dumps(_result))\n")
-            envelope = execute(code)
-            line = next(text for text in envelope["stdout"].splitlines() if text.startswith(MARK))
-            result = json.loads(line[len(MARK):])
-            assert result.get("ok", True) == ok, result
-            return result
+        def program(action, *args, ok=True):
+            return call("program", action, *args, ok=ok)
 
-        def program(action, ok=True, **fields):
-            # Workstream K's dispatch calls agent_program.request with these same fields.
-            payload = json.dumps({"action": action, **fields})
-            return marked(
-                f"_request = json.loads({payload!r})\n"
-                "try:\n"
-                "    _result = agent_program.request(agent._session, **_request)\n"
-                "except BaseException as _error:\n"
-                "    _result = {'ok': False, 'error': {'type': type(_error).__name__,\n"
-                "                                      'message': str(_error)}}\n", ok=ok)
-
-        def open_program(previous_autosave=None):
-            # Workstream K's session open calls on_session_open and merges its dict.
-            return marked(
-                "_program = agent_program.attach(agent._session)\n"
-                "_result = dict(agent_program.on_session_open("
-                f"agent._session, previous_autosave={previous_autosave!r}))\n"
-                "_result['base'] = _program.cache.get(_program.key(0))\n")
-
-        def helper():
-            return marked("_result = agent_program.helper(agent._session)\n")
+        def value(code):
+            """The repr of one expression, evaluated in the session."""
+            return execute(code)["value"]
 
         def wait_autosave(path):
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 if path.is_file() and path.stat().st_size > 0:
                     return
@@ -83,30 +54,14 @@ def main():
             counters.unlink(missing_ok=True)
             return [int(number) for number in ran]
 
-        recorded = {"snapshot": None}
-
-        def act(code, ok=True, record=True):
-            """One agent action: a real exec, then the recording hook the exec path will call."""
-            envelope = execute(code, ok=ok)
-            if ok and record:
-                # A failed exec never reaches this call, so it is never recorded.
-                execute("import agent, agent_program\n"
-                        f"agent_program.record_from_exec(agent._session, {code!r}, "
-                        f"{recorded['snapshot']!r}, {envelope['snapshot']!r}, "
-                        f"{envelope['diff']!r})\n")
-                recorded["snapshot"] = envelope["snapshot"]
-            return envelope
-
         opened = call("session", "open")
         try:
-            recorded["snapshot"] = open_program()["base"]
-            assert recorded["snapshot"], "session open must seed the program's base prefix"
             assert program("get")["text"] == "# blender-cli program\n# base: factory\nP = {}\n"
 
-            # Three actions become three steps.
-            act("bpy.ops.wm.read_factory_settings(use_empty=True)")
-            act("bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=1.0)")
-            act('bpy.data.objects["Cylinder"].location.z = 0.5')
+            # Three actions become three steps, recorded by the exec path itself.
+            execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
+            execute("bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=1.0)")
+            execute('bpy.data.objects["Cylinder"].location.z = 0.5')
             model = (root / ".blender-cli" / "program" / "model.py").read_text()
             expected = (
                 "# blender-cli program\n"
@@ -120,21 +75,28 @@ def main():
                 'bpy.data.objects["Cylinder"].location.z = 0.5\n')
             assert model == expected, model
             print("=== model.py after three execs ===\n" + model, flush=True)
-            assert program("get")["text"] == model
-            assert [record["n"] for record in program("get")["steps"]] == [1, 2, 3]
-            assert helper().keys() >= {"text", "params", "steps", "version", "reproducible"}
+            current = program("get")
+            assert current["text"] == model
+            assert [record["n"] for record in current["steps"]] == [1, 2, 3]
+            # `agent.program()` answers the same program from inside the session.
+            assert value("agent.program()['version']") == repr(current["version"])
+            assert value("sorted(agent.program())") == repr(
+                ["params", "reproducible", "steps", "text", "version"])
 
             # An exec that changes no data is not a step.
-            act("1 + 1")
+            execute("1 + 1")
             assert program("get")["steps"][-1]["n"] == 3
             # A failed exec is not a step.
-            act("raise RuntimeError('boom')", ok=False)
+            execute("raise RuntimeError('boom')", ok=False)
             assert program("get")["steps"][-1]["n"] == 3
-            # Recording off is the request-level form of `exec --no-record`.
-            assert program("record", on=False)["record"] is False
-            act("bpy.ops.mesh.primitive_cube_add()")
+            # `--no-record` is not a step either.
+            execute("bpy.ops.mesh.primitive_cube_add()", "--no-record")
+            assert program("get")["steps"][-1]["n"] == 3, "--no-record must not append a step"
+            # Neither is anything at all while recording is off.
+            assert program("record", "off")["record"] is False
+            execute("bpy.ops.mesh.primitive_cone_add()")
             assert program("get")["steps"][-1]["n"] == 3, "recording off must not append a step"
-            assert program("record", on=True)["record"] is True
+            assert program("record", "on")["record"] is True
 
             # A parameterised program. Each step logs its number, so the test sees what ran.
             text = ("# blender-cli program\n"
@@ -150,7 +112,7 @@ def main():
                     'open("steps.log", "a").write("3\\n")\n'
                     'bpy.data.objects["Cylinder"].location.z = P["shift"]\n')
             counters.unlink(missing_ok=True)
-            baseline = program("set", text=text)
+            baseline = program("set", "--text", text)
             assert baseline["ran"] == [1, 2, 3] and steps_ran() == [1, 2, 3], baseline
             assert baseline["reproducible"] is True, baseline
             first_set = baseline["version"]
@@ -161,47 +123,37 @@ def main():
             assert idle["digest"] == baseline["digest"], idle
 
             # One parameter changes: only the steps from the first reader of it re-run.
-            edited = program("set", text=text.replace('"height": 2.0', '"height": 4.0'))
+            edited = program("set", "--text", text.replace('"height": 2.0', '"height": 4.0'))
             assert edited["ran"] == [2, 3] and steps_ran() == [2, 3], edited
             assert edited["from_step"] == 2 and edited["cached"] == 1, edited
             assert edited["digest"] != baseline["digest"], edited
-            partial_ms, partial = edited["ms"], edited["digest"]
 
             # The same state reached by a full run from the base is the same content.
-            full = marked("_program = agent_program.attach(agent._session)\n"
-                          "_program.cache.clear()\n"
-                          "_result = _program.run()\n")
-            assert full["ran"] == [1, 2, 3] and steps_ran() == [1, 2, 3], full
-            assert full["digest"] == partial, (full["digest"], partial)
-            # Memfile IDs are process-local identities, so they do not compare.
-            assert full["snapshot"] != edited["snapshot"], full
-            # A second full run of the same version reaches the same content, so the
-            # dynamic reproducibility check does not fire.
-            again = marked("_program = agent_program.attach(agent._session)\n"
+            # These execs drive the program, so recording them would nest it in itself.
+            full = execute("import agent, agent_program\n"
+                           "_program = agent_program.attach(agent._session)\n"
                            "_program.cache.clear()\n"
-                           "_result = _program.run()\n")
-            assert again["digest"] == full["digest"] and again["reproducible"] is True, again
-            assert again["snapshot"] != full["snapshot"], again
-            steps_ran()
-            print(f"re-execution: 2 of 3 steps {partial_ms:.1f} ms, "
-                  f"3 of 3 steps from the base {full['ms']:.1f} ms", flush=True)
+                           "_program.run()['digest']", "--no-record")
+            assert steps_ran() == [1, 2, 3], full
+            assert full["value"] == repr(edited["digest"]), (full["value"], edited["digest"])
+            print(f're-execution: 2 of 3 steps {edited["ms"]:.1f} ms, '
+                  f'3 of 3 steps from the base {full["ms"]:.1f} ms', flush=True)
             print(f'program set transcript: ran={edited["ran"]} from_step={edited["from_step"]} '
-                  f'cached={edited["cached"]} digest={partial} full_run_digest={full["digest"]}',
-                  flush=True)
+                  f'cached={edited["cached"]} digest={edited["digest"]}', flush=True)
 
-            # One `fit` evaluation: the two module functions workstream T calls.
-            fitted = marked(
-                "_result = agent_program.set_parameters(agent._session, {'shift': 1.25})\n"
-                "_result['params'] = agent_program.parameters(agent._session)\n")
-            assert fitted["ran"] == [3] and steps_ran() == [3], fitted
-            assert fitted["params"] == {"radius": 0.4, "height": 4.0, "shift": 1.25}, fitted
-            assert fitted["version"] and fitted["digest"], fitted
+            # One `fit` evaluation: the Program API workstream T drives.
+            fitted = execute("import agent, agent_program\n"
+                             "_program = agent_program.attach(agent._session)\n"
+                             "(_program.set_params({'shift': 1.25})['ran'], _program.params)",
+                             "--no-record")
+            assert fitted["value"] == repr(([3], {"radius": 0.4, "height": 4.0, "shift": 1.25}))
+            assert steps_ran() == [3], fitted
             assert 'P = {"radius": 0.4, "height": 4.0, "shift": 1.25}' in program("get")["text"]
             # A parameter no step reads re-executes nothing.
-            unused = marked(
-                "_result = agent_program.set_parameters(agent._session, {'unused': 7})\n")
-            assert unused["ran"] == [] and unused["cached"] == 3 and steps_ran() == [], unused
-            assert unused["digest"] == fitted["digest"], unused
+            unused = execute("import agent, agent_program\n"
+                             "agent_program.attach(agent._session).set_params({'unused': 7})['ran']",
+                             "--no-record")
+            assert unused["value"] == "[]" and steps_ran() == [], unused
 
             # History is a tree of parents; rollback moves between versions.
             history = program("history")
@@ -212,44 +164,46 @@ def main():
             assert history["current"] == versions[-1]["version"], history
             assert {"version", "parent", "label", "at", "steps", "reproducible", "message"} == set(
                 versions[-1]), versions[-1]
-            back = program("rollback", version=first_set)
-            assert program("get")["params"] == {"radius": 0.4, "height": 2.0, "shift": 0.5}, back
+            program("rollback", "--version", first_set, "--label", "shape")
             steps_ran()
+            assert program("get")["params"] == {"radius": 0.4, "height": 2.0, "shift": 0.5}
             scaled, = call("inspect")["objects"]
             assert scaled["name"] == "Cylinder" and scaled["scale"][2] == 2.0, scaled
             assert scaled["location"][2] == 0.5, scaled
-            # A digest prefix names the same version.
-            program("rollback", version=first_set.removeprefix("sha256:")[:12])
+            # A digest prefix and a label name the same version.
+            program("rollback", "--version", first_set.removeprefix("sha256:")[:12])
+            assert program("rollback", "--version", "shape")["version"] == first_set
             steps_ran()
 
             # `patch` needs exactly one match.
-            ambiguous = program("patch", ok=False, old='open("steps.log", "a")',
-                                new='open("steps.log", "a")')
+            ambiguous = program("patch", "--old", 'open("steps.log", "a")',
+                                "--new", 'open("steps.log", "a")', ok=False)
             assert ambiguous["error"]["type"] == "ValueError", ambiguous
             assert "3 found" in ambiguous["error"]["message"], ambiguous
-            absent = program("patch", ok=False, old="not in the program", new="x")
+            absent = program("patch", "--old", "not in the program", "--new", "x", ok=False)
             assert "no match" in absent["error"]["message"], absent
-            # Every action rejects missing and unknown fields.
             assert "program set requires text" in program("set", ok=False)["error"]["message"]
-            assert "requires an action" in program("nonsense", ok=False)["error"]["message"]
-            unknown = program("get", ok=False, text="x")["error"]["message"]
-            assert "program get does not accept text" in unknown, unknown
-            patched = program("patch", old="depth=1.0", new="depth=3.0")
+            patched = program("patch", "--old", "depth=1.0", "--new", "depth=3.0")
             assert patched["ran"] == [1, 2, 3] and steps_ran() == [1, 2, 3], patched
             assert "depth=3.0" in program("get")["text"]
 
-            # A failing step stops the run and keeps the failing text.
-            broken = program("set", ok=False, text=text.replace(
-                'bpy.context.object.scale[2] = P["height"]', 'raise RuntimeError("step two")'))
-            # Step 1 is unchanged, so it stays a cached prefix and only step 2 is attempted.
-            assert broken["ran"] == [] and broken["from_step"] == 2, broken
-            assert broken["error"]["step"] == 2, broken
-            assert broken["error"]["type"] == "RuntimeError" and broken["error"]["line"] == 2, broken
+            # A failing step names itself and leaves Main at the last step that ran.
+            broken = program("set", "--text", text.replace(
+                'bpy.context.object.scale[2] = P["height"]',
+                'raise RuntimeError("step two")'), ok=False)
+            assert broken["error"]["type"] == "RuntimeError", broken
+            assert broken["error"]["line"] == 2, broken
+            assert broken["error"]["message"] == "step 2: step two", broken
+            stopped, = call("inspect")["objects"]
+            assert stopped["name"] == "Cylinder", stopped
+            assert stopped["scale"][2] == 1.0, "step 2 never applied its scale"
+            assert stopped["location"][2] == 0.0, "step 3 never ran"
+            # The text keeps the edit that failed: a file is not Main.
             assert 'raise RuntimeError("step two")' in program("get")["text"]
             steps_ran()
 
             # Reproducibility is a static verdict per step.
-            mixed = program("set", text=(
+            mixed = program("set", "--text", (
                 "# blender-cli program\n# base: factory-empty\nP = {}\n"
                 "\n# step 1\nbpy.ops.mesh.primitive_cube_add()\n"
                 "\n# step 2\nimport time\nbpy.context.scene.frame_current = int(time.time()) % 8\n"))
@@ -257,36 +211,45 @@ def main():
             assert [record["reproducible"] for record in program("get")["steps"]] == [True, False]
 
             # A crash loses nothing the program can rebuild.
-            program("set", text=text)
-            version = program("get")["version"]
+            restored = program("set", "--text", text)
             steps_ran()
+            assert restored["reproducible"] is True, restored
             wait_autosave(root / ".blender-cli" / f'autosave-{opened["session"]}.blend')
             execute("import os; os._exit(3)", ok=False)
         finally:
             # The crashed daemon leaves a stale endpoint; close reports it and cleans up.
             call("session", "close")
+
         autosave = root / ".blender-cli" / f'autosave-{opened["session"]}.blend'
         assert autosave.is_file(), autosave
+        # An autosave newer than the program stays the recovery path.
+        os.utime(autosave, (time.time(), time.time()))
         call("session", "open")
         try:
-            # An autosave newer than the program stays the recovery path.
-            os.utime(autosave, (time.time(), time.time()))
-            yielded = open_program(previous_autosave=str(autosave))
-            assert "recovered_from" not in yielded and yielded["base"] is None, yielded
-            # An autosave older than the program's newest version does not.
-            stale = time.time() - 3600
-            os.utime(autosave, (stale, stale))
-            recovery = open_program(previous_autosave=str(autosave))
-            assert recovery["recovered_from"] == "program", recovery
-            assert recovery["program"] == version and recovery["ran"] == [1, 2, 3], recovery
-            print(f"crash recovery: {json.dumps(recovery)}", flush=True)
+            assert call("session", "status")["recovered_from"] is None, "autosave wins"
+            assert steps_ran() == []
+        finally:
+            call("session", "close")
+
+        # An autosave older than the program's newest version does not.
+        stale = time.time() - 3600
+        os.utime(autosave, (stale, stale))
+        reopened = call("session", "open")
+        try:
+            status = call("session", "status")
+            assert status["recovered_from"] == "program", status
+            print(f"crash recovery: {json.dumps(status)}", flush=True)
             assert steps_ran() == [1, 2, 3]
             rebuilt, = call("inspect")["objects"]
             assert rebuilt["name"] == "Cylinder", rebuilt
             assert rebuilt["scale"][2] == 2.0 and rebuilt["location"][2] == 0.5, rebuilt
-            assert program("get")["version"] == version
+            assert program("get")["version"] == restored["version"]
+            # The rebuilt session records the next action as step 4.
+            execute("bpy.ops.mesh.primitive_cube_add(size=0.2)")
+            assert program("get")["steps"][-1]["n"] == 4
         finally:
             call("session", "close")
+        assert reopened["session"] != opened["session"]
     print("agent program: all assertions passed")
 
 

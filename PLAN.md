@@ -125,10 +125,10 @@ the file).
 | Item | Status |
 |---|---|
 | Program file layout (`# base:` header, literal `P` block read by `ast.literal_eval`, `# step N` blocks), step recording, static `reproducible` verdict | done on Linux — `tests/agent/program.py` |
-| `program get/set/patch/run/history/rollback/record`; versions and `index.json` | done on Linux — driven through `agent_program.request`; K's `program` op and W's CLI projection call the same function |
-| Prefix-cached re-execution using snapshots per step; hash equality with a full run | done on Linux — a parameter change re-runs only its readers and later steps; the resulting snapshot equals a full run from the base |
-| Crash recovery via program replay when it is newer than the autosave; `agent.program()` helper | unverified — `agent_program.on_session_open` rebuilds and reports `recovered_from: "program"` under test; K must call it from `Session.__init__` and add the `agent.program()` wrapper |
-| Recording from the `exec` path | unverified — `agent_program.record_from_exec` is proven with the exec's own code, diff and snapshots; K must call it from the exec path and add `exec --no-record` |
+| `program get/set/patch/run/history/rollback/record`; versions and `index.json` | done on Linux — `register_op("program", …)`; driven through the real `blender-cli program` verb |
+| Prefix-cached re-execution using snapshots per step; equality with a full run | done on Linux — a parameter change re-runs only its readers and later steps (13 ms of 66 ms), and the result has the same `digest` as a full run from the base |
+| Crash recovery via program replay when it is newer than the autosave; `agent.program()` helper | done on Linux — `os._exit`, reopen, `session status` reports `recovered_from: "program"` and the scene is rebuilt; an autosave newer than the program keeps the autosave path |
+| Recording from the `exec` path | done on Linux — `register(session)` installs K's `register_record_hook`; three execs become three steps, and a failed exec, an empty diff, `--no-record` and `record off` are never recorded |
 
 ### D — describe schema and corrective errors
 

@@ -15,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import time
 import traceback
 
@@ -44,6 +45,16 @@ def _fatal(error):
     """Cancellation and interpreter exits end the request; they are not step failures."""
     from agent_runtime import Cancelled
     return isinstance(error, (Cancelled, KeyboardInterrupt, SystemExit))
+
+
+class StepError(Exception):
+    """A program step raised. `agent_type` and `lineno` are what the kernel reports."""
+
+    def __init__(self, step, error, line):
+        super().__init__(f"step {step}: {error}")
+        self.step = step
+        self.agent_type = type(error).__name__
+        self.lineno = line
 
 
 def _literal(value):
@@ -449,53 +460,53 @@ class Program:
 
     # ---- operations ------------------------------------------------------
 
-    def run(self, from_step=None):
-        """Re-execute from the longest cached prefix (or from `from_step`) and cache each step."""
-        start = time.perf_counter()
+    def run(self):
+        """Re-execute from the longest cached prefix, caching the snapshot of each step.
+
+        Raises `StepError` when a step fails; the kernel then returns `Main` to the
+        pre-request state, while the program text keeps the edit that failed.
+        """
+        if "snapshot" not in self.session.native:
+            raise ValueError("Re-executing the program requires an open session")
         keys = [self.key(count) for count in range(len(self.steps) + 1)]
-        limit = len(self.steps) if from_step is None else max(0, min(from_step - 1, len(self.steps)))
         begin = None
-        for count in range(limit, -1, -1):
+        for count in range(len(self.steps), -1, -1):
             snapshot = self.cache.get(keys[count])
             if snapshot is not None and self._restore(snapshot):
                 begin = count
                 break
         rebuilt = begin is None
         begin = 0 if rebuilt else begin
-        result = {"ok": True, "ran": [], "from_step": begin + 1, "cached": begin}
-        try:
-            if rebuilt:
-                self._run_code(_base_code(self.base), "base")
-            # The header is the parameter block: re-run on every run, never touching Main.
-            self._run_code(_without_parameters(self.header), "header")
-            self.bind()
-            if rebuilt:
-                self.cache[keys[0]] = self.session.snapshot(None, "program")
-        except Exception as error:
-            if _fatal(error):
-                raise
-            result.update(ok=False, error=self._error(error, 0), version=self.current,
-                          steps=len(self.steps), digest=digest(),
-                          reproducible=self.reproducible,
-                          ms=(time.perf_counter() - start) * 1000)
-            return result
+        ran = []
+        if rebuilt:
+            self._step(_base_code(self.base), "base", 0)
+        # The header is the parameter block: re-run on every run, never touching Main.
+        self._step(_without_parameters(self.header), "header", 0)
+        self.bind()
+        if rebuilt:
+            self.cache[keys[0]] = self.session.snapshot(None, "program")
         for index in range(begin, len(self.steps)):
-            try:
-                self._run_code(self.steps[index], f"step {index + 1}")
-            except Exception as error:
-                if _fatal(error):
-                    raise
-                result.update(ok=False, error=self._error(error, index + 1))
-                break
+            self._step(self.steps[index], f"step {index + 1}", index + 1)
             self.cache[keys[index + 1]] = self.session.snapshot(None, "program")
-            result["ran"].append(index + 1)
+            ran.append(index + 1)
         content = digest()
-        if result["ok"] and rebuilt:
+        if rebuilt:
             self._check_divergence(content)
-        result.update(version=self.current, steps=len(self.steps), digest=content,
-                      reproducible=self.reproducible,
-                      ms=(time.perf_counter() - start) * 1000)
-        return result
+        return {"version": self.current, "steps": len(self.steps), "digest": content,
+                "from_step": begin + 1, "cached": begin, "ran": ran,
+                "reproducible": self.reproducible}
+
+    def _step(self, code, label, number):
+        try:
+            self._run_code(code, label)
+        except Exception as error:
+            # A step that re-runs the program reports the innermost step that failed.
+            if _fatal(error) or isinstance(error, StepError):
+                raise
+            frames = traceback.extract_tb(error.__traceback__)
+            inner = [frame for frame in frames if frame.filename.startswith("<program ")]
+            line = getattr(error, "lineno", None) or (inner[-1].lineno if inner else None)
+            raise StepError(number, error, line) from error
 
     def _check_divergence(self, content):
         """A full re-run landing on different content than the last one is not reproducible."""
@@ -503,13 +514,6 @@ class Program:
         if previous is not None and previous != content:
             self.divergent.add(self.current)
         self.produced[self.current] = content
-
-    @staticmethod
-    def _error(error, step):
-        frames = traceback.extract_tb(error.__traceback__)
-        inner = [frame for frame in frames if frame.filename.startswith("<program ")]
-        return {"type": type(error).__name__, "message": str(error), "step": step,
-                "line": getattr(error, "lineno", None) or (inner[-1].lineno if inner else None)}
 
     def commit(self, message, label=None):
         """Write the current text as a version and make it current."""
@@ -527,24 +531,24 @@ class Program:
         self.write()
         return version
 
-    def set_text(self, text, message="set"):
+    def set_text(self, text, message="set", label=None):
         ast.parse(text)
         header, steps = _blocks(text)
         _parameters(header)
         self.header, self.steps = header, steps
-        self.commit(message)
+        self.commit(message, label)
         return self.run()
 
-    def patch(self, old, new):
+    def patch(self, old, new, label=None):
         text = self.text
         matches = text.count(old)
         if matches != 1:
             raise ValueError(
                 f"program patch requires exactly one match; {matches} found"
                 if matches else "program patch found no match for old")
-        return self.set_text(text.replace(old, new), "patch")
+        return self.set_text(text.replace(old, new), "patch", label)
 
-    def set_params(self, values):
+    def set_params(self, values, label=None):
         """Replace named parameters and re-execute only the steps that read them."""
         params = self.params
         unknown = [name for name in values if not isinstance(name, str)]
@@ -552,15 +556,15 @@ class Program:
             raise ValueError(f"Parameter names must be strings: {unknown!r}")
         params.update(values)
         self.header = _rewrite_parameters(self.header, params)
-        self.commit("set params")
+        self.commit("set params", label)
         return self.run()
 
-    def rollback(self, reference):
+    def rollback(self, reference, label=None):
         version = self.resolve(reference)
         with open(self.version_path(version), encoding="utf-8") as stream:
             text = stream.read()
         self.header, self.steps = _blocks(text)
-        self.commit("rollback", label=None)
+        self.commit("rollback", label)
         return self.run()
 
     def resolve(self, reference):
@@ -613,90 +617,90 @@ def attach(session, directory=None):
     return program
 
 
-def on_session_open(session, directory=None, previous_autosave=None):
-    """Rebuild the scene from the program when it is newer than the recovered autosave."""
-    program = attach(session, directory)
-    if not program.steps:
-        program.cache[program.key(0)] = session.current
-        return {}
-    if (previous_autosave and os.path.isfile(previous_autosave)
-            and os.path.getmtime(previous_autosave) >= program.modified):
-        return {}
-    result = program.run()
-    recovery = {"recovered_from": "program", "program": program.current,
-                "steps": len(program.steps), "ran": result["ran"]}
-    if not result["ok"]:
-        recovery["error"] = result["error"]
-    return recovery
+def program_op(request, session, emit):
+    """`register_op("program", …)`: get, set, patch, run, history, rollback, record."""
+    program = attach(session)
+    action = request["action"]
+    required = {"set": ("text",), "patch": ("old", "new"),
+                "rollback": ("version",), "record": ("on",)}.get(action, ())
+    missing = [name for name in required if name not in request]
+    if missing:
+        raise ValueError(f"program {action} requires {', '.join(missing)}")
+    if action == "get":
+        return {"text": program.text, "params": program.params,
+                "steps": program.step_records(), "version": program.version,
+                "base": program.base, "record": program.recording,
+                "digest": digest(), "reproducible": program.reproducible}
+    if action == "history":
+        return {"versions": program.index["versions"], "current": program.version}
+    if action == "record":
+        program.recording = request["on"]
+        return {"record": program.recording}
+    label = request.get("label")
+    if action == "set":
+        result = program.set_text(request["text"], "set", label)
+    elif action == "patch":
+        result = program.patch(request["old"], request["new"], label)
+    elif action == "rollback":
+        result = program.rollback(request["version"], label)
+    else:
+        result = program.run()
+    if result["ran"]:
+        # The last step's snapshot is this request's snapshot; the diff needs no second one.
+        session.snapshot_taken = True
+    return result
 
 
-def parameters(session):
-    """The program's current `P` values. `fit` reads its search space from here."""
-    return attach(session).params
+def record_hook(session, code, step):
+    """`register_record_hook`: an `exec` that changed data becomes the program's next step."""
+    program = attach(session)
+    event = session.history[session.current_index] if session.history else {}
+    program.record_exec(code, event.get("parent"), session.current)
 
 
-def set_parameters(session, values):
-    """Replace named parameters, write a version and re-execute the steps that read them.
-
-    `Main` is left at the result. Answers the run result: `{ok, version, digest, ran,
-    from_step, cached, steps, reproducible, ms}`, or `ok: false` with `error` when a
-    step raises. This is one `fit` evaluation.
-    """
-    return attach(session).set_params(values)
-
-
-def record_from_exec(session, code, before, after, diff):
-    """Recording hook for the `exec` path: record code that changed data."""
-    if not code or not any(diff.get(group) for group in ("added", "changed", "removed")):
-        return None
-    return attach(session).record_exec(code, before, after)
-
-
-def helper(session=None):
-    """`agent.program()`: the program as the agent sees it."""
-    if session is None:
-        import agent
-        session = agent._active()
+def helper(session):
+    """Backs `agent.program()`."""
     program = attach(session)
     return {"text": program.text, "params": program.params, "steps": program.step_records(),
             "version": program.version, "reproducible": program.reproducible}
 
 
-def request(session, action, **fields):
-    """The `program` request: get, set, patch, run, history, rollback, record."""
-    program = attach(session)
-    # Per action: the fields it requires, then the fields it also accepts.
-    accepted = {"get": ((), ()), "set": (("text",), ()), "patch": (("old", "new"), ()),
-                "run": ((), ("from_step",)), "history": ((), ()),
-                "rollback": (("version",), ()), "record": (("on",), ())}
-    if action not in accepted:
-        raise ValueError("program requires an action: " + "|".join(accepted))
-    required, optional = accepted[action]
-    missing = [name for name in required if name not in fields]
-    if missing:
-        raise ValueError(f"program {action} requires {', '.join(missing)}")
-    unexpected = sorted(set(fields) - set(required) - set(optional))
-    if unexpected:
-        raise ValueError(f"program {action} does not accept {', '.join(unexpected)}")
-    if action == "get":
-        return {"ok": True, "text": program.text, "params": program.params,
-                "steps": program.step_records(), "version": program.version,
-                "base": program.base, "record": program.recording,
-                "digest": digest(), "reproducible": program.reproducible}
-    if action == "history":
-        return {"ok": True, "versions": program.index["versions"], "current": program.version}
-    if action == "record":
-        on = fields["on"]
-        if not isinstance(on, bool):
-            raise ValueError("program record requires on: true|false")
-        program.recording = on
-        return {"ok": True, "record": on}
-    if action == "set":
-        result = program.set_text(fields["text"])
-    elif action == "patch":
-        result = program.patch(fields["old"], fields["new"])
-    elif action == "rollback":
-        result = program.rollback(fields["version"])
-    else:
-        result = program.run(fields.get("from_step"))
-    return {**result, "version": program.version, "steps": len(program.steps)}
+def previous_autosave(root):
+    """The newest recovery file another process left in this session directory."""
+    mine = f"autosave-{os.getpid()}.blend"
+    if not os.path.isdir(root):
+        return None
+    candidates = [os.path.join(root, name) for name in os.listdir(root)
+                  if name.startswith("autosave-") and name.endswith(".blend") and name != mine]
+    return max(candidates, key=os.path.getmtime, default=None)
+
+
+def recover(program, session):
+    """Rebuild the scene from the program when it is newer than the recovered autosave."""
+    if not program.steps:
+        # An empty program starts in sync with the session, so the base prefix is cached.
+        program.cache[program.key(0)] = session.current
+        return
+    if session.recovered_from == "autosave":
+        return
+    autosave = previous_autosave(os.path.dirname(program.directory))
+    if autosave and os.path.getmtime(autosave) >= program.modified:
+        return
+    try:
+        program.run()
+    except Exception as error:
+        # A program that no longer runs must not make its directory unopenable.
+        print(f"Agent program: recovery failed: {type(error).__name__}: {error}",
+              file=sys.stderr, flush=True)
+        return
+    session.recovered_from = "program"
+
+
+def register(session):
+    """`PROVIDER_MODULES` entry point: install the `program` op, the recorder and the helper."""
+    import agent_runtime
+    agent_runtime.register_op("program", program_op)
+    agent_runtime.register_helper("program", lambda: helper(session))
+    agent_runtime.register_record_hook(record_hook)
+    if "snapshot" in session.native:
+        recover(attach(session), session)

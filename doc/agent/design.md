@@ -237,16 +237,25 @@ not a snapshot, so a program rebuilds its scene in any process.
   `program set` replaces the text; `program patch` applies one `old`→`new`
   replacement and fails when the match count is not exactly one. Both
   re-execute.
-- `program run` re-executes; `program run --from-step N` forces execution to
-  begin at step N. `program history` lists the version tree; `program
-  rollback <version|label>` checks a version out and re-executes it.
-  `program record on|off` answers `{record}`.
+- `program run` re-executes. `program history` lists the version tree;
+  `program rollback <version|label>` checks a version out and re-executes
+  it, taking a version, a `sha256:`-less digest prefix or a label.
+  `program record on|off` answers `{record}`. `set`, `patch`, `run` and
+  `rollback` take `--label` to name the version they create.
 - `set`, `patch`, `run` and `rollback` answer
-  `{version, steps, from_step, cached, ran, reproducible, ms}`. A step that
-  raises stops execution and answers `ok: false` with
-  `error: {type, message, step, line}`, where `line` is relative to that
-  step; the program keeps the failing text and `Main` is left at the last
-  good step.
+  `{version, steps, digest, from_step, cached, ran, reproducible}`.
+- A step that raises ends the request with `error`, whose `type` is the
+  step's own exception type, `line` is relative to that step, and `message`
+  is prefixed `step N:`. The version is still written, so the program keeps
+  the text that failed and the agent patches it; a file is not `Main`.
+
+  `Main` is left at the last step that ran, not at the pre-request state.
+  This is the one request where the kernel's "a failed request leaves no
+  partial edit" rule resolves differently, and it does so because each step
+  takes its own snapshot: the kernel restores the session's current
+  snapshot, which by then is the last good step's. That is the state the
+  agent wants — it shows how far the program got, and it is already the
+  cached prefix a corrected `set` resumes from.
 
 ### Prefix-cached re-execution
 
@@ -320,45 +329,53 @@ survive a restart; the static verdict does.
 
 ### Crash recovery
 
-`session open` in a session directory that holds a program compares the
-program's newest version time with the modification time of the recovered
-autosave. When the program is newer, or no autosave survived, the open
-result carries `recovered_from: "program"` with `program`, `steps` and
-`ran`, and the scene is rebuilt by running the program from its base.
-Otherwise the autosave path applies unchanged. The runtime calls
-`agent_program.on_session_open(session, previous_autosave=path_or_None)`
-after its first snapshot and merges the returned dict into the open result;
-an empty dict means the program did not take over.
+A session directory that holds a program compares the program's newest
+version time with the modification time of the recovery file another process
+left behind. When the program is newer, or no autosave survived, the scene is
+rebuilt by running the program from its base and `session status` reports
+`recovered_from: "program"`. Otherwise the autosave path applies unchanged,
+and a session opened explicitly on an autosave keeps `recovered_from:
+"autosave"`. A program that no longer runs reports the failure on stderr and
+leaves the session open rather than making its directory unopenable.
+
+### Registration
+
+`agent_program.register(session)` is the `PROVIDER_MODULES` entry point. It
+installs the `program` request handler, backs `agent.program()`, installs the
+record hook, and performs crash recovery. The record hook is the runtime's
+`register_record_hook(f)`: `f(session, code, step)` runs after an `exec`
+whose diff was non-empty and whose `record` was not false, so a failed exec,
+an exec that changed nothing and `exec --no-record` are never steps. The hook
+reads the snapshot on each side of the request from the session's history;
+the step's snapshot enters the prefix cache only when the pre-request
+snapshot is the one the program's own prefix produced, so a recording made
+after a rollback never poisons the cache.
+
+An `exec` that itself drives the program — calling `Program.run` or
+`set_params` — should carry `--no-record`, or the program comes to contain a
+step that re-runs the program.
 
 ### Python API
 
 `agent.program()` returns `{text, params, steps, version, reproducible}`.
 
-`fit` drives program parameters through two module functions, which are the
-stable surface for it:
+`fit` drives program parameters through the session's `Program`:
 
 ```python
-agent_program.parameters(session) -> dict          # the current P values
-agent_program.set_parameters(session, values) -> run result
+program = agent_program.attach(session)   # the session's Program, created on demand
+program.params                            # the parsed P dict
+program.set_params(values, label=None)    # rewrite P, commit, re-execute the affected suffix
+program.version                           # current "sha256:…"
+program.run()                             # re-execute from the longest cached prefix
 ```
 
-`set_parameters` merges named values into `P`, rewrites only the `P = {…}`
+`set_params` merges named values into `P`, rewrites only the `P = {…}`
 statement in the header, commits a version and re-executes from the first
 step that reads a changed parameter, leaving `Main` at the result. That is
-one `fit` evaluation, and it costs one partial re-execution. The answer is
-the run result above, so `version` identifies the evaluated program and
-`digest` identifies the scene it produced.
-
-The objects behind them are available for anything else: `attach(session)`
-returns the session's `Program`, with `params`, `version`, `text`,
-`set_params(values)` and `run(from_step=None)`.
-
-The `exec` path records through
-`agent_program.record_from_exec(session, code, before, after, diff)`, where
-`before` and `after` are the snapshots on either side of the request; the
-step's snapshot enters the prefix cache only when `before` is the snapshot
-the program's own prefix produced, so a recording made after a rollback
-never poisons the cache.
+one `fit` evaluation, and it costs one partial re-execution. It answers the
+run result above, so `version` identifies the evaluated program and `digest`
+identifies the scene it produced, and it raises `agent_program.StepError`
+when a step fails. Setting a parameter no step reads re-executes nothing.
 
 ## Targets and `fit`
 
