@@ -88,22 +88,45 @@ int wmain(int argc, wchar_t **argv)
                                    OPEN_EXISTING,
                                    0,
                                    nullptr);
-        STARTUPINFOW startup{};
-        startup.cb = sizeof(startup);
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = input;
-        startup.hStdOutput = startup.hStdError = output;
+        STARTUPINFOEXW startup{};
+        startup.StartupInfo.cb = sizeof(startup);
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = input;
+        startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = output;
+        /* Do not inherit the launcher's captured stdout/stderr pipes. Even an
+         * unused inherited copy would prevent the caller from receiving EOF
+         * until the detached daemon exits. Only its own log and NUL are shared. */
+        SIZE_T attribute_size = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_size);
+        std::vector<char> attributes(attribute_size);
+        startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(
+            attributes.data());
         PROCESS_INFORMATION process{};
-        BOOL success = CreateProcessW(binary.c_str(),
-                                      command.data(),
-                                      nullptr,
-                                      nullptr,
-                                      TRUE,
-                                      DETACHED_PROCESS,
-                                      nullptr,
-                                      nullptr,
-                                      &startup,
-                                      &process);
+        BOOL success = InitializeProcThreadAttributeList(
+            startup.lpAttributeList, 1, 0, &attribute_size);
+        if (success) {
+          HANDLE handles[] = {input, output};
+          success = UpdateProcThreadAttribute(startup.lpAttributeList,
+                                              0,
+                                              PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                              handles,
+                                              sizeof(handles),
+                                              nullptr,
+                                              nullptr);
+          if (success) {
+            success = CreateProcessW(binary.c_str(),
+                                     command.data(),
+                                     nullptr,
+                                     nullptr,
+                                     TRUE,
+                                     DETACHED_PROCESS | EXTENDED_STARTUPINFO_PRESENT,
+                                     nullptr,
+                                     nullptr,
+                                     &startup.StartupInfo,
+                                     &process);
+          }
+          DeleteProcThreadAttributeList(startup.lpAttributeList);
+        }
         CloseHandle(input);
         CloseHandle(output);
         if (!success) {
