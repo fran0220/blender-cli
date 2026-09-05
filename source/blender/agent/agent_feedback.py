@@ -144,6 +144,12 @@ def difference(previous, current):
             "silhouette_delta": float(1 - iou)}
 
 
+def comparable(previous, tiles, view):
+    """A view rendered at another budget size is a view the agent has not seen."""
+    return (view in previous and
+            previous[view]["color"].shape == tiles[view]["color"].shape)
+
+
 def perception(view, tile, framing, counts, change):
     """The perception payload: scene facts plus the delta against what the agent last saw."""
     bounds = framing["bounds"]
@@ -166,8 +172,8 @@ def sample(request):
         STATE.pending = {"error": f"{type(error).__name__}: {error}", "policy": current, "views": views}
         raise
     STATE.views = tiles
-    changes = {view: difference(previous[view], tiles[view]) if view in previous else None
-               for view in views}
+    changes = {view: difference(previous[view], tiles[view]) if comparable(previous, tiles, view)
+               else None for view in views}
     STATE.pending = {
         "policy": current, "views": views, "tiles": tiles, "previous": previous, "changes": changes,
         "perception": perception(views[0], tiles[views[0]], framing, counts, changes[views[0]]),
@@ -183,8 +189,7 @@ def perceive(view="front", size=None):
     if size not in SIZES:
         raise ValueError(f"size must be one of {', '.join(map(str, SIZES))}")
     tiles, framing, counts = render_budget([view], size)
-    previous = STATE.views.get(view)
-    change = None if previous is None else difference(previous, tiles[view])
+    change = difference(STATE.views[view], tiles[view]) if comparable(STATE.views, tiles, view) else None
     return perception(view, tiles[view], framing, counts, change)
 
 
