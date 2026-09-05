@@ -17,8 +17,8 @@ owning document; fix drift toward the owner instead of copying:
 - `doc/agent/upstream.md` — how the fork tracks Blender upstream.
 
 Upstream is [`blender/blender`](https://github.com/blender/blender). The base
-is the **5.2 LTS** line, first anchored at tag `v5.2.1` (maintained upstream
-until July 2028).
+is upstream `main` (currently the 5.3 development line); the fork merges
+upstream forward as `doc/agent/upstream.md` describes.
 
 ## Product model
 
@@ -80,7 +80,7 @@ until July 2028).
   to the list in `doc/agent/upstream.md`, each marked with a
   `/* blender-cli */` comment, and kept to registration and build wiring.
 - **Upstream is merged, never rebased.** `main` is published; upstream
-  release tags are merged forward (`git merge v5.2.x`). The fork never
+  `main` is merged forward (`git merge upstream/main`). The fork never
   carries a version shim, dual code path or "legacy" branch for an upstream
   API change: when upstream changes, the fork changes with it in one commit.
 - **License is GPL-2.0-or-later.** Every new file carries the same SPDX

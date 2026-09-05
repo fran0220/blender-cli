@@ -7,13 +7,14 @@ it touches, and how upstream releases are brought in.
 
 - Upstream: https://github.com/blender/blender (mirror of
   https://projects.blender.org/blender/blender).
-- Base line: **5.2 LTS**, anchored at `v5.2.1`. Upstream maintains 5.2 with
-  bug-fix releases until July 2028. Each `v5.2.x` tag is merged into `main`
-  as it appears.
-- Moving to the next LTS line (5.5 or whatever upstream names it) is one
-  decision recorded in `PLAN.md`, performed as one merge of that tag, with
-  the fork adapted to any `bpy`/RNA/build changes in the same commit series.
-  There is never a period with two supported bases.
+- Base line: upstream `main` (the 5.3 development line at the time of the
+  fork, commit `5c951f2e`). Upstream `main` is merged into the fork's `main`
+  at a cadence chosen in `PLAN.md`, never less often than once per upstream
+  release.
+- Pinning to a release line (for example the next LTS) is one decision
+  recorded in `PLAN.md`, performed as one merge of that tag, with the fork
+  adapted to any `bpy`/RNA/build changes in the same commit series. There is
+  never a period with two supported bases.
 
 ## Merge, never rebase
 
@@ -21,7 +22,7 @@ it touches, and how upstream releases are brought in.
 
 ```
 git fetch upstream --tags
-git merge v5.2.x
+git merge upstream/main
 ```
 
 Conflicts are resolved toward upstream in upstream files and toward the
@@ -57,8 +58,9 @@ tests/agent/
 
 ## Versioning
 
-Releases are tagged `v5.2.1-agent.N` where `5.2.1` is the upstream base and
-`N` increments per release. `BKE_blender_version.h` is not modified;
+Releases are tagged `<upstream>-agent.N` where `<upstream>` is the upstream
+version string of the merged base (for example `5.3.0-alpha`) and `N`
+increments per release. `BKE_blender_version.h` is not modified;
 `blender-cli --version` reports both numbers.
 
 ## Precompiled libraries

@@ -81,8 +81,8 @@ by building, not by reading.
 cmake -S . -B build -C build_files/cmake/config/blender_agent.cmake
 cmake --build build --target install
 du -sh build/bin/*                              # per top-level component
-du -sh build/bin/5.2/python/lib/python3.13/*    # stdlib
-du -sh build/bin/5.2/scripts/addons_core/*
+du -sh build/bin/5.3/python/lib/python3.13/*    # stdlib
+du -sh build/bin/5.3/scripts/addons_core/*
 ```
 
 Record the numbers per platform in this file, then adjust the profile.

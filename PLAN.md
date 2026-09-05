@@ -5,7 +5,7 @@ the contract is in `doc/agent/design.md`. Each phase ends with a runnable
 result and states what proves it. Status words: `todo`, `doing`, `done`,
 `unverified` (landed, not yet proven on a product platform).
 
-Base: upstream `v5.2.1` (5.2 LTS). Binary name: `blender-cli`.
+Base: upstream `main` (5.3 development line, forked at `5c951f2e`). Binary name: `blender-cli`.
 
 ## Phase 0 — project
 
@@ -13,9 +13,9 @@ Base: upstream `v5.2.1` (5.2 LTS). Binary name: `blender-cli`.
 |---|---|
 | `AGENTS.md`, `PLAN.md`, `doc/agent/{design,build-profile,upstream}.md` | done |
 | `build_files/cmake/config/blender_agent.cmake` build profile | unverified — written from option names in `CMakeLists.txt`, not yet configured on any platform |
-| GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = `v5.2.1` + this plan | done — Amp project `doufunao/blender-cli` |
+| GitHub fork `fran0220/blender-cli` of `blender/blender` with `main` = upstream `main` + this plan | done — Amp project `doufunao/blender-cli` |
 | Amp project mapped to the fork | done — `doufunao/blender-cli` |
-| Orb setup (`.agents/setup`): Debian packages + clang-19, upstream LFS fallback, `lib/linux_x64` submodule at the checkout's pin | done — verified on Debian 12 x86_64 against upstream `main`; re-verify on the `v5.2.1` pin |
+| Orb setup (`.agents/setup`): Debian packages + clang-19, upstream LFS fallback, `lib/linux_x64` submodule at the checkout's pin | done — verified on Debian 12 x86_64 against upstream `main` |
 | CI: `macos-15` (arm64) and `windows-2022` configure + build with the agent profile | todo |
 
 ## Phase 1 — a process that answers
