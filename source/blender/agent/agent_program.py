@@ -48,13 +48,19 @@ def _fatal(error):
 
 
 class StepError(Exception):
-    """A program step raised. `agent_type` and `lineno` are what the kernel reports."""
+    """A program step raised.
+
+    `agent_type` and `lineno` are what the kernel's error event reports today.
+    `agent_fields` carries what a corrected `set` needs — the step, the version that
+    holds the failing text, and the prefix still cached — for the kernel to merge.
+    """
 
     def __init__(self, step, error, line):
         super().__init__(f"step {step}: {error}")
         self.step = step
         self.agent_type = type(error).__name__
         self.lineno = line
+        self.agent_fields = {"step": step}
 
 
 def _literal(value):
@@ -463,11 +469,13 @@ class Program:
     def run(self):
         """Re-execute from the longest cached prefix, caching the snapshot of each step.
 
-        Raises `StepError` when a step fails; the kernel then returns `Main` to the
-        pre-request state, while the program text keeps the edit that failed.
+        Raises `StepError` when a step fails. `Main` then returns to the pre-request
+        state, while the program text keeps the edit that failed and the prefix cache
+        keeps the steps that ran, so a corrected `set` resumes from them for free.
         """
         if "snapshot" not in self.session.native:
             raise ValueError("Re-executing the program requires an open session")
+        entry, entry_index = self.session.current, getattr(self.session, "current_index", None)
         keys = [self.key(count) for count in range(len(self.steps) + 1)]
         begin = None
         for count in range(len(self.steps), -1, -1):
@@ -478,17 +486,28 @@ class Program:
         rebuilt = begin is None
         begin = 0 if rebuilt else begin
         ran = []
-        if rebuilt:
-            self._step(_base_code(self.base), "base", 0)
-        # The header is the parameter block: re-run on every run, never touching Main.
-        self._step(_without_parameters(self.header), "header", 0)
-        self.bind()
-        if rebuilt:
-            self.cache[keys[0]] = self.session.snapshot(None, "program")
-        for index in range(begin, len(self.steps)):
-            self._step(self.steps[index], f"step {index + 1}", index + 1)
-            self.cache[keys[index + 1]] = self.session.snapshot(None, "program")
-            ran.append(index + 1)
+        try:
+            if rebuilt:
+                self._step(_base_code(self.base), "base", 0)
+            # The header is the parameter block: re-run on every run, never touching Main.
+            self._step(_without_parameters(self.header), "header", 0)
+            self.bind()
+            if rebuilt:
+                self.cache[keys[0]] = self.session.snapshot(None, "program")
+            for index in range(begin, len(self.steps)):
+                self._step(self.steps[index], f"step {index + 1}", index + 1)
+                self.cache[keys[index + 1]] = self.session.snapshot(None, "program")
+                ran.append(index + 1)
+        except StepError as error:
+            # The kernel restores the session's current snapshot on a failed request.
+            # Point it back at the pre-request state so the failed edit never becomes
+            # the live scene; the prefix cache keeps every step that did run, because
+            # a cache is not state.
+            self.session.current = entry
+            if entry_index is not None:
+                self.session.current_index = entry_index
+            error.agent_fields.update(version=self.current, cached_through=begin + len(ran))
+            raise
         content = digest()
         if rebuilt:
             self._check_divergence(content)
@@ -526,10 +545,19 @@ class Program:
         self.index["versions"].append(
             {"version": version, "parent": self.current, "label": label, "at": time.time(),
              "steps": len(self.steps), "reproducible": self.static_reproducible,
-             "message": message})
+             "message": message, "failed": False})
         self.index["current"] = self.current = version
         self.write()
         return version
+
+    def committed_run(self):
+        """Run the version just committed, marking its row when a step fails."""
+        try:
+            return self.run()
+        except StepError as error:
+            self.index["versions"][-1].update(failed=True, step=error.step, line=error.lineno)
+            self.write()
+            raise
 
     def set_text(self, text, message="set", label=None):
         ast.parse(text)
@@ -537,7 +565,7 @@ class Program:
         _parameters(header)
         self.header, self.steps = header, steps
         self.commit(message, label)
-        return self.run()
+        return self.committed_run()
 
     def patch(self, old, new, label=None):
         text = self.text
@@ -557,7 +585,7 @@ class Program:
         params.update(values)
         self.header = _rewrite_parameters(self.header, params)
         self.commit("set params", label)
-        return self.run()
+        return self.committed_run()
 
     def rollback(self, reference, label=None):
         version = self.resolve(reference)
@@ -565,7 +593,7 @@ class Program:
             text = stream.read()
         self.header, self.steps = _blocks(text)
         self.commit("rollback", label)
-        return self.run()
+        return self.committed_run()
 
     def resolve(self, reference):
         if not isinstance(reference, str) or not reference:

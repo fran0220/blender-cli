@@ -246,16 +246,17 @@ not a snapshot, so a program rebuilds its scene in any process.
   `{version, steps, digest, from_step, cached, ran, reproducible}`.
 - A step that raises ends the request with `error`, whose `type` is the
   step's own exception type, `line` is relative to that step, and `message`
-  is prefixed `step N:`. The version is still written, so the program keeps
-  the text that failed and the agent patches it; a file is not `Main`.
+  is prefixed `step N:`. It also carries `step`, the `version` holding the
+  failing text, and `cached_through`, the last prefix still cached.
 
-  `Main` is left at the last step that ran, not at the pre-request state.
-  This is the one request where the kernel's "a failed request leaves no
-  partial edit" rule resolves differently, and it does so because each step
-  takes its own snapshot: the kernel restores the session's current
-  snapshot, which by then is the last good step's. That is the state the
-  agent wants — it shows how far the program got, and it is already the
-  cached prefix a corrected `set` resumes from.
+  `Main` returns to the pre-request state: the kernel's rule that a failed
+  request leaves no partial edit holds here too, so a failed edit never
+  becomes the live scene. The program keeps the failure in three places that
+  are not `Main`. The text keeps the edit, because a file is not `Main` and
+  the agent patches the text it can see. Its version row records
+  `failed: true` with `step` and `line`. And the prefix cache keeps every
+  step that did run, because a cache is not state — so a corrected `set` or
+  `patch` resumes from `cached_through` at no extra cost.
 
 ### Prefix-cached re-execution
 
@@ -293,12 +294,14 @@ across runs and across processes; the snapshot ID is not.
 
 ### Versions
 
-Every `set|patch|run|rollback` and every recorded `exec` writes
+Every `set|patch|rollback` and every recorded `exec` writes
 `versions/<sha256 of the text>.py` and appends a row to `index.json`:
-`{version, parent, label, at, steps, reproducible, message}`. `current`
-names the checked-out version. Identical text reuses its version file and
-still appends a row, so the tree records the move. `program rollback` takes
-a version, a `sha256:`-less digest prefix or a label; `session snapshot
+`{version, parent, label, at, steps, reproducible, message, failed}`, with
+`step` and `line` added when `failed` is true. `program run` changes no text
+and so creates no version; it re-executes the current one. `current` names
+the checked-out version. Identical text reuses its version file and still
+appends a row, so the tree records the move. `program rollback` takes a
+version, a `sha256:`-less digest prefix or a label; `session snapshot
 --label L` labels the current version.
 
 ### `reproducible`

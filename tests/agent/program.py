@@ -162,8 +162,8 @@ def main():
             assert all(row["parent"] == versions[index]["version"]
                        for index, row in enumerate(versions[1:])), versions
             assert history["current"] == versions[-1]["version"], history
-            assert {"version", "parent", "label", "at", "steps", "reproducible", "message"} == set(
-                versions[-1]), versions[-1]
+            assert {"version", "parent", "label", "at", "steps", "reproducible", "message",
+                    "failed"} == set(versions[-1]), versions[-1]
             program("rollback", "--version", first_set, "--label", "shape")
             steps_ran()
             assert program("get")["params"] == {"radius": 0.4, "height": 2.0, "shift": 0.5}
@@ -187,20 +187,31 @@ def main():
             assert patched["ran"] == [1, 2, 3] and steps_ran() == [1, 2, 3], patched
             assert "depth=3.0" in program("get")["text"]
 
-            # A failing step names itself and leaves Main at the last step that ran.
+            # A failing step names itself, and the failed edit never becomes the scene.
+            live = call("inspect")["objects"]
             broken = program("set", "--text", text.replace(
                 'bpy.context.object.scale[2] = P["height"]',
                 'raise RuntimeError("step two")'), ok=False)
             assert broken["error"]["type"] == "RuntimeError", broken
             assert broken["error"]["line"] == 2, broken
             assert broken["error"]["message"] == "step 2: step two", broken
-            stopped, = call("inspect")["objects"]
-            assert stopped["name"] == "Cylinder", stopped
-            assert stopped["scale"][2] == 1.0, "step 2 never applied its scale"
-            assert stopped["location"][2] == 0.0, "step 3 never ran"
-            # The text keeps the edit that failed: a file is not Main.
+            assert call("inspect")["objects"] == live, "a failed request leaves no partial edit"
+            # The text keeps the edit that failed, and its version says why: a file is
+            # not Main, and the agent patches the text it can see.
             assert 'raise RuntimeError("step two")' in program("get")["text"]
+            failed = program("history")["versions"][-1]
+            assert failed["failed"] is True and failed["step"] == 2, failed
+            assert failed["line"] == 2 and failed["version"] == program("get")["version"], failed
+            assert all(row["failed"] is False for row in program("history")["versions"][:-1])
             steps_ran()
+
+            # The prefix the failed run reached is still cached, so the correction is
+            # cheap: step 1 does not run again even though steps 2 and 3 are new text.
+            corrected = program("set", "--text", text.replace(
+                'bpy.context.object.scale[2] = P["height"]',
+                'bpy.context.object.scale[2] = P["height"] * 1.5'))
+            assert corrected["ran"] == [2, 3] and steps_ran() == [2, 3], corrected
+            assert corrected["from_step"] == 2 and corrected["cached"] == 1, corrected
 
             # Reproducibility is a static verdict per step.
             mixed = program("set", "--text", (
