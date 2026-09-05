@@ -202,6 +202,29 @@ def wire_material():
     return material
 
 
+def render_passes(scene, size, near, far, wire=None):
+    """Unbordered RGB8 tiles shared by observation and numeric comparison."""
+    buffers = agent._native["render"](scene.name)
+
+    def pixels(name, channels):
+        return np.frombuffer(buffers[name], dtype=np.float32).reshape(size, size, channels)[::-1]
+
+    combined = pixels("Combined", 4)
+    color = srgb(combined[:, :, :3] + (1 - combined[:, :, 3:4]) * 0.035)
+    depth = pixels("Depth", 1)
+    mask = (depth < scene.camera.data.clip_end) & (combined[:, :, 3:4] >= 0.5)
+    images = {"color": bytes_rgb(color), "silhouette": np.repeat(mask.astype(np.uint8) * 255, 3, axis=2),
+              "normal": bytes_rgb(np.where(mask, pixels("Normal", 3) * 0.5 + 0.5, 0)),
+              "depth": bytes_rgb(np.repeat(np.where(mask, 1 - (depth - near) / (far - near), 0), 3, axis=2))}
+    if wire:
+        scene.view_layers[0].material_override = wire
+        wire_buffers = agent._native["render"](scene.name)
+        edge = np.frombuffer(wire_buffers["Combined"], dtype=np.float32).reshape(size, size, 4)[::-1, :, :1]
+        images["wire"] = bytes_rgb(color * (1 - np.clip(edge, 0, 1) * 0.9))
+        scene.view_layers[0].material_override = None
+    return images
+
+
 def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
             layout="sheet", frame=None, overlay=False, out=None, inline=False):
     views, passes = names(views, VIEWS), names(passes, PASSES)
@@ -224,24 +247,7 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
         wire = wire_material() if "wire" in passes else None
         for view in views:
             near, far = aim(scene, source, view, points, center, radius)
-            buffers = agent._native["render"](scene.name)
-
-            def pixels(name, channels):
-                return np.frombuffer(buffers[name], dtype=np.float32).reshape(size, size, channels)[::-1]
-
-            combined = pixels("Combined", 4)
-            color = srgb(combined[:, :, :3] + (1 - combined[:, :, 3:4]) * 0.035)
-            depth = pixels("Depth", 1)
-            mask = (depth < scene.camera.data.clip_end) & (combined[:, :, 3:4] >= 0.5)
-            images = {"color": bytes_rgb(color), "silhouette": np.repeat(mask.astype(np.uint8) * 255, 3, axis=2),
-                      "normal": bytes_rgb(np.where(mask, pixels("Normal", 3) * 0.5 + 0.5, 0)),
-                      "depth": bytes_rgb(np.repeat(np.where(mask, 1 - (depth - near) / (far - near), 0), 3, axis=2))}
-            if wire:
-                scene.view_layers[0].material_override = wire
-                wire_buffers = agent._native["render"](scene.name)
-                edge = np.frombuffer(wire_buffers["Combined"], dtype=np.float32).reshape(size, size, 4)[::-1, :, :1]
-                images["wire"] = bytes_rgb(color * (1 - np.clip(edge, 0, 1) * 0.9))
-                scene.view_layers[0].material_override = None
+            images = render_passes(scene, size, near, far, wire)
             tiles.extend(images[pass_name] for pass_name in passes)
         reference = None
         if ref:
