@@ -430,6 +430,16 @@ class Session:
             if not isinstance(verb, str) or not isinstance(arguments, list) or not all(
                     isinstance(arg, str) for arg in arguments):
                 raise ValueError("Expected verb string and args.argv string array")
+            if verb == "exec" and "-c" not in arguments:
+                try:
+                    args = parse([verb, *arguments])
+                    if args.script:
+                        with tokenize.open(args.script) as stream:
+                            first_line = stream.readline(512).rstrip("\n")
+                        self.native["request_source"](json.dumps(
+                            {"id": request["id"], "file": os.path.abspath(args.script), "first_line": first_line}))
+                except (ValueError, OSError, UnicodeError, SyntaxError):
+                    pass  # The ordinary exec path reports parsing/reading errors with its normal shape.
             if verb != "session":
                 text, status = run([verb, *arguments, "--json"], self.id_state, self.fields, self)
                 return text

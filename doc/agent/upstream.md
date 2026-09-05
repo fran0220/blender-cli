@@ -43,6 +43,7 @@ CMake/Python) on the line or block it adds. The full list:
 | `tests/CMakeLists.txt` | add `tests/agent` under `WITH_AGENT` after upstream's Python test helpers are defined, to register installed-launcher protocol tests |
 | `README.md` | marked agent distribution section: required CLI extraction and unsigned macOS quarantine instructions; documentation-only exception |
 | `source/blender/gpu/vulkan/vk_descriptor_pools.{cc,hh}` | explicit upstream-defect exception: enforce the pool's advertised `maxSets` and retire through existing timeline-safe recycling even when a driver permits overallocation |
+| `source/creator/creator_signals.cc` | registered optional agent crash-log callback supplies the output path and preformatted request/Python context; no session policy in the upstream handler |
 
 Adding a file to this table requires a reason in the same commit's message.
 A touch that is not registration or build wiring is a design error to solve

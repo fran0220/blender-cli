@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_render.hh"
+#include "agent_session.hh"
 
 #include <vector>
 
@@ -91,6 +92,7 @@ PyObject *render(bContext *C, PyObject *scene_name)
    * flush unrelated edit meshes, pause viewports or update the user's scene frame. */
   Render *re = RE_NewSceneRender(scene);
   G.is_break = false;
+  crashlog_python_context(true);
   Py_BEGIN_ALLOW_THREADS RE_RenderFrame(
       re, bmain, scene, nullptr, nullptr, scene->r.cfra, scene->r.subframe, false);
   Py_END_ALLOW_THREADS RenderResult *rr = RE_AcquireResultRead(re);
@@ -115,6 +117,7 @@ PyObject *render(bContext *C, PyObject *scene_name)
   }
   RE_ReleaseResult(re);
   RE_FreeRender(re);
+  crashlog_python_context(false);
   return result;
 }
 }  // namespace blender::agent

@@ -518,6 +518,16 @@ never edits a different scene. `autosave` is present only for an existing file.
 If a connection drops during a request, the launcher waits at most two seconds
 for process teardown and returns this same recovery error on the killed request
 itself. A still-live process retains the disconnection error instead.
+Before executing, `session.log` records the request ID, verb and first line of
+each argument (at most 512 characters). For script files it also records the
+filename and first code line. Native crash dumps handled by Blender go to
+`.blender-cli/session-<pid>.crash.txt`, independent of the live blend filepath;
+startup names this path in `session.log`. They include the current request.
+Before offscreen rendering releases the GIL, the agent captures the Python
+frame chain and appends it on a crash without calling Python from the handler.
+Upstream's ordinary Python backtrace is empty while `PyThreadState` is detached;
+the captured chain identifies the render entry, not a later native instruction.
+SIGKILL and `os._exit` bypass crash handlers and cannot produce a native dump.
 Common `--json` and human output
 remain compact/indented JSON respectively. Session result objects without an
 `ok` field and the history array are successful; `ok: false` exits 1.

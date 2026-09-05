@@ -92,6 +92,7 @@ def main():
                 if index in (0, 5, 9):
                     print(f"exec {index + 1}: {json.dumps(result)}", flush=True)
             assert execute("agent is __import__('agent')")["value"] == "True"
+            assert execute(repr("模型" * 300))["value"] == repr("模型" * 300)
             assert "error" in execute("agent.compare('missing.png', 'front')", ok=False)
             baseline = call("session", "snapshot", "--label", "before")
             assert vertices() == 8
@@ -330,6 +331,18 @@ len(mesh.vertices)
         assert call("inspect")["objects"][0]["name"] == "Sphere"
         call("session", "close")
         assert index_path.read_bytes() == index_before
+        if sys.platform != "win32":
+            faulted = call("session", "open", "--file", saved_autosave)
+            assert faulted["previous_autosave"] == str(saved_autosave), faulted
+            crash_script = root / "fault.py"
+            crash_script.write_text("# checkpoint crash regression\nimport os, signal; os.kill(os.getpid(), signal.SIGSEGV)\n")
+            call("exec", crash_script, ok=False)
+            dump = root / ".blender-cli" / f'session-{faulted["session"]}.crash.txt'
+            text = dump.read_text()
+            assert "# backtrace" in text and "# Agent request" in text, text
+            assert "# checkpoint crash regression" in text and str(crash_script) in text and '"id"' in text, text
+            assert str(dump) in (root / ".blender-cli/session.log").read_text()
+            call("session", "close")
         # Exercise the real observation pipeline in one native process at a cheap tile size.
         # The unpatched 128px and 512px paths both leak ~1810 VMAs per render and die at ~35.
         require_device(executable)

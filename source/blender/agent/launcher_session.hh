@@ -134,7 +134,7 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     const auto pidfile = directory / "session.pid";
     int pid = 0;
     std::ifstream(pidfile) >> pid;
-    const auto autosave = directory / ("autosave-" + std::to_string(pid) + ".blend");
+    auto autosave = directory / ("autosave-" + std::to_string(pid) + ".blend");
     auto with_autosave = [&](nlohmann::json result, const char *key = "autosave") {
       if (std::filesystem::is_regular_file(autosave)) {
         result[key] = autosave.string();
@@ -157,6 +157,16 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       return dead_session();
     }
     if (opening) {
+      const auto file_arg = std::find(args.begin(), args.end(), "--file");
+      if (file_arg != args.end() && file_arg + 1 != args.end()) {
+        const auto source = std::filesystem::absolute(*(file_arg + 1));
+        if (source.filename().string().starts_with("autosave-") &&
+            std::filesystem::is_regular_file(source.parent_path() /
+                                             (source.stem().string() + ".json")))
+        {
+          autosave = source;
+        }
+      }
       std::filesystem::create_directories(directory);
 #ifndef _WIN32
       std::filesystem::permissions(directory, std::filesystem::perms::owner_all);

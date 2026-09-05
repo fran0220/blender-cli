@@ -55,6 +55,11 @@
 
 #  include "creator_intern.h" /* Own include. */
 
+/* blender-cli */
+#  ifdef WITH_AGENT
+#    include "AGENT_command.hh"
+#  endif
+
 namespace blender {
 
 #  if defined(__linux__) || defined(_WIN32) || defined(OSX_SSE_FPE)
@@ -86,6 +91,12 @@ static void sig_handle_blender_esc(int sig)
 
 static void crashlog_file_generate(const char *filepath, const void *os_info)
 {
+  /* blender-cli: Optional registered session diagnostics; policy remains in the agent. */
+#  ifdef WITH_AGENT
+  if (agent::crashlog_callback) {
+    agent::crashlog_callback(&filepath, nullptr);
+  }
+#  endif
   /* Might be called after WM/Main exit, so needs to be careful about nullptr-checking before
    * de-referencing. */
 
@@ -135,6 +146,12 @@ static void crashlog_file_generate(const char *filepath, const void *os_info)
 #  ifdef WITH_PYTHON
   /* Generate python back-trace if Python is currently active. */
   BPY_python_backtrace(fp);
+#  endif
+  /* blender-cli */
+#  ifdef WITH_AGENT
+  if (agent::crashlog_callback) {
+    agent::crashlog_callback(nullptr, fp);
+  }
 #  endif
   if (fp != stderr) {
     fclose(fp);

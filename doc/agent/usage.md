@@ -152,6 +152,10 @@ the original live filepath and dirty state, not adopt the autosave as a save
 destination. If no autosave is reported, reopen an explicit save, or discard the
 dead session with `session close`. Closing a dead session keeps its crash file;
 a clean close removes the new live session's autosave, not older crash files.
+`session.log` identifies the request ID and first code line, and names the native
+dump `.blender-cli/session-<pid>.crash.txt`. A handled native rendering crash also
+includes the Python stack captured before entering the renderer. `os._exit` and
+SIGKILL bypass handlers: they leave recovery files but cannot produce that dump.
 
 ## Blender gotchas observed while iterating
 

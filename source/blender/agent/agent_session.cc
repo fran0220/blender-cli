@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_session.hh"
+#include "AGENT_command.hh"
 #include "agent_context.hh"
 #include "agent_transport.hh"
 
 #include <filesystem>
+#include <frameobject.h>
 #include <fstream>
 #include <unordered_map>
 
@@ -20,6 +22,7 @@
 #include "BLI_fileops.hh"
 #include "BLI_listbase.hh"
 #include "BLI_string.hh"
+#include "BLI_string_utf8.hh"
 #include "BLI_timer.hh"
 #include "BLO_readfile.hh"
 #include "BLO_undofile.hh"
@@ -35,6 +38,46 @@
 #endif
 
 namespace blender::agent {
+
+void (*crashlog_callback)(const char **filepath, FILE *output) = nullptr;
+static std::string crashlog_path, crashlog_request, crashlog_python;
+
+static void session_crashlog(const char **filepath, FILE *output)
+{
+  if (filepath) {
+    *filepath = crashlog_path.c_str();
+  }
+  if (output) {
+    fprintf(output, "\n# Agent request\n%s\n", crashlog_request.c_str());
+    if (!crashlog_python.empty()) {
+      fprintf(output,
+              "\n# Python backtrace (captured before releasing the GIL for rendering)\n%s",
+              crashlog_python.c_str());
+    }
+  }
+}
+
+void crashlog_python_context(bool capture)
+{
+  crashlog_python.clear();
+  if (!capture || !crashlog_callback) {
+    return;
+  }
+  /* BPY_python_backtrace cannot find a detached PyThreadState during RE_RenderFrame.
+   * Prepare text under the GIL, so the crash callback never needs to call Python. */
+  PyFrameObject *frame = PyEval_GetFrame();
+  Py_XINCREF(frame);
+  while (frame) {
+    PyCodeObject *code = PyFrame_GetCode(frame);
+    crashlog_python += "  File \"" + std::string(PyUnicode_AsUTF8(code->co_filename)) +
+                       "\", line " + std::to_string(PyFrame_GetLineNumber(frame)) + " in " +
+                       PyUnicode_AsUTF8(code->co_name) + "\n";
+    Py_DECREF(code);
+    PyFrameObject *next = PyFrame_GetBack(frame);
+    Py_DECREF(frame);
+    frame = next;
+  }
+}
 
 struct Session {
   bContext *context;
@@ -271,6 +314,17 @@ static PyObject *snapshot_persist(PyObject *self, PyObject *arg)
   Py_RETURN_NONE;
 }
 
+static PyObject *request_source(PyObject *, PyObject *arg)
+{
+  const char *source = PyUnicode_AsUTF8(arg);
+  if (!source) {
+    return nullptr;
+  }
+  crashlog_request += "\n" + std::string(source);
+  fprintf(stderr, "Agent source: %s\n", source);
+  fflush(stderr);
+  Py_RETURN_NONE;
+}
 
 static PyMethodDef methods[] = {
     {"snapshot", snapshot_create, METH_NOARGS, nullptr},
@@ -278,12 +332,20 @@ static PyMethodDef methods[] = {
     {"cancelled", cancelled, METH_NOARGS, nullptr},
     {"restore_metadata", restore_metadata, METH_VARARGS, nullptr},
     {"persist", snapshot_persist, METH_O, nullptr},
+    {"request_source", request_source, METH_O, nullptr},
 };
 
 int session_serve(
     bContext *C, PyObject *arguments, PyObject *snapshot, PyObject *fields, PyObject *module)
 {
   Session state{C};
+  const auto directory = std::filesystem::current_path() / ".blender-cli";
+  const auto path = directory / "session.sock";
+  state.autosave = directory / ("autosave-" + std::to_string(getpid()) + ".blend");
+  crashlog_path = (directory / ("session-" + std::to_string(getpid()) + ".crash.txt")).string();
+  crashlog_callback = session_crashlog;
+  fprintf(stderr, "Agent crash dump: %s\n", crashlog_path.c_str());
+  fflush(stderr);
   PyObject *capsule = PyCapsule_New(&state, "agent.session", nullptr);
   PyObject *native = PyDict_New();
   for (auto &method : methods) {
@@ -296,11 +358,9 @@ int session_serve(
   Py_DECREF(native);
   Py_DECREF(capsule);
   if (!runtime) {
+    crashlog_callback = nullptr;
     return 1;
   }
-  const auto directory = std::filesystem::current_path() / ".blender-cli";
-  const auto path = directory / "session.sock";
-  state.autosave = directory / ("autosave-" + std::to_string(getpid()) + ".blend");
   int status = 0;
   try {
     Transport transport(path.string());
@@ -321,11 +381,15 @@ int session_serve(
           for (auto &arg : summary["args"]["argv"]) {
             if (arg.is_string()) {
               const auto text = arg.get<std::string>();
-              arg = text.substr(0, std::min(text.find('\n'), size_t(512)));
+              char first_line[513];
+              BLI_strncpy_utf8(
+                  first_line, text.substr(0, text.find('\n')).c_str(), sizeof(first_line));
+              arg = first_line;
             }
           }
         }
-        fprintf(stderr, "Agent request: %s\n", summary.dump().c_str());
+        crashlog_request = summary.dump();
+        fprintf(stderr, "Agent request: %s\n", crashlog_request.c_str());
         fflush(stderr);
         PyObject *answer = PyObject_CallMethod(runtime, "dispatch", "s", message.c_str());
         nlohmann::json result;
@@ -342,6 +406,7 @@ int session_serve(
         Py_XDECREF(closed);
         BLI_timer_execute();
         transport.answer(request, result);
+        crashlog_request.clear();
         state.last_request = Session::Clock::now();
         if (!closing && state.dirty &&
             state.last_request - state.last_write >= std::chrono::seconds(5))
@@ -371,6 +436,7 @@ int session_serve(
     Py_DECREF(agent);
   }
   Py_DECREF(runtime);
+  crashlog_callback = nullptr;
   if (status == 0) {
     std::filesystem::remove(path);
     std::filesystem::remove(directory / "session.pid");
