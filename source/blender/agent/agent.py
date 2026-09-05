@@ -2,7 +2,13 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Session controls alongside upstream bpy, not a replacement for it."""
+"""Session controls alongside upstream bpy, not a replacement for it.
+
+Every helper returns the same dict its event or request carries. Helpers whose
+computation belongs to another module resolve through the runtime's helper
+registry, so a build without that module answers `NotImplemented` by name
+instead of failing obscurely.
+"""
 
 _session = None
 
@@ -13,13 +19,18 @@ def _active():
     return _session
 
 
+def _helper(name):
+    import agent_runtime
+    return agent_runtime.helper(name)
+
+
 def snapshot(label=None):
     """Return the content-addressed snapshot ID for the current session state."""
     return _active().snapshot(label, "snapshot")
 
 
 def rollback(snapshot_id):
-    """Restore a session snapshot ID or relative offset; return None. Reacquire RNA references afterwards."""
+    """Restore a session snapshot ID, label or offset; return None. Reacquire RNA references."""
     _active().rollback(snapshot_id)
 
 
@@ -29,14 +40,14 @@ def diff():
 
 
 def history():
-    """Return a list of snapshot event dicts containing snapshot, label, verb and at."""
+    """Return a list of snapshot event dicts containing snapshot, label, op, step and at."""
     return [dict(event) for event in _active().history]
 
 
-def observe(views=("front",), passes=("color",), size=512, ref=None):
-    """Return a deterministic render dict with image path, views, passes, size and world-space framing."""
+def observe(views=("front",), passes=("color",), size=512, ref=None, frame=None):
+    """Return a deterministic render dict with image path, views, passes, size and framing."""
     from agent_observe import observe as render
-    return render(views=views, passes=passes, size=size, ref=ref)
+    return render(views=views, passes=passes, size=size, ref=ref, frame=frame)
 
 
 def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debug=False, fit="bbox"):
@@ -52,3 +63,29 @@ def describe(path):
     """Return live bpy RNA metadata or agent helper signatures, docstrings and parameter defaults."""
     from agent_rna import describe as describe_rna
     return describe_rna(path)
+
+
+def perceive(view="front", size=256):
+    """Return the perception dict for the current state, in the event's shape."""
+    return _helper("perceive")(view=view, size=size)
+
+
+def objective():
+    """Return the objective dict scoring every registered target, in the event's shape."""
+    return _helper("objective")()
+
+
+def fit(params, objective=None, budget=None, method="coordinate"):
+    """Search parameters against the registered targets and apply the best result."""
+    return _helper("fit")(params, objective=objective, budget=budget, method=method)
+
+
+def program():
+    """Return the current program text, parameters, step count and version."""
+    return _helper("program")()
+
+
+def register_provider(provider):
+    """Register a feedback provider: name, order, before(request, session), after(request, session, emit)."""
+    import agent_runtime
+    agent_runtime.register_provider(provider)

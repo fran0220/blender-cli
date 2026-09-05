@@ -81,7 +81,7 @@ void crashlog_python_context(bool capture)
 
 struct Session {
   bContext *context;
-  Transport *transport = nullptr;
+  Channel *channel = nullptr;
   std::unordered_map<std::string, MemFileUndoData *> snapshots;
   std::unordered_map<std::string, bool> snapshot_dirty;
   std::deque<std::string> order;
@@ -280,9 +280,9 @@ static PyObject *snapshot_restore(PyObject *self, PyObject *arg)
 
 static PyObject *cancelled(PyObject *self, PyObject *)
 {
-  auto *transport = session(self).transport;
+  auto *channel = session(self).channel;
   /* G.is_break is a plain bool, not atomic. Only the main thread may write it. */
-  G.is_break = transport && transport->cancelled.load();
+  G.is_break = channel && channel->cancelled.load();
   return PyBool_FromLong(G.is_break);
 }
 
@@ -335,101 +335,162 @@ static PyMethodDef methods[] = {
     {"request_source", request_source, METH_O, nullptr},
 };
 
-int session_serve(
-    bContext *C, PyObject *arguments, PyObject *snapshot, PyObject *fields, PyObject *module)
+/* One event line, written the moment Python produces it. */
+struct ChannelSink : public EventSink {
+  Channel &channel;
+  const Channel::Request *request = nullptr;
+
+  explicit ChannelSink(Channel &channel) : channel(channel) {}
+
+  void event(const std::string &line) override
+  {
+    if (request) {
+      channel.send(*request, line);
+    }
+  }
+};
+
+static PyObject *emit_event(PyObject *self, PyObject *arg)
+{
+  const char *line = PyUnicode_AsUTF8(arg);
+  if (!line) {
+    return nullptr;
+  }
+  static_cast<EventSink *>(PyCapsule_GetPointer(self, "agent.sink"))->event(line);
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef emit_method = {"emit", emit_event, METH_O, nullptr};
+
+PyObject *event_emitter(EventSink &sink)
+{
+  PyObject *capsule = PyCapsule_New(&sink, "agent.sink", nullptr);
+  PyObject *function = PyCFunction_New(&emit_method, capsule);
+  Py_DECREF(capsule);
+  return function;
+}
+
+/* The request log keeps one readable line per request; a long statement is
+ * truncated to its first line so a crash dump still identifies it. */
+static std::string request_summary(const nlohmann::json &message)
+{
+  auto summary = message;
+  for (const char *key : {"code", "text", "old", "new"}) {
+    if (summary.contains(key) && summary[key].is_string()) {
+      const auto text = summary[key].get<std::string>();
+      char first_line[513];
+      BLI_strncpy_utf8(first_line, text.substr(0, text.find('\n')).c_str(), sizeof(first_line));
+      summary[key] = first_line;
+    }
+  }
+  return summary.dump();
+}
+
+int session_serve(bContext *C,
+                  PyObject *module,
+                  PyObject *native,
+                  const std::string &file,
+                  bool stdio,
+                  FILE *output)
 {
   Session state{C};
   const auto directory = std::filesystem::current_path() / ".blender-cli";
   const auto path = directory / "session.sock";
+  std::filesystem::create_directories(directory);
   state.autosave = directory / ("autosave-" + std::to_string(getpid()) + ".blend");
   crashlog_path = (directory / ("session-" + std::to_string(getpid()) + ".crash.txt")).string();
   crashlog_callback = session_crashlog;
   fprintf(stderr, "Agent crash dump: %s\n", crashlog_path.c_str());
   fflush(stderr);
+
+  Channel *channel = nullptr;
+  int status = 0;
+  try {
+    /* The stdio reader blocks in the C library until end of input, so the
+     * channel outlives this function and is reclaimed by process exit. */
+    channel = stdio ? static_cast<Channel *>(new StdioChannel(output)) :
+                      static_cast<Channel *>(new SocketChannel(path.string()));
+  }
+  catch (const std::exception &error) {
+    fprintf(stderr, "Session: %s\n", error.what());
+    crashlog_callback = nullptr;
+    return 1;
+  }
+  state.channel = channel;
+  ChannelSink sink(*channel);
+
   PyObject *capsule = PyCapsule_New(&state, "agent.session", nullptr);
-  PyObject *native = PyDict_New();
   for (auto &method : methods) {
     PyObject *function = PyCFunction_New(&method, capsule);
     PyDict_SetItemString(native, method.ml_name, function);
     Py_DECREF(function);
   }
-  PyObject *runtime = PyObject_CallMethod(
-      module, "Session", "OOOO", arguments, snapshot, fields, native);
-  Py_DECREF(native);
   Py_DECREF(capsule);
+  PyObject *emitter = event_emitter(sink);
+  PyDict_SetItemString(native, "emit", emitter);
+  Py_DECREF(emitter);
+  nlohmann::json config = {{"file", file}};
+  PyObject *runtime = PyObject_CallMethod(module, "Session", "Os", native, config.dump().c_str());
   if (!runtime) {
+    PyErr_Print();
     crashlog_callback = nullptr;
     return 1;
   }
-  int status = 0;
-  try {
-    Transport transport(path.string());
-    state.transport = &transport;
-    bool closing = false;
-    while (!closing) {
-      Transport::Request request;
-      bool received;
-      Py_BEGIN_ALLOW_THREADS received = transport.next(request);
-      Py_END_ALLOW_THREADS if (received)
-      {
-        G.is_break = false;
-        const std::string message = request.message.dump();
-        auto summary = request.message;
-        if (summary.contains("args") && summary["args"].is_object() &&
-            summary["args"].contains("argv") && summary["args"]["argv"].is_array())
-        {
-          for (auto &arg : summary["args"]["argv"]) {
-            if (arg.is_string()) {
-              const auto text = arg.get<std::string>();
-              char first_line[513];
-              BLI_strncpy_utf8(
-                  first_line, text.substr(0, text.find('\n')).c_str(), sizeof(first_line));
-              arg = first_line;
-            }
-          }
-        }
-        crashlog_request = summary.dump();
-        fprintf(stderr, "Agent request: %s\n", crashlog_request.c_str());
-        fflush(stderr);
-        PyObject *answer = PyObject_CallMethod(runtime, "dispatch", "s", message.c_str());
-        nlohmann::json result;
-        if (answer) {
-          result = nlohmann::json::parse(PyUnicode_AsUTF8(answer));
-          Py_DECREF(answer);
-        }
-        else {
-          PyErr_Print();
-          result = {{"ok", false}, {"error", {{"type", "InternalError"}}}};
-        }
-        PyObject *closed = PyObject_GetAttrString(runtime, "closing");
-        closing = closed && PyObject_IsTrue(closed);
-        Py_XDECREF(closed);
-        BLI_timer_execute();
-        transport.answer(request, result);
-        crashlog_request.clear();
-        state.last_request = Session::Clock::now();
-        if (!closing && state.dirty &&
-            state.last_request - state.last_write >= std::chrono::seconds(5))
-        {
-          state.autosave_write();
-        }
+
+  bool closing = false;
+  while (!closing) {
+    Channel::Request request;
+    bool received;
+    Py_BEGIN_ALLOW_THREADS received = channel->next(request);
+    Py_END_ALLOW_THREADS if (received)
+    {
+      G.is_break = false;
+      crashlog_request = request_summary(request.message);
+      fprintf(stderr, "Agent request: %s\n", crashlog_request.c_str());
+      fflush(stderr);
+      sink.request = &request;
+      PyObject *answer = PyObject_CallMethod(
+          runtime, "serve", "s", request.message.dump().c_str());
+      if (answer) {
+        Py_DECREF(answer);
       }
       else {
-        BLI_timer_execute();
-        const auto now = Session::Clock::now();
-        if (state.dirty && now - state.last_request >= std::chrono::seconds(1) &&
-            now - state.last_write >= std::chrono::seconds(1))
-        {
-          state.autosave_write();
-        }
+        PyErr_Print();
+        sink.event(nlohmann::json({{"id", request.message["id"]},
+                                   {"event", "error"},
+                                   {"ok", false},
+                                   {"type", "InternalError"},
+                                   {"message", "Agent runtime failed; see the session log"}})
+                       .dump());
+      }
+      PyObject *closed = PyObject_GetAttrString(runtime, "closing");
+      closing = closed && PyObject_IsTrue(closed);
+      Py_XDECREF(closed);
+      sink.request = nullptr;
+      BLI_timer_execute();
+      channel->finish(request);
+      crashlog_request.clear();
+      state.last_request = Session::Clock::now();
+      if (!closing && state.dirty &&
+          state.last_request - state.last_write >= std::chrono::seconds(5))
+      {
+        state.autosave_write();
       }
     }
-    state.transport = nullptr;
+    else {
+      BLI_timer_execute();
+      const auto now = Session::Clock::now();
+      if (state.dirty && now - state.last_request >= std::chrono::seconds(1) &&
+          now - state.last_write >= std::chrono::seconds(1))
+      {
+        state.autosave_write();
+      }
+      if (channel->ended()) {
+        break;
+      }
+    }
   }
-  catch (const std::exception &error) {
-    fprintf(stderr, "Session: %s\n", error.what());
-    status = 1;
-  }
+  state.channel = nullptr;
   PyObject *agent = PyImport_ImportModule("agent");
   if (agent) {
     PyObject_SetAttrString(agent, "_session", Py_None);
@@ -437,10 +498,15 @@ int session_serve(
   }
   Py_DECREF(runtime);
   crashlog_callback = nullptr;
+  if (!stdio) {
+    delete channel;
+  }
   if (status == 0) {
-    std::filesystem::remove(path);
-    std::filesystem::remove(directory / "session.pid");
-    std::filesystem::remove(directory / "session.lock");
+    if (!stdio) {
+      std::filesystem::remove(path);
+      std::filesystem::remove(directory / "session.pid");
+      std::filesystem::remove(directory / "session.lock");
+    }
     std::filesystem::remove(state.autosave);
     std::filesystem::remove(state.autosave.string() + "@");
     const auto metadata = state.autosave.parent_path() /

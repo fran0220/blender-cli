@@ -31,7 +31,9 @@
 #include "DNA_ID.h"
 
 #include "AGENT_command.hh"
+#include "agent_cli.hh"
 #include "agent_context.hh"
+#include "agent_events.hh"
 #include "agent_session.hh"
 
 namespace blender::agent {
@@ -111,6 +113,17 @@ static PyObject *recalc_fields()
   return result;
 }
 
+/* `--file F` after a verb that owns the loop: the scene the session opens. */
+static std::string loaded_file(int argc, const char **argv)
+{
+  for (int i = 0; i + 1 < argc; i++) {
+    if (STREQ(argv[i], "--file")) {
+      return cli_absolute(argv[i + 1]);
+    }
+  }
+  return "";
+}
+
 class AgentCommand : public CommandHandler {
  public:
   AgentCommand() : CommandHandler("agent") {}
@@ -119,15 +132,21 @@ class AgentCommand : public CommandHandler {
   {
     if (argc == 0 || STREQ(argv[0], "--help")) {
       puts(
-          "Usage: blender-cli <session|exec|inspect|observe|compare|describe> [options]\n"
-          "  exec -c CODE | FILE.py [--timeout S] [--observe VIEWS]\n"
+          "Usage: blender-cli <repl|exec|inspect|observe|describe|session|target|program|fit>\n"
+          "  repl [--file F] [--standalone]   one pipe of JSON-line requests and events\n"
+          "  exec -c CODE | FILE.py [--no-record] [--timeout S] [--image delta|full|off]\n"
           "  inspect [--object NAME] [--full] [--select PATH ...]\n"
           "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
           "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
           "          [--layout sheet|separate] [--out PATH | --inline]\n"
-          "  compare --ref IMG --view V [--metrics iou,chamfer,ssim,hist]\n"
-          "          [--mask auto|none] [--size 512|768|1024] [--frame OBJECT] [--debug-out DIR]\n"
-          "  describe RNA_PATH\n"
+          "  describe RNA_PATH | channel | --schema\n"
+          "  session open|status|feedback|save|close|snapshot|rollback|history\n"
+          "          [--label L] [--file F] [--json-file F | KEY=VALUE ...]\n"
+          "  target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none]\n"
+          "         [--metrics iou,chamfer,ssim,hist] | target list | target clear [NAME]\n"
+          "  program get|set|patch|run|history|rollback|record [--text T] [--old O] [--new N]\n"
+          "          [--label L] [--version V]\n"
+          "  fit --params JSON [--objective JSON] [--budget JSON] [--method M]\n"
           "  Common: --file F --save [F] --json\n"
           "  --version: upstream version and fork tag");
       return 0;
@@ -157,31 +176,31 @@ class AgentCommand : public CommandHandler {
     BPY_context_set(C);
     RequestState state{C, {}};
     PyObject *capsule = PyCapsule_New(&state, "agent.request", nullptr);
+    PyObject *native = PyDict_New();
     PyObject *snapshot = PyCFunction_New(&id_state_method, capsule);
     PyObject *fields = recalc_fields();
-    PyObject *arguments = PyList_New(argc);
-    for (int i = 0; i < argc; i++) {
-      PyList_SET_ITEM(arguments, i, PyUnicode_DecodeFSDefault(argv[i]));
-    }
+    PyDict_SetItemString(native, "id_state", snapshot);
+    PyDict_SetItemString(native, "fields", fields);
+    Py_DECREF(snapshot);
+    Py_DECREF(fields);
+    Py_DECREF(capsule);
     PyObject *module = PyImport_ImportModule("agent_runtime");
     PyObject *helper = PyImport_ImportModule("agent");
     if (helper) {
-      PyObject *native = native_api(C);
-      PyObject_SetAttrString(helper, "_native", native);
-      Py_DECREF(native);
+      PyObject *api = native_api(C);
+      PyObject_SetAttrString(helper, "_native", api);
+      Py_DECREF(api);
       Py_DECREF(helper);
     }
-    const bool serving = argc >= 2 && STREQ(argv[0], "session") && STREQ(argv[1], "serve");
-    PyObject *result = module && !serving ?
-                           PyObject_CallMethod(module, "run", "OOO", arguments, snapshot, fields) :
-                           nullptr;
-    int status = module && serving ? session_serve(C, arguments, snapshot, fields, module) : 1;
-    if (result) {
-      PyObject *text = PyTuple_GetItem(result, 0);
-      const char *json = text ? PyUnicode_AsUTF8(text) : nullptr;
-      if (json) {
-        fprintf(output, "%s\n", json);
-        status = int(PyLong_AsLong(PyTuple_GetItem(result, 1)));
+    int status = 1;
+    if (module) {
+      const bool serving = argc >= 2 && STREQ(argv[0], "session") && STREQ(argv[1], "serve");
+      const bool repl = STREQ(argv[0], "repl");
+      if (serving || repl) {
+        status = session_serve(C, module, native, loaded_file(argc, argv), repl, output);
+      }
+      else {
+        status = one_shot(module, native, argc, argv, output);
       }
     }
     if (PyErr_Occurred()) {
@@ -190,16 +209,45 @@ class AgentCommand : public CommandHandler {
           "{\"ok\":false,\"error\":{\"type\":\"InternalError\","
           "\"message\":\"Agent runtime failed; see stderr\"}}\n",
           output);
+      status = 1;
     }
-    Py_XDECREF(result);
     Py_XDECREF(module);
-    Py_DECREF(arguments);
-    Py_DECREF(fields);
-    Py_DECREF(snapshot);
-    Py_DECREF(capsule);
+    Py_DECREF(native);
     PyGILState_Release(gil);
     fclose(output);
     return status;
+  }
+
+ private:
+  /* One request, then the folded envelope: the same events, printed as one
+   * document instead of streamed. */
+  static int one_shot(PyObject *module, PyObject *native, int argc, const char **argv, FILE *out)
+  {
+    CommandLine parsed = cli_parse(std::vector<std::string>(argv, argv + argc));
+    if (!parsed.error.empty()) {
+      nlohmann::json envelope = {{"ok", false},
+                                 {"error", {{"type", "ValueError"}, {"message", parsed.error}}}};
+      fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2).c_str());
+      return 1;
+    }
+    parsed.request["id"] = 1;
+    nlohmann::json config = {{"request", parsed.request}, {"file", parsed.load}};
+    if (parsed.has_save) {
+      config["save"] = parsed.save;
+    }
+    CollectingSink sink;
+    PyObject *emitter = event_emitter(sink);
+    PyDict_SetItemString(native, "emit", emitter);
+    Py_DECREF(emitter);
+    PyObject *answer = PyObject_CallMethod(
+        module, "one_shot", "Os", native, config.dump().c_str());
+    if (!answer) {
+      return 1;
+    }
+    Py_DECREF(answer);
+    const auto envelope = fold(sink.events);
+    fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2).c_str());
+    return envelope_status(envelope);
   }
 };
 

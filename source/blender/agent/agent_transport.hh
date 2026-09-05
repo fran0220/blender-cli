@@ -8,9 +8,11 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -18,11 +20,13 @@
 
 namespace blender::agent {
 
-/* No Blender or Python API is reachable from the transport thread. */
-class Transport {
+/* No Blender or Python API is reachable from a transport thread: it moves and
+ * parses protocol bytes, answers `cancel`, and hands requests to the main
+ * thread in arrival order. */
+class Channel {
  public:
   struct Peer {
-    Socket fd;
+    Socket fd = invalid_socket;
     std::string input, output;
   };
   struct Request {
@@ -32,15 +36,119 @@ class Transport {
 
   std::atomic<bool> cancelled{false};
 
- private:
-  Socket listener_ = invalid_socket;
-  std::thread thread_;
+  virtual ~Channel() = default;
+
+  /* Main thread: take the next request, waiting at most 10 ms. */
+  bool next(Request &request)
+  {
+    std::unique_lock lock(mutex_);
+    ready_.wait_for(lock, std::chrono::milliseconds(10), [this] { return !queue_.empty(); });
+    if (queue_.empty()) {
+      return false;
+    }
+    request = std::move(queue_.front());
+    queue_.pop_front();
+    active_id_ = request.message["id"];
+    cancelled = false;
+    return true;
+  }
+
+  /* Main thread: one event, written as it is produced rather than at the end. */
+  void send(const Request &request, const std::string &line)
+  {
+    std::lock_guard lock(mutex_);
+    write(*request.peer, line + "\n");
+  }
+
+  void finish(const Request &)
+  {
+    std::lock_guard lock(mutex_);
+    active_id_ = nullptr;
+    cancelled = false;
+  }
+
+  /* True once no further request can arrive (stdin closed). */
+  bool ended() const
+  {
+    return ended_.load();
+  }
+
+ protected:
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<Request> queue_;
-  std::vector<std::shared_ptr<Peer>> peers_;
   nlohmann::json active_id_;
+  std::atomic<bool> ended_{false};
   bool stopping_ = false;
+
+  /* Called with the mutex held, from either thread. */
+  virtual void write(Peer &peer, const std::string &text) = 0;
+
+  /* Transport thread, mutex held. Complete lines only; `cancel` never queues. */
+  void consume(const std::shared_ptr<Peer> &peer)
+  {
+    size_t end;
+    while ((end = peer->input.find('\n')) != std::string::npos) {
+      auto message = nlohmann::json::parse(peer->input.substr(0, end), nullptr, false);
+      peer->input.erase(0, end + 1);
+      if (!message.is_object() || !message["id"].is_number_integer()) {
+        protocol_error(
+            *peer, nullptr, "Every request is a JSON object with an integer id and an op");
+      }
+      else if (message.value("op", std::string()) == "cancel") {
+        for (const auto &field : message.items()) {
+          if (field.key() != "id" && field.key() != "op" && field.key() != "target") {
+            protocol_error(*peer, message["id"], "cancel accepts only: target");
+            return;
+          }
+        }
+        if (!message["target"].is_number_integer()) {
+          protocol_error(*peer, message["id"], "cancel requires an integer target");
+          continue;
+        }
+        const bool running = !active_id_.is_null() && message["target"] == active_id_;
+        if (running) {
+          cancelled = true;
+        }
+        write(*peer,
+              nlohmann::json({{"id", message["id"]},
+                              {"event", "done"},
+                              {"ok", true},
+                              {"target", message["target"]},
+                              {"cancelled", running}})
+                      .dump() +
+                  "\n");
+      }
+      else {
+        queue_.push_back({peer, std::move(message)});
+        ready_.notify_one();
+      }
+    }
+  }
+
+  void protocol_error(Peer &peer, const nlohmann::json &id, const char *message)
+  {
+    write(peer,
+          nlohmann::json({{"id", id},
+                          {"event", "error"},
+                          {"ok", false},
+                          {"type", "ProtocolError"},
+                          {"message", message}})
+                  .dump() +
+              "\n");
+  }
+};
+
+/* The session endpoint: many clients, one request in flight. */
+class SocketChannel : public Channel {
+  Socket listener_ = invalid_socket;
+  std::thread thread_;
+  std::vector<std::shared_ptr<Peer>> peers_;
+
+  void write(Peer &peer, const std::string &text) override
+  {
+    peer.output += text;
+  }
 
   void read_loop()
   {
@@ -94,10 +202,10 @@ class Transport {
 #else
             constexpr int flags = 0;
 #endif
-            int n = send(peer->fd,
-                         peer->output.data(),
-                         int(std::min<size_t>(peer->output.size(), 4096)),
-                         flags);
+            int n = ::send(peer->fd,
+                           peer->output.data(),
+                           int(std::min<size_t>(peer->output.size(), 65536)),
+                           flags);
             closed = n == 0 || (n < 0 && !socket_would_block());
             if (n > 0) {
               peer->output.erase(0, n);
@@ -110,25 +218,7 @@ class Transport {
           closed = n == 0 || (n < 0 && !socket_would_block());
           if (n > 0) {
             peer->input.append(buffer, n);
-            size_t end;
-            while ((end = peer->input.find('\n')) != std::string::npos) {
-              auto message = nlohmann::json::parse(peer->input.substr(0, end), nullptr, false);
-              peer->input.erase(0, end + 1);
-              if (!message.is_object() || !message.contains("id")) {
-                peer->output +=
-                    "{\"id\":null,\"result\":{\"ok\":false,\"error\":{\"type\":\"ProtocolError\"}}"
-                    "}\n";
-              }
-              else if (message.value("cancel", nlohmann::json(false)) == true) {
-                if (!active_id_.is_null() && message["id"] == active_id_) {
-                  cancelled = true;
-                }
-              }
-              else {
-                queue_.push_back({peer, std::move(message)});
-                ready_.notify_one();
-              }
-            }
+            consume(peer);
             closed |= peer->input.size() > 16 * 1024 * 1024;
           }
         }
@@ -145,7 +235,7 @@ class Transport {
   }
 
  public:
-  explicit Transport(const std::string &path)
+  explicit SocketChannel(const std::string &path)
   {
     socket_init();
     const auto address = socket_address(path);
@@ -162,31 +252,9 @@ class Transport {
     thread_ = std::thread([this] { read_loop(); });
   }
 
-  bool next(Request &request)
+  ~SocketChannel() override
   {
-    std::unique_lock lock(mutex_);
-    ready_.wait_for(lock, std::chrono::milliseconds(10), [this] { return !queue_.empty(); });
-    if (queue_.empty()) {
-      return false;
-    }
-    request = std::move(queue_.front());
-    queue_.pop_front();
-    active_id_ = request.message["id"];
-    cancelled = false;
-    return true;
-  }
-
-  void answer(const Request &request, const nlohmann::json &result)
-  {
-    std::lock_guard lock(mutex_);
-    request.peer->output +=
-        nlohmann::json({{"id", request.message["id"]}, {"result", result}}).dump() + "\n";
-    active_id_ = nullptr;
-  }
-
-  ~Transport()
-  {
-    /* Give the close response a bounded opportunity to drain. */
+    /* Give the last events a bounded opportunity to drain. */
     for (int i = 0; i < 100; i++) {
       {
         std::lock_guard lock(mutex_);
@@ -209,6 +277,44 @@ class Transport {
       socket_close(peer->fd);
     }
     socket_close(listener_);
+  }
+};
+
+/* `blender-cli repl` in this process: the same protocol on stdin/stdout. */
+class StdioChannel : public Channel {
+  FILE *output_;
+  std::shared_ptr<Peer> peer_ = std::make_shared<Peer>();
+  std::thread thread_;
+
+  void write(Peer &, const std::string &text) override
+  {
+    fwrite(text.data(), 1, text.size(), output_);
+    fflush(output_);
+  }
+
+  void read_loop()
+  {
+    char buffer[8192];
+    while (fgets(buffer, sizeof(buffer), stdin)) {
+      std::lock_guard lock(mutex_);
+      peer_->input.append(buffer);
+      consume(peer_);
+    }
+    ended_ = true;
+    ready_.notify_one();
+  }
+
+ public:
+  explicit StdioChannel(FILE *output) : output_(output)
+  {
+    thread_ = std::thread([this] { read_loop(); });
+  }
+
+  /* The reader blocks in fgets until stdin closes; it is detached because the
+   * process exits immediately after the loop returns. */
+  ~StdioChannel() override
+  {
+    thread_.detach();
   }
 };
 }  // namespace blender::agent

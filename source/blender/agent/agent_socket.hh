@@ -102,19 +102,39 @@ inline bool socket_write(Socket fd, const std::string &text)
   return true;
 }
 
-inline std::string socket_read_line(Socket fd)
-{
-  std::string text;
-  char buffer[8192];
-  int count;
-  while ((count = recv(fd, buffer, sizeof(buffer), 0)) > 0) {
-    text.append(buffer, count);
-    const auto end = text.find('\n');
-    if (end != std::string::npos) {
-      return text.substr(0, end);
+/* An event stream is many lines on one connection, so the reader keeps what it
+ * has already received rather than discarding the tail of a read. */
+class LineReader {
+  Socket fd_;
+  std::string buffer_;
+
+ public:
+  explicit LineReader(Socket fd) : fd_(fd) {}
+
+  std::string next()
+  {
+    size_t end;
+    while ((end = buffer_.find('\n')) == std::string::npos) {
+      char chunk[8192];
+      int count = recv(fd_, chunk, sizeof(chunk), 0);
+      if (count <= 0) {
+        throw std::runtime_error("Session disconnected before answering");
+      }
+      buffer_.append(chunk, count);
     }
+    std::string line = buffer_.substr(0, end);
+    buffer_.erase(0, end + 1);
+    return line;
   }
-  throw std::runtime_error("Session disconnected before answering");
+};
+
+inline void socket_shutdown_write(Socket fd)
+{
+#ifdef _WIN32
+  shutdown(fd, SD_SEND);
+#else
+  shutdown(fd, SHUT_WR);
+#endif
 }
 
 inline bool socket_nonblocking(Socket fd)

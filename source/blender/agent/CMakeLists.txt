@@ -9,8 +9,8 @@ endif()
 set(INC . ../python ../makesrna ../blenloader ../editors/include ../windowmanager ../render)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
 set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
-  agent_socket.hh agent_transport.hh agent_context.cc agent_context.hh
-  agent_render.cc agent_render.hh)
+  agent_cli.hh agent_events.hh agent_socket.hh agent_transport.hh
+  agent_context.cc agent_context.hh agent_render.cc agent_render.hh)
 set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib

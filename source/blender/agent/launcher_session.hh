@@ -4,10 +4,13 @@
 
 #pragma once
 
+#include "agent_cli.hh"
+#include "agent_events.hh"
 #include "agent_socket.hh"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <json.hpp>
@@ -116,16 +119,65 @@ class SessionLock {
   }
 };
 
-/* Return -1 only when the original one-shot launcher should take over. */
+/* Read one request's events, in order, until its terminal event. */
+inline std::vector<nlohmann::json> read_events(LineReader &reader)
+{
+  std::vector<nlohmann::json> events;
+  while (true) {
+    auto event = nlohmann::json::parse(reader.next(), nullptr, false);
+    if (!event.is_object()) {
+      continue;
+    }
+    const auto kind = event.value("event", std::string());
+    events.push_back(std::move(event));
+    if (kind == "done" || kind == "error") {
+      return events;
+    }
+  }
+}
+
+/* `repl`: the launcher owns no protocol, it only moves the same bytes. */
+inline int session_bridge(Socket fd)
+{
+  std::thread writer([fd] {
+    char buffer[8192];
+    while (fgets(buffer, sizeof(buffer), stdin)) {
+      if (!socket_write(fd, buffer)) {
+        return;
+      }
+    }
+    socket_shutdown_write(fd);
+  });
+  char chunk[8192];
+  int count;
+  while ((count = recv(fd, chunk, sizeof(chunk), 0)) > 0) {
+    fwrite(chunk, 1, size_t(count), stdout);
+    fflush(stdout);
+  }
+  /* The reader is blocked in the C library until stdin closes; the process
+   * exits immediately after this returns. */
+  writer.detach();
+  return 0;
+}
+
+/* Return -1 only when the one-shot launcher should take over. */
 template<typename Spawn> int session_client(const std::vector<std::string> &args, Spawn spawn)
 {
   if (args.empty() || args[0].starts_with("--")) {
     return -1;
   }
   const bool compact = std::find(args.begin(), args.end(), "--json") != args.end();
+  const bool repl = args[0] == "repl";
+  if (repl && std::find(args.begin(), args.end(), "--standalone") != args.end()) {
+    /* A standalone repl is the loop itself, in one process, with no daemon. */
+    return -1;
+  }
   auto print = [&](const nlohmann::json &result) {
     puts(result.dump(compact ? -1 : 2).c_str());
     return result.is_object() && result.value("ok", true) == false ? 1 : 0;
+  };
+  auto failure = [&](const std::string &type, const std::string &message) {
+    return print({{"ok", false}, {"error", {{"type", type}, {"message", message}}}});
   };
   try {
     socket_init();
@@ -156,17 +208,9 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     if (!opening && !closing && std::filesystem::exists(pidfile) && !process_alive(pid)) {
       return dead_session();
     }
-    if (opening) {
-      const auto file_arg = std::find(args.begin(), args.end(), "--file");
-      if (file_arg != args.end() && file_arg + 1 != args.end()) {
-        const auto source = std::filesystem::absolute(*(file_arg + 1));
-        if (source.filename().string().starts_with("autosave-") &&
-            std::filesystem::is_regular_file(source.parent_path() /
-                                             (source.stem().string() + ".json")))
-        {
-          autosave = source;
-        }
-      }
+    /* Starting the daemon is the same operation for `session open` and for a
+     * `repl` that finds no endpoint. */
+    auto start_daemon = [&](const std::vector<std::string> &serving) {
       std::filesystem::create_directories(directory);
 #ifndef _WIN32
       std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
@@ -184,8 +228,6 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       }
       std::filesystem::remove(path);
       std::filesystem::remove(pidfile);
-      std::vector<std::string> serving = args;
-      serving[1] = "serve";
       pid = spawn(serving, directory / "session.log");
       if (pid <= 0) {
         throw std::runtime_error("Could not start session daemon");
@@ -195,8 +237,7 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
         Socket fd = socket_connect(path.string());
         if (fd != invalid_socket) {
           socket_close(fd);
-          return print(with_autosave({{"session", std::to_string(pid)}, {"socket", path.string()}},
-                                     "previous_autosave"));
+          return;
         }
         if (!process_alive(pid)) {
           break;
@@ -208,6 +249,50 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       std::filesystem::remove(pidfile);
       throw std::runtime_error(
           "Session startup failed within 10 seconds; see .blender-cli/session.log");
+    };
+    /* One request, its events, and the envelope they fold into. */
+    auto converse = [&](Socket fd, const nlohmann::json &request, int timeout_seconds) {
+      if (!socket_write(fd, request.dump() + "\n")) {
+        socket_close(fd);
+        throw std::runtime_error("Could not send session request");
+      }
+      if (timeout_seconds > 0) {
+        fd_set readers;
+        FD_ZERO(&readers);
+        FD_SET(fd, &readers);
+        timeval timeout{timeout_seconds, 0};
+        if (select(int(fd + 1), &readers, nullptr, nullptr, &timeout) <= 0) {
+          throw std::runtime_error("Session did not answer in time");
+        }
+      }
+      LineReader reader(fd);
+      return fold(read_events(reader));
+    };
+    if (opening) {
+      const auto file_arg = std::find(args.begin(), args.end(), "--file");
+      if (file_arg != args.end() && file_arg + 1 != args.end()) {
+        const auto source = std::filesystem::absolute(*(file_arg + 1));
+        if (source.filename().string().starts_with("autosave-") &&
+            std::filesystem::is_regular_file(source.parent_path() /
+                                             (source.stem().string() + ".json")))
+        {
+          autosave = source;
+        }
+      }
+      std::vector<std::string> serving = args;
+      serving[1] = "serve";
+      start_daemon(serving);
+      nlohmann::json result = {{"session", std::to_string(pid)}, {"socket", path.string()}};
+      Socket fd = socket_connect(path.string());
+      if (fd != invalid_socket) {
+        /* The daemon knows what it rebuilt its scene from; the launcher does not. */
+        const auto status = converse(fd, {{"id", 1}, {"op", "session"}, {"action", "status"}}, 0);
+        socket_close(fd);
+        if (status.contains("recovered_from") && !status["recovered_from"].is_null()) {
+          result["recovered_from"] = status["recovered_from"];
+        }
+      }
+      return print(with_autosave(result, "previous_autosave"));
     }
     Socket fd = socket_connect(path.string());
     if (fd == invalid_socket) {
@@ -231,36 +316,49 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
         }
         throw std::runtime_error("Session process is alive but endpoint is unavailable");
       }
-      return -1;
+      if (!repl) {
+        return -1;
+      }
+      std::vector<std::string> serving = {"session", "serve"};
+      const auto file_arg = std::find(args.begin(), args.end(), "--file");
+      if (file_arg != args.end() && file_arg + 1 != args.end()) {
+        serving.insert(serving.end(), {"--file", *(file_arg + 1)});
+      }
+      start_daemon(serving);
+      fd = socket_connect(path.string());
+      if (fd == invalid_socket) {
+        throw std::runtime_error("Session started but its endpoint is unavailable");
+      }
     }
-    std::vector<std::string> forwarded(args.begin() + 1, args.end());
-    const auto id = std::chrono::steady_clock::now().time_since_epoch().count();
-    nlohmann::json request = {{"id", id}, {"verb", args[0]}, {"args", {{"argv", forwarded}}}};
-    /* IDs are supplied by raw clients. A launcher uses one connection for one request. */
-    if (!socket_write(fd, request.dump() + "\n")) {
+    if (repl) {
+      return session_bridge(fd);
+    }
+    CommandLine parsed = cli_parse(args);
+    if (!parsed.error.empty()) {
       socket_close(fd);
-      throw std::runtime_error("Could not send session request");
+      return failure("ValueError", parsed.error);
     }
-    if (closing) {
-      fd_set readers;
-      FD_ZERO(&readers);
-      FD_SET(fd, &readers);
-      timeval timeout{2, 0};
-      if (select(int(fd + 1), &readers, nullptr, nullptr, &timeout) <= 0) {
-        socket_close(fd);
+    if (!parsed.load.empty() || parsed.has_save) {
+      socket_close(fd);
+      return failure("ValueError",
+                     "--file loads only at session open and --save is a one-shot option; "
+                     "use `session save --file F` in a session");
+    }
+    /* IDs are supplied by raw clients. A launcher uses one connection for one request. */
+    parsed.request["id"] = std::chrono::steady_clock::now().time_since_epoch().count();
+    nlohmann::json envelope;
+    try {
+      envelope = converse(fd, parsed.request, closing ? 2 : 0);
+    }
+    catch (...) {
+      socket_close(fd);
+      if (closing) {
         SessionLock lock(directory / "session.lock");
         terminate_process(pid);
         std::filesystem::remove(path);
         std::filesystem::remove(pidfile);
         return print({{"ok", true}, {"forced", true}});
       }
-    }
-    std::string line;
-    try {
-      line = socket_read_line(fd);
-    }
-    catch (...) {
-      socket_close(fd);
       /* EOF can precede OS process teardown, particularly on Windows. Report
        * recovery on the request that died, not only on its successor. */
       for (int i = 0; i < 200 && process_alive(pid); i++) {
@@ -272,9 +370,7 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       throw;
     }
     socket_close(fd);
-    auto response = nlohmann::json::parse(line);
-    auto result = response.at("result");
-    if (closing && result.is_object() && result.value("ok", false)) {
+    if (closing && envelope.value("ok", false)) {
       for (int i = 0; i < 200 && process_alive(pid); i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
@@ -282,14 +378,13 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
         terminate_process(pid);
         std::filesystem::remove(path);
         std::filesystem::remove(pidfile);
-        result["forced"] = true;
+        envelope["forced"] = true;
       }
     }
-    return print(result);
+    return print(envelope);
   }
   catch (const std::exception &error) {
-    return print(
-        {{"ok", false}, {"error", {{"type", "SessionError"}, {"message", error.what()}}}});
+    return failure("SessionError", error.what());
   }
 }
 }  // namespace blender::agent
