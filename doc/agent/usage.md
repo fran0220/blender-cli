@@ -140,3 +140,24 @@ a clean close removes the new live session's autosave, not older crash files.
   becomes 11. Read back the value and consult `describe` for limits. Extreme
   evaluated geometry can abort the entire process; Python exception handling
   cannot catch a native allocator abort.
+- Set `rotation_mode` **before** assigning `rotation_euler`. For example,
+  assigning Euler values while in `QUATERNION` mode and then switching to `XYZ`
+  converts from the quaternion and can reset those Euler values to zero.
+
+### Rigify is shipped, not enabled
+
+Factory startup enables glTF and FBX, but not Rigify. Enable it after resetting
+the scene, since factory settings reset add-on state. Run this in one `exec`:
+
+```python
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.preferences.addon_enable(module="rigify")
+bpy.ops.object.armature_human_metarig_add()
+bpy.ops.pose.rigify_generate()
+len(bpy.data.objects["rig"].data.bones)
+```
+
+The installed Linux orb returned `value: "706"`; enable + metarig + generation
+took about six seconds. Avoid `addon_utils.enable("rigify", default_set=False)`:
+Rigify's registration reads its preferences entry, which that call does not
+create. Use the preferences operator above instead.
