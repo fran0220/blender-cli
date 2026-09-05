@@ -480,7 +480,7 @@ Exact pass definitions (all RGB8):
 | `wire` | Color darkened by up to 90% at evaluated triangle edges. A second EEVEE material-override render uses the upstream Wireframe shader, pixel size 1; its antialiased coverage supplies the overlay mask. This is a diagnostic tessellation wire, not original polygon-edge topology. |
 | `silhouette` | Binary white (255) where native Depth is inside the camera far clip and Combined alpha ≥ 0.5; black (0) otherwise. No intermediate gray/antialiasing survives. Transparent surfaces follow this coverage rule, not a semantic object-ID mask. |
 | `normal` | Native EEVEE world-space shading normal mapped componentwise by 0.5n + 0.5; black outside the silhouette. Normal/depth use EEVEE's nearest-to-pixel-center data sample, not color's antialiasing average. |
-| `depth` | Camera depth d mapped to clamp(1 − (d − near)/(far − near), 0, 1), repeated in RGB; near/far are the min/max depths of the framing-bound corners (range at least 0.001). Depth is axial, or radial for a panoramic `camera`, matching EEVEE. Near is white, far/background black; the silhouette masks background. |
+| `depth` | Camera depth d mapped to clamp(1 − (d − near)/(far − near), 0, 1), repeated in RGB; near/far are the min/max depths of the framing geometry points (range at least 0.001). Depth is axial, or radial for a panoramic `camera`, matching EEVEE. Near is white, far/background black; the silhouette masks background. |
 
 Sheet rows follow requested **view order**, columns **pass order**. Each tile
 has a 2-pixel RGB (32,32,32) border on every side: dimensions are
@@ -666,7 +666,7 @@ instances/types and operator modules add `error.rna.struct` and up to five
 from live properties/functions or module operators. If the struct has no near
 match, its `data` pointer's live RNA properties/functions are searched one hop
 and hints are prefixed with `data.`, e.g. `data.bevel_depth` on a curve Object.
-A nearest property also
+A nearest property on the original struct also
 supplies compact type, e.g. `float[3]`. Property assignment TypeError/ValueError
 adds the live property record (including enum descriptions and numeric ranges).
 Operator argument failures add the operator struct's complete valid properties.
