@@ -5,6 +5,8 @@
 #include "agent_context.hh"
 #include "agent_render.hh"
 
+#include "MEM_guardedalloc.h"
+
 #include "BKE_context.hh"
 #include "BKE_main.hh"
 #include "BKE_screen.hh"
@@ -101,6 +103,19 @@ static PyObject *recalc_guard(PyObject *self, PyObject *)
   return preserve_recalc(context(self));
 }
 
+static PyObject *poll_message(PyObject *self, PyObject *)
+{
+  bContext *C = context(self);
+  bool free_message = false;
+  const char *message = CTX_wm_operator_poll_msg_get(C, &free_message);
+  PyObject *result = message ? PyUnicode_FromString(message) : Py_NewRef(Py_None);
+  CTX_wm_operator_poll_msg_clear(C);
+  if (free_message) {
+    MEM_delete(message);
+  }
+  return result;
+}
+
 static bool viewport_required(bContext *C)
 {
   CTX_wm_operator_poll_msg_set(
@@ -126,6 +141,7 @@ PyObject *native_api(bContext *C)
       {"flush", flush, METH_NOARGS, nullptr},
       {"render", render_scene, METH_O, nullptr},
       {"preserve_recalc", recalc_guard, METH_NOARGS, nullptr},
+      {"poll_message", poll_message, METH_NOARGS, nullptr},
   };
   PyObject *capsule = PyCapsule_New(C, "agent.context", nullptr);
   PyObject *result = PyDict_New();

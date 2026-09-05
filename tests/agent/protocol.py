@@ -124,8 +124,10 @@ collection.objects.link(obj)
         assert not bad_path["ok"], bad_path
         missing_file = call("inspect", "--file", root / "absent.blend", ok=False)
         assert missing_file["error"]["type"] == "FileNotFoundError", missing_file
-        for verb in ("session", "compare", "describe"):
+        for verb in ("session", "compare"):
             assert call(verb, ok=False)["error"]["type"] == "NotImplemented"
+        described = call("describe", "bpy.types.Object.location")
+        assert described["type"] == "float" and described["array_length"] == 3, described
         separate_inline = call("observe", "--layout", "separate", "--inline", ok=False)
         assert "one image" in separate_inline["error"]["message"], separate_inline
         assert call("not-a-verb", ok=False)["error"]["type"] == "ValueError"

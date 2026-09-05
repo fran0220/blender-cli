@@ -38,9 +38,9 @@ def parse(arguments):
     parser.add_argument("--save", nargs="?", const="")
     parser.add_argument("--json", action="store_true")
     # Later-phase verbs must report NotImplemented even with their future arguments.
-    if arguments[0] in {"session", "compare", "describe"}:
+    if arguments[0] in {"session", "compare"}:
         raise NotImplemented(f"{arguments[0]} is not implemented in Phase 1")
-    if arguments[0] not in {"exec", "inspect", "observe"}:
+    if arguments[0] not in {"exec", "inspect", "observe", "describe"}:
         raise ValueError(f"Unknown verb: {arguments[0]}")
     if arguments[0] == "exec":
         parser.add_argument("-c", dest="code")
@@ -57,6 +57,8 @@ def parse(arguments):
         parser.add_argument("--overlay", action="store_true")
         parser.add_argument("--out")
         parser.add_argument("--inline", action="store_true")
+    elif arguments[0] == "describe":
+        parser.add_argument("path")
     else:
         parser.add_argument("--object")
         parser.add_argument("--full", action="store_true")
@@ -230,6 +232,10 @@ def execute(args, snapshot, fields, session=None):
             raise Cancelled("Execution cancelled")
         if deadline and time.perf_counter() >= deadline:
             raise TimeoutError(f"Execution exceeded {args.timeout:g} seconds")
+    except (AttributeError, TypeError, ValueError) as error:
+        from agent_rna import error_context
+        error._agent_rna = error_context(error, code, filename)
+        raise
     finally:
         sys.settrace(previous_trace)
         # Keep edit mode active, but make Mesh RNA, inspection and saving current.
@@ -263,6 +269,8 @@ def run(arguments, snapshot, fields, session=None):
                 from agent_observe import observe
                 result = observe(**{key: getattr(args, key) for key in
                                     ("views", "passes", "size", "ref", "layout", "frame", "overlay", "out", "inline")})
+            elif args.verb == "describe":
+                result = {"ok": True, **agent.describe(args.path)}
             else:
                 result = inspect(args)
             if session and args.verb == "exec":
@@ -275,6 +283,8 @@ def run(arguments, snapshot, fields, session=None):
             user_frames = [frame for frame in frames if frame.filename != __file__]
             line = getattr(error, "lineno", None) or (user_frames[-1].lineno if user_frames else None)
             result = {"ok": False, "error": {"type": type(error).__name__, "message": str(error), "line": line}}
+            if getattr(error, "_agent_rna", None):
+                result["error"]["rna"] = error._agent_rna
     if arguments[0] == "exec" or not result["ok"]:
         result.update(stdout=stdout.getvalue(), stderr=stderr.getvalue())
     text = json.dumps(serialize(result), ensure_ascii=True, allow_nan=False,

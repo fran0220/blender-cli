@@ -457,6 +457,36 @@ Answers from live RNA: signature, properties with types, ranges, enum items
 and descriptions, and for operators the poll requirements the synthetic
 context satisfies.
 
+#### Phase 4 RNA contract
+
+`describe` and `agent.describe(path)` resolve public attributes and literal
+string/integer subscripts, never calls or arbitrary expressions. A bare name
+is relative to `bpy.types`. Instance paths return the instance's live struct.
+Results have `kind: property|struct|operator|module`; CLI adds `ok: true`.
+Structs include `struct`, `description`, `base` (nullable), and `properties`
+keyed by identifier. Property records include identifier, description, lowercase
+type, subtype, animatable, readonly, and where applicable array_length, default,
+hard_min/max, soft_min/max, fixed_type, and enum_items (identifier/name/description).
+Operators add path, keyword signature, context note and actual `poll()` boolean;
+`poll_reason` is present only when upstream supplies a failure message. Polls
+run in the adopted Phase 3 context, not an invented edit mode. Module results
+map every operator name to its one-line RNA description. Neither JSON nor
+indented human output truncates properties or enum items.
+
+Exec errors retain their original type/message/line. Attribute failures on RNA
+instances/types and operator modules add `error.rna.struct` and up to five
+`nearest` identifiers, ranked by Python difflib SequenceMatcher similarity
+(cutoff 0.6, sorted candidate names for deterministic ties). Candidates come
+from live properties/functions or module operators. A nearest property also
+supplies compact type, e.g. `float[3]`. Property assignment TypeError/ValueError
+adds the live property record (including enum descriptions and numeric ranges).
+Operator argument failures add the operator struct's complete valid properties.
+The failing bytecode's source position identifies the receiver in the original
+traceback locals, including semicolon-separated statements; calls are never
+replayed. If no RNA receiver can be recovered, `rna` is absent, not empty.
+Blender silently clamps many numeric assignments; these remain successful
+upstream operations, not synthetic errors. Descriptions still expose their ranges.
+
 ## The `agent` helper module
 
 Preloaded into every `exec` namespace. The Phase 2 surface is:
@@ -464,6 +494,7 @@ Preloaded into every `exec` namespace. The Phase 2 surface is:
 ```python
 agent.observe(views=("front",), passes=("color",), size=512, ref=None) -> {"image": path, ...}
 agent.compare(ref, view, metrics=("iou",), mask="auto") -> {"iou": …}
+agent.describe(path) -> {"kind": …, ...}
 agent.snapshot(label=None) -> "sha256:…"
 agent.rollback(snapshot_id) -> None
 agent.diff() -> {"added": …, "changed": …, "removed": …}   # since last exec boundary

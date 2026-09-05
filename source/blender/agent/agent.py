@@ -36,3 +36,8 @@ def observe(views=("front",), passes=("color",), size=512, ref=None):
 
 def compare(ref, view, metrics=("iou",), mask="auto"):
     raise NotImplementedError("agent.compare is delivered in Phase 4")
+
+
+def describe(path):
+    from agent_rna import describe as describe_rna
+    return describe_rna(path)
