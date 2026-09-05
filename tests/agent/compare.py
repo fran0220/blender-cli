@@ -92,12 +92,14 @@ image.filepath_raw = str(Path('alpha.png').resolve())
 image.file_format = 'PNG'
 image.save()
 bpy.data.images.remove(image)
-image = bpy.data.images.load(str(Path('colored.png').resolve()), check_existing=False)
+rgba = np.concatenate((composite / 255, np.ones((512, 512, 1))), axis=2)
 for extension, format in (('jpg', 'JPEG'), ('webp', 'WEBP')):
+    image = bpy.data.images.new('Codec reference', width=512, height=512, alpha=False)
     image.filepath_raw = str(Path('colored.' + extension).resolve())
     image.file_format = format
+    image.pixels.foreach_set(rgba[::-1].astype(np.float32).ravel())
     image.save()
-bpy.data.images.remove(image)
+    bpy.data.images.remove(image)
 """)
             assert compare(root / "portrait.png")["iou"] >= 0.98
             assert compare(root / "alpha.png", "--mask", "none")["iou"] >= 0.98
