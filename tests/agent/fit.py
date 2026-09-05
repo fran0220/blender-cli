@@ -48,6 +48,24 @@ bpy.context.scene.camera = camera
 bpy.data.objects['Cube'].scale = (P["sx"], P["sy"], 1)
 """
 
+# A step that refuses part of the range, so a fit meets a failed evaluation.
+FAILING = """# blender-cli program
+P = {"sx": 1.0}
+# step 1
+import bpy
+bpy.ops.mesh.primitive_cube_add(size=2)
+camera = bpy.data.objects.new('Fit camera', bpy.data.cameras.new('Fit camera'))
+camera.data.type = 'ORTHO'
+camera.data.ortho_scale = 4
+camera.location = (0, 0, 6)
+bpy.context.scene.collection.objects.link(camera)
+bpy.context.scene.camera = camera
+# step 2
+if P["sx"] > 1.2:
+    raise ValueError("sx above 1.2 is not buildable")
+bpy.data.objects['Cube'].scale = (P["sx"], 1.45, 1)
+"""
+
 TRUTH = (1.70, 1.45)
 START = (1.00, 1.00)
 X = 'objects["Cube"].scale[0]'
@@ -140,6 +158,8 @@ def main():
         call("exec", "-c", SCENE.format(*TRUTH), "--save", truth)
         call("observe", "--views", "camera", "--passes", "silhouette", "--size", "512",
              "--out", ref, "--file", truth)
+        call("observe", "--views", "front", "--passes", "silhouette", "--size", "512",
+             "--out", root / "front.png", "--file", truth)
         call("exec", "-c", SCENE.format(*START), "--save", start)
 
         channel = Channel(executable, root, start)
@@ -318,6 +338,84 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
                                     "curve", "applied", "cancelled", "error_map"}, in_code
             assert in_code["evals"] == 3 and set(in_code["best"]["params"]) == {"sx"}, in_code
 
+            # nelder-mead recovers the same truth as coordinate descent.
+            channel.request(op="exec", code=RESET)
+            simplex = channel.done(
+                op="fit", method="nelder-mead",
+                params=[{"path": X, "min": 0.4, "max": 1.9},
+                        {"path": Y, "min": 0.4, "max": 1.9}],
+                objective={"target": "top", "metric": "iou"},
+                budget={"evals": 40, "seconds": 900, "size": 128})
+            print("nelder-mead fit:", json.dumps(simplex["best"]), flush=True)
+            assert simplex["method"] == "nelder-mead" and simplex["evals"] <= 40, simplex
+            assert simplex["best"]["score"] >= 0.97, simplex
+            assert abs(simplex["best"]["params"][X] - TRUTH[0]) < 0.1, simplex
+            assert abs(simplex["best"]["params"][Y] - TRUTH[1]) < 0.1, simplex
+
+            # A weighted objective over two views: one render per view per
+            # evaluation, and a weighted mean of the two per-target scores.
+            channel.done(op="target", action="set", name="face", ref="front.png",
+                         view="front", mask="none", fit="none")
+
+            def one_eval(**objective):
+                channel.request(op="exec", code=RESET)
+                return channel.done(
+                    op="fit", params=[{"path": X, "min": 0.4, "max": 1.9}],
+                    objective=objective, budget={"evals": 1, "size": 128})
+
+            alone = one_eval(target="top", metric="iou")["best"]["score"]
+            other = one_eval(target="face", metric="iou")["best"]["score"]
+            mixed = one_eval(targets=["top", "face"], metric="iou", weights=[0.7, 0.3])
+            print("weighted objective:", json.dumps(
+                {"top": alone, "face": other, "weighted": mixed["best"]["score"]}), flush=True)
+            assert mixed["objective"] == {"targets": ["top", "face"], "metric": "iou",
+                                          "weights": [0.7, 0.3]}, mixed
+            assert alone != other, (alone, other)
+            assert abs(mixed["best"]["score"] - (0.7 * alone + 0.3 * other)) < 1e-9, mixed
+            channel.done(op="target", action="clear", name="face")
+
+            # A code objective is scored by agent code and returns no error map.
+            channel.request(op="exec", code=RESET)
+            coded = channel.done(
+                op="fit", params=[{"path": X, "min": 0.4, "max": 1.9}],
+                objective={"code": "agent.compare('ref.png', 'camera', metrics=('iou',),"
+                                   " mask='none', fit='none', size=512)['iou']"},
+                budget={"evals": 6, "seconds": 900, "size": 128})
+            print("code objective:", json.dumps(coded["best"]), flush=True)
+            assert "code" in coded["objective"] and "error_map" not in coded, coded
+            assert 0 < coded["best"]["score"] <= 1 and coded["evals"] == 6, coded
+            assert coded["best"]["score"] > alone, (coded, alone)
+
+            # A step that raises costs its evaluation and is counted, and the
+            # search keeps going instead of failing the request.
+            channel.done(op="program", action="set", text=FAILING)
+            broken = channel.done(
+                op="fit", params=[{"name": "sx", "min": 0.4, "max": 1.9}],
+                objective={"target": "top", "metric": "iou"},
+                budget={"evals": 8, "seconds": 900, "size": 128})
+            print("failed evaluations:", json.dumps(
+                {key: broken[key] for key in ("evals", "failed", "best")}), flush=True)
+            assert broken["failed"] >= 1 and broken["evals"] == 8, broken
+            assert broken["best"]["score"] > 0 and broken["applied"], broken
+            assert broken["best"]["params"]["sx"] <= 1.2, broken
+            assert channel.done(op="program", action="get")["params"]["sx"] <= 1.2
+
+            # Appearance metrics reach the objective event, and the first one
+            # registered is the metric `best` tracks.
+            channel.done(op="target", action="set", name="look", ref="ref.png", view="camera",
+                         mask="none", fit="none", metrics=["ssim", "hist", "iou"])
+            appearance, = only(channel.request(op="exec", code=RESET), "objective")
+            look = appearance["targets"]["look"]
+            print("appearance target:", json.dumps(look), flush=True)
+            assert set(look) == {"ssim", "hist", "iou", "delta", "worst"}, look
+            assert -1 <= look["ssim"] <= 1 and 0 <= look["hist"] <= 1, look
+            assert set(appearance["best"]["look"]) == {"ssim", "snapshot", "step"}, appearance
+            # `best` tracks the primary metric's best value so far, which this
+            # reset moved away from, so it is ahead of the current score.
+            assert appearance["best"]["look"]["ssim"] >= look["ssim"], appearance
+            assert look["delta"]["ssim"] < 0, look
+            channel.done(op="target", action="clear", name="look")
+
             cleared = channel.done(op="target", action="clear")
             assert cleared["cleared"] == ["top"], cleared
             assert not (root / ".blender-cli" / "targets" / "top").exists()
@@ -326,9 +424,155 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
             assert channel.value("import json; json.dumps(agent.objective())") == {
                 "targets": {}, "best": {}}
             channel.request(op="target", action="clear", name="top", ok=False)
+
+            metrics(channel, root)
         finally:
             channel.close()
     print("agent fit tests passed")
+
+
+def metrics(channel, root):
+    """`agent.compare` is what the objective computes; nothing else covers it.
+
+    These assertions come from the deleted `tests/agent/compare.py`, which the
+    removal of the `compare` verb took with it. The computation stayed, so its
+    coverage lives here with the rest of workstream T.
+    """
+    # Real data from this binary; no committed fixtures and no replacement scene.
+    channel.request(op="exec", code="""
+bpy.data.objects['Cube'].scale = (0.6, 1, 1)
+bpy.context.view_layer.update()
+""")
+    channel.value("""
+import json
+from pathlib import Path
+import numpy as np
+from agent_observe import png, bytes_rgb, resize
+SIZE = 512
+def load_rgb(path):
+    image = bpy.data.images.load(str(Path(path).resolve()), check_existing=False)
+    w, h = image.size
+    pixels = np.empty(w * h * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgb = bytes_rgb(pixels.reshape(h, w, 4)[::-1, :, :3])
+    bpy.data.images.remove(image)
+    return rgb
+colour = agent.observe(views=('front',), passes=('color',), size=SIZE)['image']
+shape = agent.observe(views=('front',), passes=('silhouette',), size=SIZE)['image']
+rgb = load_rgb(colour)[2:-2, 2:-2]
+silhouette = load_rgb(shape)[2:-2, 2:-2, 0] != 0
+Path('self.png').write_bytes(png(rgb))
+Path('mask.png').write_bytes(png(np.repeat(
+    silhouette[:, :, None].astype(np.uint8) * 255, 3, axis=2)))
+# A textured background the auto mask has to remove.
+Path('colored.png').write_bytes(png(np.where(
+    silhouette[:, :, None], rgb, np.array((35, 140, 210), dtype=np.uint8))))
+# The same silhouette with 20% margins, which `fit=bbox` must normalise away.
+ys, xs = np.nonzero(silhouette)
+cropped = silhouette[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+scale = SIZE * 0.6 / max(cropped.shape)
+w, h = round(cropped.shape[1] * scale), round(cropped.shape[0] * scale)
+padded = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+x, y = (SIZE - w) // 2, (SIZE - h) // 2
+padded[y:y + h, x:x + w] = np.repeat(
+    (resize(cropped[:, :, None].astype(float), w, h) >= 0.5).astype(np.uint8) * 255, 3, axis=2)
+Path('margins.png').write_bytes(png(padded))
+# A portrait crop, a straight-alpha PNG, and the JPEG and WebP codecs.
+Path('portrait.png').write_bytes(png(rgb[:, 64:-64]))
+rgba = np.concatenate((rgb / 255, silhouette[:, :, None].astype(float)), axis=2)
+image = bpy.data.images.new('Alpha reference', width=SIZE, height=SIZE, alpha=True)
+image.pixels.foreach_set(rgba[::-1].astype(np.float32).ravel())
+image.filepath_raw = str(Path('alpha.png').resolve())
+image.file_format = 'PNG'
+image.save()
+bpy.data.images.remove(image)
+composite = np.where(silhouette[:, :, None], rgb, np.array((35, 140, 210), dtype=np.uint8))
+opaque = np.concatenate((composite / 255, np.ones((SIZE, SIZE, 1))), axis=2)
+for extension, kind in (('jpg', 'JPEG'), ('webp', 'WEBP')):
+    image = bpy.data.images.new('Codec reference', width=SIZE, height=SIZE, alpha=False)
+    image.filepath_raw = str(Path('colored.' + extension).resolve())
+    image.file_format = kind
+    image.pixels.foreach_set(opaque[::-1].astype(np.float32).ravel())
+    image.save()
+    bpy.data.images.remove(image)
+json.dumps({"ok": True})
+""")
+
+    def compare(reference, **kwargs):
+        arguments = ", ".join(f"{key}={value!r}" for key, value in kwargs.items())
+        return channel.value(
+            f"import json; json.dumps(agent.compare({reference!r}, 'front',"
+            f" metrics=('iou', 'chamfer', 'ssim', 'hist'){',' if arguments else ''}"
+            f" {arguments}))")
+
+    # A render compared against itself is the metrics' fixed point. The colour
+    # tile is segmented by luminance, so it agrees to a rounding edge; the
+    # silhouette tile is the mask itself and agrees exactly.
+    same = compare("self.png", mask="none", fit="none")
+    print("self compare:", json.dumps(same), flush=True)
+    assert same["iou"] >= 0.98 and same["chamfer"] <= 1, same
+    assert same["ssim"] >= 0.98 and same["hist"] <= 0.02, same
+    exact = compare("mask.png", mask="none", fit="none")
+    assert exact["iou"] == 1.0 and exact["chamfer"] == 0.0, exact
+
+    # `mask=auto` removes a background that shares no colour with the object.
+    composite = compare("colored.png", mask="auto", debug=str(root / "debug"))
+    print("colored-background compare:", json.dumps(composite), flush=True)
+    assert composite["iou"] >= 0.95, composite
+    assert Path(composite["debug"]["reference_silhouette"]).is_file(), composite
+    recovered = channel.value("""
+import json
+recovered = load_rgb('debug/reference-silhouette.png')[:, :, 0] != 0
+json.dumps(float(np.count_nonzero(recovered & silhouette)
+                 / np.count_nonzero(recovered | silhouette)))
+""")
+    assert recovered >= 0.95, recovered
+
+    # `fit=bbox` removes reference margins; `fit=none` keeps them and scores badly.
+    fitted, unfitted = compare("margins.png", mask="none"), compare("margins.png", mask="none",
+                                                                   fit="none")
+    print("margin reference bbox/none:", json.dumps([fitted, unfitted]), flush=True)
+    assert fitted["iou"] >= 0.99 and unfitted["iou"] < 0.8, (fitted, unfitted)
+    assert fitted["reference"]["fit"] == "bbox" and fitted["reference"]["bbox"] is not None
+
+    # Every compiled-in codec, a non-square reference, and the size ladder.
+    assert compare("portrait.png")["iou"] >= 0.98
+    assert compare("alpha.png", mask="none")["iou"] >= 0.98
+    for extension in ("jpg", "webp"):
+        assert compare("colored." + extension)["iou"] >= 0.95, extension
+    for size in (768, 1024):
+        resized = channel.value(
+            f"import json; json.dumps(agent.compare('self.png', 'front', size={size},"
+            " mask='none', fit='none', frame='Cube'))")
+        assert set(resized) == {"view", "iou", "reference"} and resized["iou"] >= 0.98, resized
+
+    # Comparison reads the scene; it writes no file and changes no data.
+    files = {str(path) for path in root.rglob("*.png")}
+    before = channel.done(op="session", action="snapshot")["snapshot"]
+    quiet = channel.request(op="exec", code="agent.compare('self.png', 'front')")
+    assert only(quiet, "diff")[0]["added"] == [], quiet
+    assert only(quiet, "diff")[0]["changed"] == [], quiet
+    assert channel.done(op="session", action="snapshot")["snapshot"] == before
+    assert files == {str(path) for path in root.rglob("*.png")}
+
+    # The loop an agent would write by hand, which `fit` now runs in-process.
+    start = time.perf_counter()
+    loop = channel.value("""
+import json
+obj = bpy.data.objects['Cube']
+scores = []
+for index in range(20):
+    value = round(0.2 + index * 0.04, 2)
+    obj.scale.x = value
+    scores.append((agent.compare('self.png', 'front', metrics=('iou',))['iou'], value))
+score, best = max(scores)
+obj.scale.x = best
+json.dumps({"best": best, "iou": score})
+""")
+    print("20-iteration loop:", json.dumps(loop),
+          "wall_s:", round(time.perf_counter() - start, 1), flush=True)
+    assert loop["best"] == 0.6 and loop["iou"] >= 0.98, loop
+    assert files == {str(path) for path in root.rglob("*.png")}
 
 
 if __name__ == "__main__":
