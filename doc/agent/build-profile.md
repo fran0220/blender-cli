@@ -138,6 +138,46 @@ install; those caches are removed from archives.
 The untrimmed install compressed with `tar -I 'zstd -19' -cf - -C build/orb/bin .
 | wc -c` is **238,784,479 bytes**. No macOS/Windows size is inferred from this.
 
+### Release-tree result
+
+| Measurement | Bytes |
+|---|---:|
+| Warm installed tree, logical file bytes | 1,009,451,983 |
+| Trimmed tree, logical file bytes | 480,087,789 |
+| Removed, net | 529,364,194 (52.4%) |
+| Original whole-install tar.zst, level 19 | 238,784,479 |
+| `blender-cli-5.3.0-alpha-agent.1-linux-x64.tar.zst`, level 19 | 115,119,600 |
+| Compressed saving | 123,664,879 (51.8%) |
+
+| Removed payload | Logical bytes saved |
+|---|---:|
+| Disabled shared libraries | 207,868,056 |
+| Python static archives (two libpython copies and NumPy C-API archives) | 168,489,886 |
+| VFX Python bindings and Cython | 96,209,795 |
+| Color-management config/LUT/ICC reduction | 17,416,968 |
+| Extra font faces | 15,029,212 |
+| Generated Python bytecode | 10,479,761 |
+| Build helpers, ensurepip, icons and GUI theme presets | 9,094,075 |
+| Extra studio lights | 4,035,581 |
+| Optional add-ons (excluding relocated required modules) | 740,860 |
+
+Relocated runtime modules account for 4,502,245 bytes before bytecode cleanup;
+they are retained, not counted in add-on savings. Every removed path and its
+presence/byte count is emitted in the packaging JSON. `test`, `idlelib`,
+`tkinter`, `lib2to3`, `turtledemo`, and locale are already absent on this Linux
+install; only `ensurepip` of the requested stdlib directories saves bytes
+(1,796,875). Startup loads the Inter face through two filenames without font
+warnings; `basic.sl` is the only retained external studio-light file.
+
+Linux verification after the profile spelling/fatal-warning fixes:
+`BUILD_EXIT=0`; `ctest --test-dir build/orb -R agent --output-on-failure`:
+**100% tests passed, 0 tests failed out of 4**, 304.95 seconds. The four scripts
+also pass against the trimmed tree. A fresh extraction of the archive passes
+all six verbs, and its observation is byte-identical to the original install:
+SHA-256 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
+Separate real execs before/after trim successfully bake a 32×32 CPU EMIT map
+and voxel-remesh the cube to 488 vertices. No scene fixtures or mocks are used.
+
 ### Installed components (`du -sh build/orb/bin/*`)
 
 | Component | Allocated size |

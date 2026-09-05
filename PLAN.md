@@ -130,9 +130,18 @@ macOS arm64 and Windows x64.
 | Item | Status |
 |---|---|
 | Configure and build the agent profile on macOS arm64 and Windows x64 | doing — native gates green; [full run 33965180310](https://github.com/fran0220/blender-cli/actions/runs/33965180310) dispatched for full build, tests and packaging |
-| Per-component size measurement; adjust the profile from numbers, not guesses | doing — supervised Linux install build in progress |
-| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | unverified — copy-only packaging and six-verb before/after test landed; awaiting install to prove removals and Standard byte equality |
+| Per-component size measurement; adjust the profile from numbers, not guesses | done — measured Linux install, stdlib top 20, add-ons, datafiles, sorted shared libraries and original/trimmed compression in build-profile.md; OpenVDB/Cycles decisions resolved |
+| Packaging trim: `addons_core` → glTF, FBX, Rigify; Python stdlib pruning; datafiles (one font, one studio light, no locale, no icons) | done on Linux — four trimmed regressions pass; extracted archive passes six verbs and exact observation equality; required startup retention is documented below; native packages remain unverified |
 | Release artifacts: `blender-cli-<version>-macos-arm64.tar.zst`, `…-windows-x64.zip` | unverified — archive stage landed; macOS uses plain bin/ + Resources/ preserving upstream relative lookup; unsigned, no notarization |
+
+Linux final profile configure/install reports `BUILD_EXIT=0` with agent-local
+fatal warnings enabled. `ctest --test-dir build/orb -R agent --output-on-failure`
+passes all four tests (304.95s). GCC exposed equal EAGAIN/EWOULDBLOCK expressions;
+the fix preserves errno semantics rather than disabling the warning. Measurement
+and archive/equivalence evidence, including justified trim exceptions, are owned
+by `doc/agent/build-profile.md`. The first native full run predates the Linux
+warning fix and final factory-AgX packaging correction; final native packaging
+will require the corrected revision, not a success claim against stale code.
 
 ## Phase 6 — hosts (not started, not scheduled)
 
