@@ -300,6 +300,36 @@ len(mesh.vertices)
         assert call("session", "save")["file"] == metadata["filepath"]
         call("session", "close")
         assert saved_autosave.exists() and saved_autosave.with_suffix(".json").exists()
+
+        # Labels are synchronous disk checkpoints, survive stale close, and resolve newest-first.
+        call("session", "open")
+        execute("bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add()")
+        first_label = call("session", "snapshot", "--label", "durable-fit")["snapshot"]
+        execute("bpy.ops.object.delete(); bpy.ops.mesh.primitive_uv_sphere_add(); agent.snapshot('durable-fit')")
+        history = call("session", "history")
+        last_label = next(event["snapshot"] for event in reversed(history) if event["label"] == "durable-fit")
+        assert first_label != last_label
+        index_path = root / ".blender-cli/snapshots/index.json"
+        index_before = index_path.read_bytes()
+        for snapshot_id in (first_label, last_label):
+            assert (index_path.parent / (snapshot_id.removeprefix("sha256:") + ".blend")).is_file()
+        execute("import os; os._exit(3)", ok=False)
+        assert call("session", "close")["stale"]
+        assert index_path.read_bytes() == index_before
+        call("session", "open")
+        durable_history = [event for event in call("session", "history") if event["label"] == "durable-fit"]
+        assert [event["snapshot"] for event in durable_history] == [first_label, last_label]
+        assert all(event["durable"] and event["bytes"] > 0 for event in durable_history)
+        call("session", "rollback", "durable-fit")
+        sphere, = call("inspect")["objects"]
+        assert sphere["name"] == "Sphere" and sphere["mesh"]["vertices"] > 8, sphere
+        call("session", "rollback", first_label)
+        assert vertices() == 8
+        assert execute("bpy.data.filepath")["value"] == "''"
+        execute(f"agent.rollback({last_label!r})")
+        assert call("inspect")["objects"][0]["name"] == "Sphere"
+        call("session", "close")
+        assert index_path.read_bytes() == index_before
         # Exercise the real observation pipeline in one native process at a cheap tile size.
         # The unpatched 128px and 512px paths both leak ~1810 VMAs per render and die at ~35.
         require_device(executable)

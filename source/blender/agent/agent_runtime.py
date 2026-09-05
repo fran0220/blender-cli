@@ -342,7 +342,14 @@ class Session:
                 native["restore_metadata"](metadata["filepath"], metadata["dirty"])
         self.id_state, self.fields, self.native = id_state, fields, native
         self.namespace = fresh_namespace()
-        self.history = []
+        self.snapshot_directory = os.path.abspath(".blender-cli/snapshots")
+        self.snapshot_index = os.path.join(self.snapshot_directory, "index.json")
+        self.durable = []
+        if os.path.isfile(self.snapshot_index):
+            with open(self.snapshot_index, encoding="utf-8") as stream:
+                self.durable = json.load(stream)
+        self.history = [dict(item, snapshot=item["id"], at=item["created"],
+                             verb="snapshot", durable=True) for item in self.durable]
         self.current = None
         self.closing = False
         agent._native["context"]()
@@ -354,9 +361,29 @@ class Session:
     def snapshot(self, label, verb):
         if label is not None and not isinstance(label, str):
             raise TypeError("Snapshot label must be a string or None")
+        parent = self.current
+        filepath, dirty = bpy.data.filepath, bpy.data.is_dirty
         self.current = self.native["snapshot"]()
-        self.history.append({"snapshot": self.current, "label": label,
-                             "verb": verb, "at": time.time()})
+        event = {"snapshot": self.current, "label": label, "parent": parent,
+                 "verb": verb, "at": time.time()}
+        if label is not None:
+            os.makedirs(self.snapshot_directory, exist_ok=True)
+            path = os.path.join(self.snapshot_directory, self.current.removeprefix("sha256:") + ".blend")
+            if not os.path.isfile(path):
+                self.native["persist"](path)
+            item = {"id": self.current, "label": label, "parent": parent,
+                    "created": event["at"], "bytes": os.path.getsize(path),
+                    "filepath": filepath, "dirty": dirty}
+            entries = [*self.durable, item]
+            temporary = self.snapshot_index + "@"
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump(entries, stream, ensure_ascii=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.snapshot_index)
+            self.durable = entries
+            event.update(durable=True, bytes=item["bytes"], filepath=filepath, dirty=dirty)
+        self.history.append(event)
         self.current_index = len(self.history) - 1
         return self.current
 
@@ -371,8 +398,23 @@ class Session:
             target = self.history[index]["snapshot"]
         else:
             index = next((i for i in range(len(self.history) - 1, -1, -1)
-                          if self.history[i]["snapshot"] == target), -1)
-        self.native["rollback"](target)
+                          if self.history[i]["snapshot"] == target or self.history[i]["label"] == target), -1)
+            if index >= 0:
+                target = self.history[index]["snapshot"]
+        try:
+            self.native["rollback"](target)
+        except KeyError:
+            item = next((item for item in reversed(self.durable) if item["id"] == target), None)
+            if item is None:
+                raise
+            path = os.path.join(self.snapshot_directory, target.removeprefix("sha256:") + ".blend")
+            bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
+            self.native["restore_metadata"](item["filepath"], item["dirty"])
+            bpy.context.view_layer.update()
+            # A recovered disk checkpoint seeds a fresh process-local memfile chain.
+            self.current = target
+            self.snapshot(None, "rollback")
+            return
         self.current = target
         self.current_index = index
         bpy.context.view_layer.update()

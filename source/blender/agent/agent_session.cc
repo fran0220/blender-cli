@@ -50,9 +50,8 @@ struct Session {
   using Clock = std::chrono::steady_clock;
   Clock::time_point last_write = Clock::now(), last_request = Clock::now();
 
-  void autosave_write()
+  bool snapshot_write(const std::filesystem::path &path)
   {
-    const auto start = Clock::now();
     auto *snapshot = snapshots.at(current);
     /* Memfiles now retain shared arrays outside the chunk stream. Decode into an
      * isolated Main before normal serialization; never borrow IDs from live Main. */
@@ -74,7 +73,7 @@ struct Session {
       /* Recovery is also opened as an ordinary --file, not just WM's recovery operator. */
       write_params.remap_mode = BLO_WRITE_PATH_REMAP_ABSOLUTE;
       success = BLO_write_file(data->main,
-                               autosave.string().c_str(),
+                               path.string().c_str(),
                                G.fileflags | G_FILE_RECOVER_WRITE | G_FILE_COMPRESS,
                                &write_params,
                                nullptr);
@@ -83,7 +82,7 @@ struct Session {
       BLO_blendfiledata_free(data);
     }
     if (success) {
-      const auto metadata = autosave.parent_path() / (autosave.stem().string() + ".json");
+      const auto metadata = path.parent_path() / (path.stem().string() + ".json");
       const auto temporary = metadata.string() + "@";
       std::ofstream stream(temporary);
       stream << nlohmann::json(
@@ -97,6 +96,13 @@ struct Session {
         success = false;
       }
     }
+    return success;
+  }
+
+  void autosave_write()
+  {
+    const auto start = Clock::now();
+    const bool success = snapshot_write(autosave);
     last_write = Clock::now();
     dirty = !success;
     fprintf(stderr,
@@ -222,6 +228,8 @@ static PyObject *snapshot_restore(PyObject *self, PyObject *arg)
   context_ensure(state.context);
   BPY_context_set(state.context);
   state.init_undo(true);
+  STRNCPY(CTX_data_main(state.context)->filepath, found->second->filepath);
+  CTX_wm_manager(state.context)->file_saved = !state.snapshot_dirty.at(id);
   state.current = id;
   state.dirty = true;
   Py_RETURN_NONE;
@@ -251,11 +259,25 @@ static PyObject *restore_metadata(PyObject *self, PyObject *args)
   Py_RETURN_NONE;
 }
 
+static PyObject *snapshot_persist(PyObject *self, PyObject *arg)
+{
+  const char *path = PyUnicode_AsUTF8(arg);
+  if (!path) {
+    return nullptr;
+  }
+  if (!session(self).snapshot_write(std::filesystem::path(path))) {
+    return PyErr_Format(PyExc_OSError, "Could not persist snapshot: %s", path);
+  }
+  Py_RETURN_NONE;
+}
+
+
 static PyMethodDef methods[] = {
     {"snapshot", snapshot_create, METH_NOARGS, nullptr},
     {"rollback", snapshot_restore, METH_O, nullptr},
     {"cancelled", cancelled, METH_NOARGS, nullptr},
     {"restore_metadata", restore_metadata, METH_VARARGS, nullptr},
+    {"persist", snapshot_persist, METH_O, nullptr},
 };
 
 int session_serve(

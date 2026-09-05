@@ -356,9 +356,11 @@ session history                 [{"snapshot", "label", "op", "step", "at"}]
 ```
 
 Snapshots are memfile undo states keyed by the content hash of the memfile.
-Labelled snapshots are also written to `.blender-cli/snapshots/<label>.blend`
-and survive a process crash; `rollback <label>` after recovery reloads that
-file. `rollback` never asks; it restores. Every request that changes `Main`
+Labelled snapshots are also written to `.blender-cli/snapshots/<hash>.blend`
+with a metadata sidecar and `index.json`, and survive a process crash.
+History marks imported entries `durable: true`; `rollback <id|label>` after
+recovery reloads the indexed file, with the newest occurrence of a label winning.
+`rollback` never asks; it restores. Every request that changes `Main`
 advances `step` and produces a `diff` event carrying the new snapshot.
 
 ### `exec`
@@ -608,7 +610,7 @@ current session only. One-shot loading remains ordinary file loading.
 The active snapshot scene is placed first for loading without saved UI.
 Non-memfile-undo data (UI and brushes) is not recovered; linked libraries are
 reloaded from their files, and ordinary blend-save orphan rules apply. Python
-variables/history/hashes do not survive a process crash. Both `session open
+variables and unlabelled history do not survive a process crash. Both `session open
 --file` and one-shot `--file` can load the autosave.
 
 `session` without an action returns `ValueError` in both modes, with message
@@ -627,6 +629,29 @@ A single larger snapshot fails with `MemoryError`; its scene mutations are
 not automatically reversed. History preserves events for evicted hashes;
 rollback to one raises `KeyError`. `~N` selects an earlier history event
 relative to the current snapshot; `~0` restores the current snapshot.
+
+Labelled snapshots are additionally synchronous durable checkpoints. Both
+`session snapshot --label X` and `agent.snapshot("X")` write the retained memfile
+through the same isolated decode/write path to
+`<initial cwd>/.blender-cli/snapshots/<hash-without-sha256-prefix>.blend` (and its
+metadata sidecar), then atomically replace `snapshots/index.json`. The index is
+an array with `id`, `label`, `parent`, `created` (Unix seconds), `bytes` (blend
+file size), original `filepath` and `dirty`. A response acknowledges the label
+only after both serialization and index replacement succeed. A failed write
+leaves the prior index intact; an unindexed file may remain for manual cleanup.
+This is process-crash durability, not a guarantee against power/storage loss.
+
+Opening a session in the same directory imports these entries into history
+with `durable: true`, before its new `open` event. Labelling again appends an
+event; the newest occurrence of a label wins, while older IDs remain reachable.
+Labels and disk files are not evicted by the in-memory budget. Rollback first
+uses a retained memfile, or loads an indexed checkpoint through the normal
+Main-replacement file path, restores its filepath/dirty state, and seeds a new
+memfile chain. A disk rollback returns a new process-local snapshot ID and
+appends a `rollback` event whose `parent` is the durable ID. Durable IDs identify
+stored files across sessions, not canonical geometry hashes. `session close`,
+including stale close, never removes the index or these files. The snapshots
+directory belongs to the agent to clean; no deletion verb or close flag is added.
 
 `WM_init` already registers undo types, including in background mode;
 `wm_file_read_post` skips stack initialization there. The agent initializes

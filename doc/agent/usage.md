@@ -117,14 +117,20 @@ blender-cli session snapshot --label before-bevel --json
 blender-cli session history --json
 # [{"snapshot":"sha256:…","label":null,"verb":"open","at":…},…]
 blender-cli session rollback 'sha256:…' --json
+blender-cli session rollback before-bevel --json
 blender-cli session rollback '~1' --json
 ```
 
 Copy an actual hash from history. Rollback replaces Blender data, so reacquire
 `cube = bpy.data.objects["Cube"]` afterwards; old held RNA references are invalid.
-Snapshot hashes are process-local, not geometry identifiers you can use after a
-restart. Use `session save --file milestone.blend` at each important milestone
-as a durable checkpoint.
+Labelled checkpoints are written synchronously to `.blender-cli/snapshots/`.
+They survive crashes, reopen and clean close: history marks them `durable: true`.
+Reusing a label makes it select the newest checkpoint; older ones stay reachable
+by their IDs. Unlabelled snapshots remain in-memory only. Disk rollback starts
+a new in-memory chain, so use the returned snapshot ID for subsequent offsets.
+Neither kind of hash is a canonical geometry identifier. Clean the snapshots
+directory yourself when its checkpoints are no longer needed.
+Use `session save --file milestone.blend` when you want a separate portable file.
 
 If native code terminates a session, the killed request reports `SessionError`.
 That request names the dead PID and, if available, an autosave; subsequent
