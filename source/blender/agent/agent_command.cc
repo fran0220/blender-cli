@@ -131,24 +131,7 @@ class AgentCommand : public CommandHandler {
   int exec(bContext *C, int argc, const char **argv) override
   {
     if (argc == 0 || STREQ(argv[0], "--help")) {
-      puts(
-          "Usage: blender-cli <repl|exec|inspect|observe|describe|session|target|program|fit>\n"
-          "  repl [--file F] [--standalone]   one pipe of JSON-line requests and events\n"
-          "  exec -c CODE | FILE.py [--no-record] [--timeout S] [--image delta|full|off]\n"
-          "  inspect [--object NAME] [--full] [--select PATH ...]\n"
-          "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
-          "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
-          "          [--layout sheet|separate] [--out PATH | --inline]\n"
-          "  describe RNA_PATH | channel | --schema\n"
-          "  session open|status|feedback|save|close|snapshot|rollback|history\n"
-          "          [--label L] [--file F] [--json-file F | KEY=VALUE ...]\n"
-          "  target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none]\n"
-          "         [--metrics iou,chamfer,ssim,hist] | target list | target clear [NAME]\n"
-          "  program get|set|patch|run|history|rollback|record [--text T] [--old O] [--new N]\n"
-          "          [--label L] [--version V]\n"
-          "  fit --params JSON [--objective JSON] [--budget JSON] [--method M]\n"
-          "  Common: --file F --save [F] --json\n"
-          "  --version: upstream version and fork tag");
+      cli_usage();
       return 0;
     }
     if (STREQ(argv[0], "--version")) {

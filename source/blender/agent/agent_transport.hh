@@ -28,6 +28,9 @@ class Channel {
   struct Peer {
     Socket fd = invalid_socket;
     std::string input, output;
+    /* End of input means "no more requests", not "discard my answers": a
+     * `repl` bridge closes its write side as soon as its own stdin ends. */
+    bool reading = true;
   };
   struct Request {
     std::shared_ptr<Peer> peer;
@@ -163,8 +166,10 @@ class SocketChannel : public Channel {
           break;
         }
         for (const auto &peer : peers_) {
-          FD_SET(peer->fd, &readers);
-          highest = std::max(highest, peer->fd);
+          if (peer->reading) {
+            FD_SET(peer->fd, &readers);
+            highest = std::max(highest, peer->fd);
+          }
         }
       }
       timeval interval{0, 1000};
@@ -183,7 +188,7 @@ class SocketChannel : public Channel {
             socket_close(fd);
           }
           else {
-            peers_.push_back(std::make_shared<Peer>(Peer{fd, {}, {}}));
+            peers_.push_back(std::make_shared<Peer>(Peer{fd, {}, {}, true}));
           }
         }
       }
@@ -212,16 +217,20 @@ class SocketChannel : public Channel {
             }
           }
         }
-        if (!closed && FD_ISSET(peer->fd, &readers)) {
+        if (!closed && peer->reading && FD_ISSET(peer->fd, &readers)) {
           char buffer[8192];
           int n = recv(peer->fd, buffer, sizeof(buffer), 0);
-          closed = n == 0 || (n < 0 && !socket_would_block());
+          peer->reading = n > 0 || (n < 0 && socket_would_block());
+          closed = n < 0 && !socket_would_block();
           if (n > 0) {
             peer->input.append(buffer, n);
             consume(peer);
             closed |= peer->input.size() > 16 * 1024 * 1024;
           }
         }
+        /* A peer that will send nothing more is kept until its own answers
+         * have drained and no queued or running request still refers to it. */
+        closed |= !peer->reading && peer->output.empty() && peer.use_count() == 1;
         if (closed) {
           socket_close(peer->fd);
           peer->fd = invalid_socket;

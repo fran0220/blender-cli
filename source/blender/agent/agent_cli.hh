@@ -30,6 +30,29 @@ struct CommandLine {
   std::string error;
 };
 
+/* The one usage text, printed by `--help`. */
+inline void cli_usage()
+{
+  puts(
+      "Usage: blender-cli <repl|exec|inspect|observe|describe|session|target|program|fit>\n"
+      "  repl [--file F] [--standalone]   one pipe of JSON-line requests and events\n"
+      "  exec -c CODE | FILE.py [--no-record] [--timeout S] [--image delta|full|off]\n"
+      "  inspect [--object NAME] [--full] [--select PATH ...]\n"
+      "  observe [--views front,persp] [--passes color,wire,silhouette,normal,depth]\n"
+      "          [--size 512|768|1024] [--frame OBJECT] [--ref IMG] [--overlay]\n"
+      "          [--layout sheet|separate] [--out PATH | --inline]\n"
+      "  describe RNA_PATH | channel | --schema\n"
+      "  session open|status|feedback|save|close|snapshot|rollback|history\n"
+      "          [--label L] [--file F] [--json-file F | KEY=VALUE ...]\n"
+      "  target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none]\n"
+      "         [--metrics iou,chamfer,ssim,hist] | target list | target clear [NAME]\n"
+      "  program get|set|patch|run|history|rollback|record [--text T] [--old O] [--new N]\n"
+      "          [--label L] [--version V] [--from-step N]\n"
+      "  fit --params JSON [--objective JSON] [--budget JSON] [--method M]\n"
+      "  Common: --file F --save [F] --json\n"
+      "  --version: upstream version and fork tag");
+}
+
 inline void cli_assign(nlohmann::json &request, const std::string &path, nlohmann::json value)
 {
   nlohmann::json *node = &request;
@@ -198,6 +221,14 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
     {
       parsed.request[arg.substr(2)] = value(arg.c_str());
     }
+    else if (op == "program" && arg == "--from-step") {
+      try {
+        parsed.request["from_step"] = std::stoi(value("--from-step"));
+      }
+      catch (const std::exception &) {
+        return fail("--from-step requires an integer");
+      }
+    }
     else if (op == "fit" && arg == "--method") {
       parsed.request["method"] = value("--method");
     }
@@ -263,8 +294,10 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
   else if (!positional.empty()) {
     return fail(op + " takes no positional arguments: " + positional[0]);
   }
-  if (positional.size() > (op == "session" || op == "target" || op == "program" ? 2 : 1)) {
-    return fail(op + " takes too many positional arguments");
+  /* `session feedback` consumes every remaining word as a KEY=VALUE setting. */
+  const size_t allowed = op == "exec" || op == "describe" ? 1 : 2;
+  if (parsed.request.value("action", std::string()) != "feedback" && positional.size() > allowed) {
+    return fail(op + " takes too many positional arguments: " + positional[allowed]);
   }
   if (parsed.has_save && parsed.save.empty()) {
     if (parsed.load.empty()) {
