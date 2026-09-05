@@ -6,18 +6,25 @@ if(NOT WITH_PYTHON OR WITH_PYTHON_MODULE OR NOT WITH_BLENDER)
   message(FATAL_ERROR "WITH_AGENT requires the Blender executable with embedded Python")
 endif()
 
-set(INC . ../python ../makesrna)
+set(INC . ../python ../makesrna ../blenloader ../editors/include)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
-set(SRC agent_command.cc AGENT_command.hh)
+set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
+  agent_socket.hh agent_transport.hh)
 set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
   PRIVATE bf::dna
   PRIVATE bf::intern::guardedalloc
+  PRIVATE bf::extern::json
 )
 blender_add_lib(bf_agent "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
 
 add_executable(blender-cli launcher.cc)
+target_link_libraries(blender-cli PRIVATE bf::extern::json)
+if(WIN32)
+  target_link_libraries(blender-cli PRIVATE ws2_32)
+  target_link_libraries(bf_agent PRIVATE ws2_32)
+endif()
 if(APPLE)
   set(agent_exe_dir "Blender.app/Contents/MacOS")
   set(agent_scripts_dir "Blender.app/Contents/Resources/${BLENDER_VERSION}/scripts/modules")
@@ -29,4 +36,4 @@ else()
   set(agent_scripts_dir "${BLENDER_VERSION}/scripts/modules")
 endif()
 install(TARGETS blender-cli RUNTIME DESTINATION ${agent_exe_dir})
-install(FILES agent_runtime.py DESTINATION ${agent_scripts_dir})
+install(FILES agent_runtime.py agent.py DESTINATION ${agent_scripts_dir})

@@ -19,6 +19,7 @@ import tokenize
 import bpy
 import bmesh
 import mathutils
+import agent
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -179,28 +180,32 @@ def id_diff(before, after, fields):
             "removed": sorted(removed, key=order)}
 
 
-def execute(args, snapshot, fields):
+def execute(args, snapshot, fields, session=None):
     filename = os.path.abspath(args.script) if args.script else "<agent>"
     if args.script:
         with tokenize.open(filename) as stream:
             code = stream.read()
     else:
         code = args.code
-    namespace = {"__name__": "__main__", "__file__": filename,
-                 "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math}
+    namespace = session.namespace if session else fresh_namespace()
+    namespace["__file__"] = filename
     bpy.context.view_layer.update()
     before = snapshot(True)
+    if session:
+        session.before = before
     start = time.perf_counter()
     deadline = start + args.timeout if args.timeout else None
 
     def check_timeout(frame, event, arg):
-        if time.perf_counter() >= deadline:
+        if session and session.native["cancelled"]():
+            raise Cancelled("Execution cancelled")
+        if deadline and time.perf_counter() >= deadline:
             raise TimeoutError(f"Execution exceeded {args.timeout:g} seconds")
         return check_timeout
 
     previous_trace = sys.gettrace()
     try:
-        if deadline:
+        if deadline or session:
             sys.settrace(check_timeout)
         tree = ast.parse(code, filename, "exec")
         expression = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
@@ -210,6 +215,8 @@ def execute(args, snapshot, fields):
             if expression else None
         exec(statements, namespace)
         value = repr(eval(tail, namespace)) if tail else None
+        if session and session.native["cancelled"]():
+            raise Cancelled("Execution cancelled")
         if deadline and time.perf_counter() >= deadline:
             raise TimeoutError(f"Execution exceeded {args.timeout:g} seconds")
     finally:
@@ -218,7 +225,7 @@ def execute(args, snapshot, fields):
     return {"ok": True, "value": value, "diff": id_diff(before, snapshot(False), fields), "ms": elapsed}
 
 
-def run(arguments, snapshot, fields):
+def run(arguments, snapshot, fields, session=None):
     stdout, stderr = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         try:
@@ -227,11 +234,15 @@ def run(arguments, snapshot, fields):
             if args.save is not None and not save:
                 raise ValueError("--save requires a path or --file")
             if args.file:
+                if session:
+                    raise ValueError("--file loads only at session open; use bpy to replace session data")
                 path = os.path.abspath(args.file)
                 if not os.path.isfile(path):
                     raise FileNotFoundError(path)
                 bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
-            result = execute(args, snapshot, fields) if args.verb == "exec" else inspect(args)
+            result = execute(args, snapshot, fields, session) if args.verb == "exec" else inspect(args)
+            if session and args.verb == "exec":
+                result["snapshot"] = session.snapshot(None, "exec")
             if save:
                 bpy.context.preferences.filepaths.file_preview_type = "NONE"
                 bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(save), check_existing=False)
@@ -245,3 +256,101 @@ def run(arguments, snapshot, fields):
     text = json.dumps(serialize(result), ensure_ascii=True, allow_nan=False,
                       indent=None if "--json" in arguments else 2)
     return text, 0 if result["ok"] else 1
+
+
+def fresh_namespace():
+    return {"__name__": "__main__", "bpy": bpy, "bmesh": bmesh,
+            "mathutils": mathutils, "math": math, "agent": agent}
+
+
+class Cancelled(Exception):
+    pass
+
+
+class Session:
+    def __init__(self, arguments, id_state, fields, native):
+        parser = ArgumentParser(add_help=False, allow_abbrev=False)
+        parser.add_argument("verb", choices=["session"])
+        parser.add_argument("action", choices=["serve"])
+        parser.add_argument("--file")
+        parser.add_argument("--json", action="store_true")
+        args = parser.parse_args(arguments)
+        if args.file:
+            path = os.path.abspath(args.file)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(path)
+            bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
+        self.id_state, self.fields, self.native = id_state, fields, native
+        self.namespace = fresh_namespace()
+        self.history = []
+        self.current = None
+        self.closing = False
+        self.before = id_state(True)
+        self.snapshot(None, "open")
+        agent._session = self
+
+    def snapshot(self, label, verb):
+        if label is not None and not isinstance(label, str):
+            raise TypeError("Snapshot label must be a string or None")
+        self.current = self.native["snapshot"]()
+        self.history.append({"snapshot": self.current, "label": label,
+                             "verb": verb, "at": time.time()})
+        return self.current
+
+    def rollback(self, target):
+        if target.startswith("~"):
+            count = int(target[1:])
+            if count < 0:
+                raise ValueError("Rollback offset must be nonnegative")
+            index = next(i for i in range(len(self.history) - 1, -1, -1)
+                         if self.history[i]["snapshot"] == self.current)
+            if count > index:
+                raise ValueError("Rollback offset precedes session history")
+            target = self.history[index - count]["snapshot"]
+        self.native["rollback"](target)
+        self.current = target
+        bpy.context.view_layer.update()
+
+    def diff(self):
+        return id_diff(self.before, self.id_state(False), self.fields)
+
+    def dispatch(self, message):
+        try:
+            request = json.loads(message)
+            verb = request["verb"]
+            arguments = request["args"]["argv"]
+            if not isinstance(verb, str) or not isinstance(arguments, list) or not all(
+                    isinstance(arg, str) for arg in arguments):
+                raise ValueError("Expected verb string and args.argv string array")
+            if verb != "session":
+                text, status = run([verb, *arguments, "--json"], self.id_state, self.fields, self)
+                return text
+            parser = ArgumentParser(add_help=False, allow_abbrev=False)
+            parser.add_argument("action", choices=["snapshot", "rollback", "history", "save", "close"])
+            parser.add_argument("target", nargs="?")
+            parser.add_argument("--label")
+            parser.add_argument("--file")
+            parser.add_argument("--json", action="store_true")
+            args = parser.parse_args(arguments)
+            if args.action == "snapshot":
+                result = {"snapshot": self.snapshot(args.label, "snapshot"), "label": args.label}
+            elif args.action == "rollback":
+                if not args.target:
+                    raise ValueError("session rollback requires a snapshot ID or ~N")
+                self.rollback(args.target)
+                result = {"snapshot": self.current}
+            elif args.action == "history":
+                result = self.history
+            elif args.action == "save":
+                path = args.file or bpy.data.filepath
+                if not path:
+                    raise ValueError("session save requires --file for an unsaved session")
+                bpy.context.preferences.filepaths.file_preview_type = "NONE"
+                bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(path), check_existing=False)
+                result = {"ok": True, "file": os.path.abspath(path)}
+            else:
+                self.closing = True
+                result = {"ok": True}
+        except BaseException as error:
+            result = {"ok": False, "error": {"type": type(error).__name__, "message": str(error)}}
+        return json.dumps(result, ensure_ascii=True, allow_nan=False)
