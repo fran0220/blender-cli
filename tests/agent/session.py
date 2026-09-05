@@ -15,6 +15,30 @@ import tempfile
 import time
 
 
+@contextlib.contextmanager
+def connection(endpoint):
+    # CPython 3.13 does not expose Windows AF_UNIX address conversion
+    # (python/cpython#77589). Connect the real Winsock socket directly, then
+    # use Python's normal timeout, stream and send/receive operations.
+    family = 1 if sys.platform == "win32" else socket.AF_UNIX
+    with socket.socket(family, socket.SOCK_STREAM) as client:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Address(ctypes.Structure):
+                _fields_ = [("family", ctypes.c_ushort), ("path", ctypes.c_char * 108)]
+
+            address = Address(1, endpoint.encode("utf-8"))
+            winsock = ctypes.WinDLL("ws2_32.dll")
+            winsock.connect.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int]
+            if winsock.connect(client.fileno(), ctypes.byref(address), ctypes.sizeof(address)):
+                raise OSError(winsock.WSAGetLastError(), "Winsock AF_UNIX connect")
+        else:
+            client.connect(endpoint)
+        client.settimeout(10)
+        yield client
+
+
 def main():
     executable = str(Path(sys.argv[1]).resolve())
     # Deliberately exceed sockaddr_un.sun_path even on Linux. Raw clients use
@@ -100,21 +124,16 @@ len(mesh.vertices)
             assert execute("timer_fired")["value"] == "True"
 
             # Cancellation is on a second connection while the original is executing.
-            with socket.socket(socket.AF_UNIX) as running, socket.socket(socket.AF_UNIX) as control:
-                running.settimeout(10)
-                running.connect(local_endpoint)
+            with connection(local_endpoint) as running, connection(local_endpoint) as control:
                 request = {"id": 9001, "verb": "exec", "args": {"argv": ["-c", "while True:\n    pass"]}}
                 running.sendall((json.dumps(request) + "\n").encode())
                 time.sleep(0.1)
-                control.connect(local_endpoint)
                 control.sendall(b'{"id":9001,"cancel":true}\n')
                 response = json.loads(running.makefile("rb").readline())
                 assert response["id"] == 9001 and response["result"]["error"]["type"] == "Cancelled", response
             assert execute("x")["value"] == "9"
             # Multiple complete lines on one connection retain order and matching IDs.
-            with socket.socket(socket.AF_UNIX) as pipeline:
-                pipeline.settimeout(10)
-                pipeline.connect(local_endpoint)
+            with connection(local_endpoint) as pipeline:
                 for index, code in enumerate(("queued = 40", "queued += 2; queued")):
                     message = {"id": 9100 + index, "verb": "exec", "args": {"argv": ["-c", code]}}
                     pipeline.sendall((json.dumps(message) + "\n").encode())
@@ -155,8 +174,7 @@ len(mesh.vertices)
         call("session", "open", "--file", root / "absent.blend", ok=False)
         # A native call cannot be preempted; close still has a bounded forced-exit path.
         call("session", "open")
-        with socket.socket(socket.AF_UNIX) as hung:
-            hung.connect(local_endpoint)
+        with connection(local_endpoint) as hung:
             request = {"id": 9200, "verb": "exec",
                        "args": {"argv": ["-c", "import time; time.sleep(30)"]}}
             hung.sendall((json.dumps(request) + "\n").encode())
