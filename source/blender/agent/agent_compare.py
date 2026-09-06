@@ -88,6 +88,19 @@ def reference(ref, size, policy, fit="bbox"):
     return tile, silhouette, record(silhouette, size, fit)
 
 
+def estimated(rgb):
+    """Whether a colour-distance segmentation is a guess rather than a reading.
+
+    A two-valued image — a silhouette pass, a stencil, a flood-filled mask —
+    states its own boundary exactly. Morphological cleanup exists to remove the
+    speckle a *guess* leaves in a photograph; run on an exact boundary it only
+    erodes it, and a thin silhouette loses a large share of a small area.
+    """
+    packed = bytes_rgb(rgb).astype(np.uint32)
+    keys = (packed[:, :, 0] << 16) | (packed[:, :, 1] << 8) | packed[:, :, 2]
+    return np.unique(keys).size > 2
+
+
 def foreground(rgba, policy, has_alpha):
     """Continuous foreground coverage at the reference's own resolution.
 
@@ -107,8 +120,9 @@ def foreground(rgba, policy, has_alpha):
         mask = np.linalg.norm(rgb - background, axis=2) > threshold
         # Cleanup belongs to an estimate. A mask read from alpha or luminance is
         # measured, not guessed, and a stencil along its boundary only erodes it.
-        mask = morphology(morphology(mask, False), True)  # 3x3 opening.
-        mask = morphology(morphology(mask, True), False)  # 3x3 closing.
+        if estimated(rgb):
+            mask = morphology(morphology(mask, False), True)  # 3x3 opening.
+            mask = morphology(morphology(mask, True), False)  # 3x3 closing.
         return mask.astype(np.float64)
     if policy == "auto" or has_alpha:
         # Meaningful alpha is a stronger background cue than colour estimation.

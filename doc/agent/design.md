@@ -89,8 +89,9 @@ table. The default is `error`: the request ends with `error` of type
 `Cancelled`, having restored the state it started from, because a half-applied
 edit is worth nothing. `fit` declares `done` instead: a search that has
 already paid for its evaluations keeps them, applies the best parameters and
-ends with `ok: true` and `cancelled: true`. Discarding a paid-for search is
-the opposite of what the search is for. An op's outcome is data, so
+ends with `ok: true` and `stopped: "cancel"`, which is also how it names the
+other three ways a search ends. Discarding a paid-for search is the opposite
+of what the search is for. An op's outcome is data, so
 `describe schema` projects it rather than restating it.
 
 Every CLI verb is exactly one request and its flags are that request's
@@ -1615,9 +1616,15 @@ Register a reference at the size it will be scored at when a silhouette is
 thin and broken.
 
 Morphological cleanup belongs to an estimate. The 3×3 opening and closing
-run only when the mask came from colour-distance estimation; a mask read
-from alpha or luminance is measured rather than guessed, and a stencil along
-its boundary only erodes it. Nothing morphological is applied to the model.
+run only when the segmentation actually guessed: a mask read from alpha or
+luminance is measured, and a **two-valued** image — a silhouette pass, a
+stencil, a flood-filled mask, anything with two distinct byte colours or
+fewer — states its own boundary exactly even when `mask auto` is asked for.
+Cleanup exists to remove the speckle a guess leaves in a photograph; run on
+an exact boundary it only erodes it, and a thin silhouette loses a large
+share of a small area. So the same reference and model score identically
+under `mask auto` and `mask none` whenever the reference is two-valued.
+Nothing morphological is applied to the model.
 
 **Every `region` on the channel is in the view's own pixels.** The
 normalised tile is internal to the metric and never appears on the wire:

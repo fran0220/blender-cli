@@ -302,6 +302,21 @@ json.dumps([int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1])
             print("worst region vs model bbox:", json.dumps([region, box]), flush=True)
             assert region[0] < box[2] and region[2] > box[0], (region, box)
             assert region[1] < box[3] and region[3] > box[1], (region, box)
+
+            # A silhouette PNG is two-valued: it states its boundary exactly, so
+            # `mask auto` has nothing to estimate and must not clean it up. The
+            # same reference and model therefore score the same under either
+            # policy, and a stencil along a thin boundary cannot move the score.
+            channel.done(op="target", action="set", name="self-auto", ref=own, view="front",
+                         mask="auto", fit="bbox", metrics=["iou", "chamfer"])
+            both, = only(channel.request(op="exec", code="pass"), "objective")
+            guessed, read = both["targets"]["self-auto"], both["targets"]["self"]
+            print("two-valued reference, auto vs none:", json.dumps(
+                [guessed["iou"], read["iou"]]), flush=True)
+            assert guessed["iou"] == read["iou"], (guessed, read)
+            assert guessed["chamfer"] == read["chamfer"], (guessed, read)
+            assert guessed["worst"]["region"] == read["worst"]["region"], (guessed, read)
+            channel.done(op="target", action="clear", name="self-auto")
             channel.done(op="target", action="clear", name="self")
 
             # The handoff the image provider reads at order 400. A provider of
@@ -439,6 +454,8 @@ agent.register_provider(Peek())
             print("cancelled fit:", json.dumps(cancelled), flush=True)
             assert cancelled["event"] == "done" and cancelled["ok"], cancelled
             assert cancelled["stopped"] == "cancel" and cancelled["applied"], cancelled
+            # `stopped` says why on its own; a second field repeating it is gone.
+            assert "cancelled" not in cancelled, cancelled
             assert cancelled["evals"] < 200, cancelled
             # The cancel itself was answered immediately, out of order.
             assert [event["id"] for event in channel.aside] == [9001], channel.aside
@@ -488,6 +505,7 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
             assert set(in_code) >= {"method", "objective", "best", "evals", "failed",
                                     "curve", "applied", "stopped", "error_map"}, in_code
             assert in_code["evals"] == 3 and set(in_code["best"]["params"]) == {"sx"}, in_code
+            assert "cancelled" not in in_code, in_code
 
             # nelder-mead recovers the same truth as coordinate descent.
             channel.request(op="exec", code=RESET)
