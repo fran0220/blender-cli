@@ -244,11 +244,13 @@ in `done.curve`), GUI datablocks 71 % of `diff` bytes, a numpy subnormal
 warning 741 tokens per session. No exception occurred, so no corrective
 `fix` was observed. Items filed, with the ruling each owner builds to:
 
-- K: a request killed with the process ends with an `error` on the same
-  pipe and `repl` exits non-zero; `repl` recovers a dead session itself
-  (program first, autosave second) and opens every conversation with a
-  `session` event carrying the `session status` shape, so the recovery
-  verdict is pushed and never asked for; `repl`'s own failures are one
+- K: a request killed with the process ends with an `error` of type
+  `Crashed` on the same pipe; `repl` recovers a dead session itself by
+  reopening through `Session.__init__` (the newest source wins, decided
+  in P's `recover()`), keeps serving the pipe, and exits non-zero only
+  when recovery itself fails; every channel opens with a `session` event
+  carrying the `session status` shape, so the recovery verdict is pushed
+  and never asked for; `repl`'s own failures are one
   compact line; `diff` never lists UI datablocks (`WINDOWMANAGER`,
   `SCREEN`, `WORKSPACE`, `BRUSH`, `PALETTE`, the `Render Result` and
   `Viewer Node` images); the numpy subnormal warning is silenced once in
