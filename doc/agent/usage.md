@@ -118,8 +118,9 @@ as JSON, so `image.views='["front","persp"]'` works and several settings merge
 in one request. `session status` reports the policy in force. The knobs that
 matter: `perception` and `image.mode` decide whether there is a budget render at
 all, `image.threshold` is the changed-pixel fraction below which no picture is
-worth sending, and `image.size` and `image.samples` are what that render costs
-(8 samples by default, against `observe`'s 32).
+worth sending, `image.size` and `image.samples` are what that render costs
+(8 samples by default, against `observe`'s 32), and `progress` decides how much
+a running `fit` says while it works.
 
 `exec` and `program` take `--image` to override the picture for one request —
 a whole frame when something needs looking at, nothing when the answer is
@@ -155,6 +156,19 @@ still arrives, with the deltas at zero.
 blender-cli exec -c "len(bpy.data.objects)" --json
 # {"ok":true,"value":"1","ms":0.6380220002029091,
 #  "perception":{…,"changed":{"view":"front","objects":[],"region":null,"fraction":0.0,"silhouette_delta":0.0}}}
+```
+
+Pictures come back in four kinds. `delta` is the changed region cropped out of
+the budget view and `overlay` is the same region before and after (before red,
+after cyan, agreement white); `full` is the whole frame. Once a target is
+registered a fourth arrives with every scoring — `error`, that target's
+silhouette error over its worst cell, missing red and extra blue — so the
+picture says which way the model is wrong rather than only that it moved:
+
+```sh
+blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.0, 1.0, 1.0)' --json
+# {"ok":true,…,"images":[{"kind":"full","view":"front","region":[0,0,128,128],"size":[128,128],…},
+#                        {"kind":"error","view":"front","region":[56,56,136,136],"size":[80,80],…}]}
 ```
 
 ## The scene is a program
@@ -231,11 +245,11 @@ numeric part to the process. Start with a reference image bound to a view:
 ```sh
 blender-cli target set front --ref reference.png --view front --metrics iou,chamfer --json
 # {"ok":true,"name":"front","view":"front","mask":"auto","fit":"bbox","metrics":["iou","chamfer"],
-#  "ref":"/tmp/fit2/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
+#  "ref":"/tmp/f5/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
 #  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
-#  "objective":{"targets":{"front":{"iou":0.7012100026888949,"chamfer":11.675981348770343,"delta":null,
-#    "worst":{"region":[64,64,128,128],"iou":0.5487231182795699,"missing":0.0,"extra":1.0}}},
-#   "best":{"front":{"iou":0.7012100026888949,"snapshot":"sha256:7613b09c…","step":1}}}}
+#  "objective":{"targets":{"front":{"iou":0.6985361145369725,"chamfer":11.768228939327805,"delta":null,
+#    "worst":{"region":[64,64,128,128],"iou":0.5493951612903226,"missing":0.0,"extra":1.0}}},
+#   "best":{"front":{"iou":0.6985361145369725,"snapshot":"sha256:…","step":1}}}}
 ```
 
 Registering already scores: `iou` 0.70, and the worst 4×4 cell is the
@@ -243,51 +257,83 @@ bottom-right quadrant with `extra: 1.0` — every pixel wrong there is model tha
 the reference does not have. Every action from here carries an `objective`, so
 the agent never asks how it is doing.
 
-The numeric part is `fit`. Name the program parameters to search, the objective
-to optimise and a budget, and the search runs inside the process:
+The score is absolute, not just comparable with itself: the model is normalised
+the way the reference is, so a model that matches scores `iou` 1.0 and
+`chamfer` 0.0. (Rendering the default cube, registering that render, and
+scoring it against the cube it came from gives exactly that.) A thin silhouette
+costs a little to resampling — the cylinder above, matched exactly, scores
+0.974 rather than 1.0 — so near-1.0 is a match, and the remainder can be the
+reference's resolution rather than the model.
 
-```sh
-blender-cli fit --params '[{"name": "height", "min": 1.0, "max": 4.0}]' \
-                --objective '{"target": "front", "metric": "iou"}' \
-                --budget '{"evals": 12}' --json
-# {"ok":true,"method":"coordinate","evals":12,"failed":0,"cancelled":false,"applied":true,
-#  "best":{"params":{"height":2.97265625},"score":0.9789726644638029,"snapshot":"sha256:7edb9e50…"},
-#  "curve":[[1,0.6950339558573854],[2,0.9118549511854951],[4,0.9192771084337349],[6,0.9766606822262118],
-#           [9,0.9780714929408231],[11,0.978391356542617],[12,0.9789726644638029]],
-#  "error_map":{"target":"front","view":"front","image":"…/.blender-cli/fit/ae1f384d….png","region":[32,32,64,64],"size":[128,128]},
-#  "objective":{"metric":"iou","targets":["front"],"weights":[1.0]},
-#  "diff":{…,"snapshot":"sha256:7edb9e50…","step":2},"ms":24294.854452000436}
+The numeric part is `fit`. Name the program parameters to search, the objective
+to optimise and a budget, and the search runs inside the process. Over the
+channel it reports as it goes:
+
+```json
+{"id": 1, "op": "fit", "params": [{"name": "height", "min": 1.0, "max": 4.0}], "objective": {"target": "front", "metric": "iou"}, "budget": {"evals": 40}}
+{"id": 1, "event": "progress", "eval": 1, "of": 40, "best": 0.7054329371816639, "params": {"height": 2.0}}
+{"id": 1, "event": "progress", "eval": 2, "of": 40, "best": 0.9287510477787091, "params": {"height": 2.75}}
+{"id": 1, "event": "progress", "eval": 6, "of": 40, "best": 0.9493263034563562, "params": {"height": 2.9375}}
+{"id": 1, "event": "progress", "eval": 7, "of": 40, "best": 0.9510324483775812, "params": {"height": 3.03125}}
+{"id": 1, "event": "progress", "eval": 11, "of": 40, "best": 0.9516651930445034, "params": {"height": 3.0078125}}
+{"id": 1, "event": "done", "ok": true, "method": "coordinate", "evals": 23, "failed": 0, "stopped": "patience", "applied": true, …
+ "best": {"params": {"height": 3.0078125}, "score": 0.9516651930445034, "snapshot": "sha256:217ef370…"},
+ "curve": [[1, 0.7054329371816639], [2, 0.9287510477787091], [6, 0.9493263034563562], [7, 0.9510324483775812], [11, 0.9516651930445034]],
+ "error_map": {"target": "front", "view": "front", "image": "…/.blender-cli/fit/642f4e8c….png", "size": [128, 128], "region": [32, 32, 64, 64]},
+ "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]}, "ms": 39945.02247499986}
 ```
 
-Twelve evaluations, 24 s, `iou` 0.695 → 0.979, and the answer is a number the
-agent never had to guess: the model was built with `height` 2.0 and the
-reference was rendered from 3.0. The best parameters are applied to the live
-scene and written into the program's `P` block, so `program get` now reports
-`{"height": 2.97265625, "radius": 0.4}` and the program still reproduces the
-scene. `curve` is the improvement per evaluation — a flat tail says the budget
-was enough — and `error_map` is a picture of what is still wrong, at the region
-that contributes most of it.
+Twenty-three evaluations of a budget of forty, five `progress` events, `iou`
+0.705 → 0.952, and the answer is a number the agent never had to guess: the
+model was built with `height` 2.0 and the reference was rendered from 3.0. The
+best parameters are applied to the live scene and written into the program's
+`P` block, so `program get` now reports `{"height": 3.0078125, "radius": 0.4}`
+and the program still reproduces the scene.
+
+Three fields say what the search did with the money. `stopped` is why it ended
+— `budget`, `seconds`, `cancel` or `patience`; this one converged, so it
+stopped at 23 rather than spending all 40. `curve` records only the evaluations
+that improved the best value, so it is the trajectory and not the transcript,
+and a flat tail means the budget was enough. `error_map` is a picture of what
+is still wrong, at the 4×4 cell contributing most of it.
+
+`patience` is the convergence rule: the search gives up after that many
+evaluations without a real improvement. It has no fixed default, because the
+right value depends on the search — a cyclic coordinate descent probes `2n`
+points per cycle before it can halve its step — so `fit` derives it as
+`max(16, 5 × parameters)` unless the request sets one. Raise it to spend the
+whole budget on a stubborn fit; lower it to stop paying for renders sooner.
+
+`progress` follows the session's `progress` policy, `improvements` by default:
+an event only when the best value moves, because an evaluation that changed
+nothing is a token you cannot act on. `all` makes it a heartbeat at most every
+0.5 s and `off` silences it — and loses nothing, since every improvement is in
+`done.curve` anyway. A one-shot `blender-cli fit …` folds all of this into one
+document.
 
 Afterwards the objective keeps scoring, so a change that undoes the progress
 says so immediately:
 
 ```sh
 blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
-# {"ok":true,"ms":507.78301999980613,…,"objective":{"targets":{"front":{"iou":0.8148751711100971,"chamfer":6.864698995712029,
-#   "delta":{"iou":-0.16057896490551615,"chamfer":5.454629848015657},
-#   "worst":{"region":[64,64,128,128],"iou":0.6373801916932907,"missing":0.040748898678414094,"extra":0.9592511013215859}}},
-#  "best":{"front":{"iou":0.9754541360156133,"snapshot":"sha256:7edb9e50…","step":2}}}}
+# {"ok":true,"ms":609.7895390012127,…,"objective":{"targets":{"front":{"iou":0.8174197773411919,"chamfer":6.722321428571428,
+#   "delta":{"iou":-0.14427467962140395,"chamfer":5.038742664988529},
+#   "worst":{"region":[64,64,128,128],"iou":0.6474645030425964,"missing":0.04487917146144994,"extra":0.9551208285385501}}},
+#  "best":{"front":{"iou":0.9616944569625958,"snapshot":"sha256:217ef370…","step":2}}}}
 ```
 
-That cost 0.16 of `iou`, and `best` still names the snapshot that scored 0.98,
-so returning to it is `session rollback 'sha256:7edb9e50…'` — the process did
-the bookkeeping.
+That cost 0.14 of `iou`, and `best` still names the snapshot that scored 0.96,
+so returning to it is `session rollback 'sha256:217ef370…'` — the process did
+the bookkeeping. (The fit scored 0.952 at its 128 px budget size and the pushed
+objective scores 0.962 at the 256 px feedback size; compare a score with others
+taken at the same size.)
 
 `--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
 0.5, "max": 2}`) for values that are not program parameters, `--objective` takes
 several targets with weights or a `code` expression, and `--method` is
-`coordinate`, `nelder-mead` or `random`. A long search streams `progress`
-events on the channel and `cancel` stops it while keeping the best state.
+`coordinate`, `nelder-mead` or `random`. Cancelling a long search keeps what it
+paid for: it stops, applies its best parameters, and ends with `done` and
+`stopped: "cancel"` rather than an error.
 
 ## Checkpoints and rollback
 
@@ -351,18 +397,18 @@ plain `session open` — there is never a second open naming a file:
 
 ```sh
 blender-cli exec -c 'import os; os._exit(1)' --json
-# {"ok":false,"error":{"type":"SessionError","message":"Session 161875 exited unexpectedly; …"},"autosave":"/tmp/r2/.blender-cli/autosave-161875.blend"}
+# {"ok":false,"error":{"type":"SessionError","message":"Session 183161 exited unexpectedly; see .blender-cli/session.log. `session open` recovers it from the newest of its program and autosave; `session close` discards it"},"autosave":"/tmp/f5/.blender-cli/autosave-183161.blend"}
 blender-cli session open --json
-# {"session":"161988","socket":"/tmp/r2/.blender-cli/session.sock","previous_autosave":"…/autosave-161875.blend","recovered_from":"autosave"}
+# {"session":"183606","socket":"/tmp/f5/.blender-cli/session.sock","recovered_from":"autosave"}
 blender-cli exec -c 'agent.objective()["targets"]["front"]["iou"]' --no-record --json
-# {"ok":true,"value":"0.9800367922599986"}
+# {"ok":true,"value":"0.9736367733213159"}
 ```
 
 That session was idle long enough for its autosave to be written after its last
 program version, so the autosave won; the `repl` transcript above ended on a
-burst of edits, so the program did. Both came back at the same objective. The
-distinction is worth knowing only because `recovered_from` reports it, not
-because it changes what you do.
+burst of edits, so the program did. Each came back at the objective its own
+session had. The distinction is worth knowing only because `recovered_from`
+reports it, not because it changes what you do.
 
 Neither source restores the failed call or Python variables, and an autosave is
 the last *completed* write rather than every acknowledged edit. A recovered
