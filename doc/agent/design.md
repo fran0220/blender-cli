@@ -438,7 +438,14 @@ value from the last time the skipped step ran, and RNA references in it are
 stale, exactly as after `session rollback`.
 
 An evicted memfile drops every prefix that named it and re-execution falls
-back to a shorter prefix, or to the base.
+back to a shorter prefix, or to the base. The snapshot store is bounded at
+256 MiB and evicts oldest-first, so a long enough program outlives its own
+early prefixes: measured on Linux, 12 steps each adding a 361,201-vertex
+grid leave the first 8 prefixes unrestorable and the last 5 alive, and a
+parameter change that only a late step reads then rebuilds from the base
+rather than restoring a memfile that is gone. The fallback is invisible in
+the answer except as a smaller `cached`, and the `digest` is the same either
+way.
 
 `set`, `patch`, `run`, `rollback` and `program get` answer with a `digest`:
 `agent_program.digest()`, a sha256 over `Main`'s content. A partial re-run

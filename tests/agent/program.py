@@ -428,6 +428,62 @@ def main():
             assert steps_ran() == [], "opening a file must not run the program"
         finally:
             call("session", "close")
+
+        # The snapshot store is bounded, so a long enough program outlives its own
+        # early prefixes. Re-execution must notice and fall back, not restore a
+        # memfile that is gone. Its own directory: this program is nothing like the
+        # one above, and its meshes are large enough to evict.
+        heavy = root / "heavy"
+        heavy.mkdir()
+        steps = "".join(
+            f"\n# step {number}\n"
+            'bpy.ops.mesh.primitive_grid_add(x_subdivisions=P["size"], y_subdivisions=P["size"])\n'
+            + ('bpy.context.object.location.z = P["shift"]\n' if number == 2 else "")
+            for number in range(1, 13))
+        heavy_text = ('# blender-cli program\n# base: factory-empty\n'
+                      'P = {"size": 600, "shift": 0.0}\n' + steps)
+        started = time.monotonic()
+        call("session", "open", cwd=heavy)
+        try:
+            # Images and metrics say nothing about eviction and cost more than it does.
+            call("session", "feedback", "perception=false", "objective=false",
+                 "image.mode=off", cwd=heavy)
+            built = call("program", "set", "--text", heavy_text, cwd=heavy)
+            assert built["ran"] == list(range(1, 13)), built["ran"]
+
+            # The store evicted the early prefixes and kept the recent ones.
+            reach = call("exec", "-c",
+                         "import agent, agent_program\n"
+                         "_program = agent_program.attach(agent._session)\n"
+                         "def _restorable(_snapshot):\n"
+                         "    try:\n"
+                         "        agent._session.native['rollback'](_snapshot)\n"
+                         "    except KeyError:\n"
+                         "        return False\n"
+                         "    return True\n"
+                         "(_restorable(_program.cache[_program.key(1)]),\n"
+                         " _restorable(_program.cache[_program.key(12)]))",
+                         "--no-record", cwd=heavy)
+            assert reach["value"] == "(False, True)", reach["value"]
+
+            # Step 1 is unchanged, so a live prefix 1 would have been reused. Its
+            # memfile is gone, and the shorter prefixes with it, so the run rebuilds.
+            moved = call("program", "set", "--text",
+                         heavy_text.replace('"shift": 0.0', '"shift": 1.5'), cwd=heavy)
+            assert moved["cached"] == 0 and moved["from_step"] == 1, moved
+            assert moved["ran"] == list(range(1, 13)), moved["ran"]
+
+            # Falling back to the base still lands on the state a full run reaches.
+            fresh = call("exec", "-c",
+                         "import agent, agent_program\n"
+                         "_program = agent_program.attach(agent._session)\n"
+                         "_program.cache.clear()\n"
+                         "_program.run()['digest']", "--no-record", cwd=heavy)
+            assert fresh["value"] == repr(moved["digest"]), (fresh["value"], moved["digest"])
+        finally:
+            call("session", "close", cwd=heavy)
+        print(f"memfile eviction: 12 steps of a 361,201-vertex grid, "
+              f"{time.monotonic() - started:.1f} s", flush=True)
     print("agent program: all assertions passed")
 
 
