@@ -25,10 +25,18 @@ import numpy as np
 import agent_target
 from agent_observe import png
 
-# The kernel's contract table owns these defaults; `seconds` has none, so the
-# evaluation count is the only bound unless the agent asks for a deadline.
+# The kernel's contract table owns these defaults. `seconds` has none, so the
+# evaluation count is the only bound unless the agent asks for a deadline, and
+# `patience` has none because it is derived from the size of the search.
 DEFAULT_BUDGET = {"evals": 200, "seconds": None, "size": 128,
-                  "patience": 16, "tolerance": 1e-3}
+                  "patience": None, "tolerance": 1e-3}
+# A cyclic cycle over n parameters spends about 2n evaluations without
+# improving before its step halves, and a search can need more than two such
+# cycles before the step is small enough to move again. Measured on a
+# five-parameter fit: 16 and 20 stop at IoU 0.959, 24 reaches the 0.997 the
+# full budget reaches, so the multiplier is the next whole number above 24/5.
+PATIENCE_PER_PARAMETER = 5
+PATIENCE_FLOOR = 16
 METHODS = ("coordinate", "nelder-mead", "random")
 # `patience` is the convergence rule. This floor only stops a step small enough
 # that no trial differs from the point it came from, which would spin forever.
@@ -297,9 +305,15 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
         raise ValueError("budget needs evals >= 1 and size >= 16")
     if settings["seconds"] is not None and settings["seconds"] <= 0:
         raise ValueError("budget seconds must be greater than zero")
-    if settings["patience"] < 1 or settings["tolerance"] < 0:
-        raise ValueError("budget needs patience >= 1 and tolerance >= 0")
+    if settings["patience"] is not None and settings["patience"] < 1:
+        raise ValueError("budget patience must be at least one evaluation")
+    if settings["tolerance"] < 0:
+        raise ValueError("budget tolerance must not be negative")
     parameters = [Parameter(spec) for spec in params]
+    if settings["patience"] is None:
+        # How long a search must stay silent before it has really converged is
+        # a property of the search, not a number the agent should have to know.
+        settings["patience"] = max(PATIENCE_FLOOR, PATIENCE_PER_PARAMETER * len(parameters))
     state = agent_target.store(session)
     namespace = session.namespace if session is not None else {}
     goal = Objective(objective, state, settings["size"], namespace)

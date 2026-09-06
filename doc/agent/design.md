@@ -706,9 +706,10 @@ search's own cache and cost no render and no evaluation.
 `objective` defaults to every registered target on `iou` with equal weights.
 The metric's direction decides whether the search maximises (`iou`, `ssim`)
 or minimises (`chamfer`, `hist`); a `code` objective is always maximised and
-must return a number. `budget` defaults to `{"evals": 200, "size": 128}`;
+must return a number. `budget` defaults to `{"evals": 200, "size": 128}`.
 `seconds` has no default, so the evaluation count is the only bound unless
-the agent asks for a wall-clock one.
+the agent asks for a wall-clock one, and `patience` has none because it is
+derived from the number of parameters, below.
 
 `progress` follows `session feedback`'s `progress` policy. Under the default
 `improvements` an event is sent only when the best value improves, because
@@ -731,14 +732,31 @@ rather than stopping early. A method that does reach that floor reports
 `patience`, since it ended for the reason `patience` names.
 
 `patience` counts evaluations, so it has to clear the longest barren stretch
-a method can make while still converging. A cyclic coordinate descent over
-`n` parameters probes `2n` points before it halves its step, and it may need
-two such cycles before the step is small enough to improve again. Below
-about `4n` the search stops while it still had progress to make: on a
-five-parameter fit the default 16 stops after 24 of 60 evaluations at IoU
-0.959, where 24 runs the full budget and reaches 0.997. Raise `patience`
-with the parameter count, or leave it at the default only for small
-searches.
+a method can make while still converging, and that stretch grows with the
+number of parameters: a cyclic coordinate descent over `n` of them probes
+`2n` points before it halves its step, and may need more than two such
+cycles before the step is small enough to move again. A fixed `patience` is
+therefore right for a small search and wrong for a large one — which is a
+number the process can work out and the agent should not have to.
+
+So `patience` has no fixed default. When a request does not set it, `fit`
+resolves it as `max(16, 5 × parameters)`; an explicit `patience` always
+wins. The multiplier is measured, not chosen: on a five-parameter fit of a
+mug (cylinder body, x-scaled torus handle, Solidify wall) against a
+silhouette this binary rendered, 60 evaluations at 128 px,
+
+| `patience` | wall | evaluations | `stopped` | best IoU |
+|---|---|---|---|---|
+| unbounded | 153.3 s | 60 | `budget` | 0.996658 |
+| 16 | 63.9 s | 24 | `patience` | 0.959040 |
+| 20 (`4n`) | 73.4 s | 28 | `patience` | 0.959040 |
+| 24 | 150.2 s | 60 | `budget` | 0.996658 |
+| **25 (`5n`, derived)** | **156.5 s** | **60** | **`budget`** | **0.996658** |
+
+`4n` still stops a halving early and costs 0.038 IoU for 52 % of the time;
+the smallest whole multiplier that reaches what the full budget reaches is
+5. The floor of 16 keeps a one- or two-parameter search from converging on
+noise.
 
 `cancel` and an exhausted budget behave alike: the search stops, the best
 parameters are applied, and the request ends with `done`, not `error` — a
@@ -1573,10 +1591,33 @@ and centers them at observe's `OCCUPANCY = 1 / 1.1` (0.9090909090909091).
 The **model silhouette passes through the identical transform**, because
 auto-framing fits the 3D world bounds and the projection of those bounds is
 not the 2D silhouette's bounding box: normalising only the reference leaves
-an exact model scoring well below 1 — 0.786 on a mug — and a `fit`
-optimising toward a displaced optimum. With both normalised, an exact model
-scores 1.0 under `fit bbox` and absolute IoU is comparable across sessions
-and scenes.
+an exact model scoring 0.786 on a mug and a `fit` optimising toward a
+displaced optimum. Both are scaled uniformly, never per axis, or the metric
+would lose the proportions a fit is searching for.
+
+The reference reaches that transform in **one resample and one threshold**.
+It is segmented at its own resolution and its continuous coverage — alpha,
+luminance, or the colour-distance estimate — is carried unthresholded to the
+single resize. Every resample of an already-binary mask moves its edge
+again, and a thin silhouette pays for each move over a small area. Measured
+on a fragmented scene of 5147 tile pixels behind an 860-pixel boundary, the
+self-score of the model's own silhouette rose from 0.888 to **0.964** under
+`mask auto`; on a compact scene it is exactly **1.0** with chamfer 0. Under
+`mask none` it moved from 0.936 to 0.923: the old chain's second resample
+happened to cancel part of the model's, which is luck rather than accuracy.
+
+What remains on the fragmented scene is not the chain. Scored against a
+reference rendered at the budget size instead of at 512, the same scene
+gives exactly 1.0 and chamfer 0 — so the residual is that a 512-pixel
+rasterisation resampled to 256 is not the 256-pixel rasterisation of the
+same geometry, and no amount of care inside the comparison removes it.
+Register a reference at the size it will be scored at when a silhouette is
+thin and broken.
+
+Morphological cleanup belongs to an estimate. The 3×3 opening and closing
+run only when the mask came from colour-distance estimation; a mask read
+from alpha or luminance is measured rather than guessed, and a stencil along
+its boundary only erodes it. Nothing morphological is applied to the model.
 
 **Every `region` on the channel is in the view's own pixels.** The
 normalised tile is internal to the metric and never appears on the wire:

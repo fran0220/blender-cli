@@ -30,7 +30,7 @@ def morphology(mask, dilate):
     return result
 
 
-def reference(ref, size, policy, fit="bbox"):
+def load(ref):
     """Load with Blender's codecs; caller owns the isolated-data lifetime."""
     image = bpy.data.images.load(str(Path(ref).resolve()), check_existing=False)
     w, h = image.size
@@ -54,39 +54,66 @@ def reference(ref, size, policy, fit="bbox"):
         if np.all(bytes_rgb(border[:, :3]) == 32) and np.all(border[:, 3] == 1):
             rgba = rgba[2:-2, 2:-2]
             h, w = rgba.shape[:2]
-    scale = min(size / w, size / h)
-    rw, rh = max(1, round(w * scale)), max(1, round(h * scale))
+    # `channels` describes storage (usually RGBA even for RGB files); depth uses
+    # ImBuf's source color mode and distinguishes an actual alpha channel.
+    return rgba, image.depth in (16, 32, 64, 128)
+
+
+def reference(ref, size, policy, fit="bbox"):
+    """A reference normalised into its own `size` tile, for `agent.compare`."""
+    rgba, has_alpha = load(ref)
+    coverage = foreground(rgba, policy, has_alpha)
     # Resample premultiplied display RGB so transparent RGB does not bleed into edges.
     premul = rgba.copy()
     premul[:, :, :3] *= premul[:, :, 3:4]
+    if fit == "bbox" and (coverage >= 0.5).any():
+        ys, xs = np.nonzero(coverage >= 0.5)
+        x0, x1, y0, y1 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
+        premul, coverage = premul[y0:y1, x0:x1], coverage[y0:y1, x0:x1]
+        scale = size * OCCUPANCY / max(coverage.shape)
+    else:
+        scale = min(size / coverage.shape[1], size / coverage.shape[0])
+    rw = max(1, round(coverage.shape[1] * scale))
+    rh = max(1, round(coverage.shape[0] * scale))
+    # One resample of the continuous coverage, then one threshold. Resampling a
+    # mask that is already binary moves its edge again, and on a thin silhouette
+    # a long boundary over a small area pays for every one of those moves.
     fitted = resize(premul, rw, rh)
+    mask = resize(coverage[:, :, None], rw, rh)[:, :, 0] >= 0.5
     a = fitted[:, :, 3]
     rgb = np.divide(fitted[:, :, :3], a[:, :, None], out=np.zeros_like(fitted[:, :, :3]),
                     where=a[:, :, None] > 0)
-    if policy == "auto":
+    rgb = rgb * a[:, :, None] + BACKGROUND * (1 - a[:, :, None])
+    tile, silhouette = place(rgb, mask, size)
+    return tile, silhouette, record(silhouette, size, fit)
+
+
+def foreground(rgba, policy, has_alpha):
+    """Continuous foreground coverage at the reference's own resolution.
+
+    Alpha and luminance are already continuous, so they are carried to the one
+    resample unthresholded. Only a colour-distance estimate has to binarise
+    here, because its noise cleanup is a morphological stencil.
+    """
+    alpha = rgba[:, :, 3]
+    rgb = np.divide(rgba[:, :, :3], alpha[:, :, None], out=np.zeros_like(rgba[:, :, :3]),
+                    where=alpha[:, :, None] > 0)
+    if policy == "auto" and not np.any(alpha < 1 - 1 / 255):
         border = np.concatenate((rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]))
         background = np.median(border, axis=0)
         distances = np.linalg.norm(border - background, axis=1)
         median = np.median(distances)
         threshold = max(0.08, float(median + 6 * np.median(np.abs(distances - median))))
         mask = np.linalg.norm(rgb - background, axis=2) > threshold
-        # Meaningful alpha is a stronger background cue than color estimation.
-        if np.any(a < 1 - 1 / 255):
-            mask = a >= 0.5
+        # Cleanup belongs to an estimate. A mask read from alpha or luminance is
+        # measured, not guessed, and a stencil along its boundary only erodes it.
         mask = morphology(morphology(mask, False), True)  # 3x3 opening.
         mask = morphology(morphology(mask, True), False)  # 3x3 closing.
-    else:
-        # `channels` describes storage (usually RGBA even for RGB files); depth uses
-        # ImBuf's source color mode and distinguishes an actual alpha channel.
-        has_alpha = image.depth in (16, 32, 64, 128)
-        mask = a >= 0.5 if has_alpha else (rgb @ np.array((0.2126, 0.7152, 0.0722))) >= 0.5
-    rgb = rgb * a[:, :, None] + BACKGROUND * (1 - a[:, :, None])
-    if fit == "bbox":
-        # Segment before cropping; cropped edges no longer identify the background.
-        tile, silhouette, _ = normalize(rgb, mask, size)
-    else:
-        tile, silhouette = place(rgb, mask, size)
-    return tile, silhouette, record(silhouette, size, fit)
+        return mask.astype(np.float64)
+    if policy == "auto" or has_alpha:
+        # Meaningful alpha is a stronger background cue than colour estimation.
+        return alpha
+    return rgb @ np.array((0.2126, 0.7152, 0.0722))
 
 
 def place(rgb, mask, size):
@@ -221,11 +248,11 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
     if view == "camera" and source.camera is None:
         raise ValueError("The camera view requires scene.camera")
     with isolated_data():
-        rgb, silhouette, reference_info = reference(ref, size, mask, fit)
         scene, points, center, radius, framing = render_scene(source, size, frame)
         near, far = aim(scene, source, view, points, center, radius)
         images = render_passes(scene, size, near, far)
         model_rgb, model_mask = images["color"] / 255, images["silhouette"][:, :, 0] != 0
+        rgb, silhouette, reference_info = reference(ref, size, mask, fit)
         if fit == "bbox" and model_mask.any():
             # The reference was normalised; the model has to be, or an exact
             # model scores below 1 and a fit optimises toward a displaced point.

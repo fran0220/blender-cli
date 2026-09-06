@@ -376,8 +376,10 @@ agent.register_provider(Peek())
             assert channel.done(op="session", action="status")["feedback"]["progress"] == \
                 "improvements"
 
-            # A search that stops improving stops paying for renders. The same
-            # budget with a patience it cannot exhaust runs to the end instead.
+            # A search that stops improving stops paying for renders. No
+            # `patience` is given, so this is the derived one: two parameters
+            # sit on the floor of 16. The same budget with a patience it cannot
+            # exhaust runs to the end instead.
             patient = short_fit(evals=60)[-1]
             print("patience stop:", json.dumps(
                 {key: patient[key] for key in ("evals", "stopped", "best")}), flush=True)
@@ -389,6 +391,32 @@ agent.register_provider(Peek())
             assert spent["stopped"] == "budget" and spent["evals"] == 60, spent
             assert patient["evals"] < spent["evals"], (patient, spent)
             assert spent["best"]["score"] - patient["best"]["score"] < 0.01, (patient, spent)
+
+            # The derived patience grows with the search. Five parameters put it
+            # at 25, so a 20-evaluation budget cannot reach it and the search
+            # ends on `budget`; under a fixed 16 it would have stopped early.
+            channel.request(op="exec", code=RESET)
+            wide = channel.done(
+                op="fit",
+                params=[{"path": X, "min": 0.4, "max": 1.9},
+                        {"path": Y, "min": 0.4, "max": 1.9},
+                        {"path": 'objects["Cube"].scale[2]', "min": 0.4, "max": 1.9},
+                        {"path": 'objects["Cube"].location[0]', "min": -0.3, "max": 0.3},
+                        {"path": 'objects["Cube"].location[2]', "min": -0.3, "max": 0.3}],
+                objective={"target": "top", "metric": "iou"},
+                budget={"evals": 20, "seconds": 900, "size": 128})
+            print("five parameters, derived patience:", json.dumps(
+                {key: wide[key] for key in ("evals", "stopped")}), flush=True)
+            assert wide["stopped"] == "budget" and wide["evals"] == 20, wide
+            # An explicit patience still wins over the derived one.
+            channel.request(op="exec", code=RESET)
+            forced = channel.done(
+                op="fit", params=[{"path": X, "min": 0.4, "max": 1.9}],
+                objective={"target": "top", "metric": "iou"},
+                budget={"evals": 60, "seconds": 900, "size": 128, "patience": 2})
+            print("explicit patience:", json.dumps(
+                {key: forced[key] for key in ("evals", "stopped")}), flush=True)
+            assert forced["stopped"] == "patience" and forced["evals"] <= 16, forced
 
             # Cancel keeps the best: fit ends with done, not Cancelled.
             channel.request(op="exec", code=RESET)
