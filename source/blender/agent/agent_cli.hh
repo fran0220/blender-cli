@@ -5,9 +5,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <cstdio>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -338,8 +338,8 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
     const std::string action = parsed.request.value("action", std::string());
     const CliField *field = cli_positional(*verb, int(index), action);
     if (!field) {
-      return fail(index == 0 ? std::string(verb->name) + " takes no positional arguments: " +
-                                   positional[index] :
+      return fail(index == 0 ? std::string(verb->name) +
+                                   " takes no positional arguments: " + positional[index] :
                                std::string(verb->name) + " takes too many positional arguments");
     }
     if (field->kind == CliKind::Settings) {

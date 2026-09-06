@@ -725,6 +725,18 @@ class Session:
     def emit(self, event):
         self.native["emit"](json.dumps(serialize(event), ensure_ascii=True, allow_nan=False))
 
+    def greeting(self):
+        """What a peer is told when it joins, before it asks anything.
+
+        A conversation opens knowing what it opened: the step, the snapshot,
+        the feedback budget, the registered targets and, after a crash, what
+        the scene was rebuilt from. Asking for that would be a round trip
+        whose only purpose is to see the current state.
+        """
+        state = session_op({"id": None, "op": "session", "action": "status"}, self, lambda _: None)
+        return json.dumps(serialize({"id": None, "event": "session", **state}),
+                          ensure_ascii=True, allow_nan=False)
+
     def serve(self, line):
         """One protocol line in, one ordered event sequence out."""
         try:

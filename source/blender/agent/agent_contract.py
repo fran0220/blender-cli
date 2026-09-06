@@ -257,6 +257,16 @@ REQUESTS = {
 }
 
 EVENTS = {
+    "session": {"doc": "Unsolicited, once, when a peer joins a channel and again after the "
+                       "channel recovers a dead session. Carries the `session status` result "
+                       "and has no request id, so the recovery verdict is never asked for.",
+                "fields": {"session": {"type": "string"}, "file": {"type": "string"},
+                           "dirty": {"type": "boolean"}, "step": {"type": "integer"},
+                           "snapshot": {"type": "string"}, "feedback": {"ref": "feedback_policy"},
+                           "targets": {"type": "array", "items": {"type": "string"}},
+                           "recovered_from": {"type": "string",
+                                              "enum": ["autosave", "program"],
+                                              "doc": "What the scene was rebuilt from, or null."}}},
     "log": {"doc": "Captured Python stdout or stderr, emitted line by line as it is produced.",
             "fields": {"stream": {"type": "string", "enum": ["stdout", "stderr"]},
                        "text": {"type": "string"}}},

@@ -79,8 +79,11 @@ def main():
                 process.stdin.write(json.dumps(request) + "\n")
                 process.stdin.flush()
                 for line in process.stdout:
-                    events.append(json.loads(line))
-                    if events[-1]["event"] in ("done", "error"):
+                    event = json.loads(line)
+                    if event["event"] == "session":
+                        continue  # The channel's opening statement of its own state.
+                    events.append(event)
+                    if event["event"] in ("done", "error"):
                         break
             finally:
                 process.stdin.close()

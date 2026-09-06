@@ -83,6 +83,7 @@ class Channel:
             text=True, bufsize=1)
         self.identifier = 0
         self.aside = []
+        self.opening = None
 
     def send(self, **request):
         self.identifier += 1
@@ -107,6 +108,10 @@ class Channel:
         collected = []
         while True:
             event = self.read()
+            if event["event"] == "session":
+                # The channel's opening statement, not an answer to anything.
+                self.opening = event
+                continue
             if event["id"] != identifier:
                 self.aside.append(event)
                 continue

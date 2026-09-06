@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <json.hpp>
@@ -31,6 +32,8 @@ class Channel {
     /* End of input means "no more requests", not "discard my answers": a
      * `repl` bridge closes its write side as soon as its own stdin ends. */
     bool reading = true;
+    /* No request of a peer runs before the peer has been told what it joined. */
+    bool greeted = false;
   };
   struct Request {
     std::shared_ptr<Peer> peer;
@@ -46,7 +49,7 @@ class Channel {
   {
     std::unique_lock lock(mutex_);
     ready_.wait_for(lock, std::chrono::milliseconds(10), [this] { return !queue_.empty(); });
-    if (queue_.empty()) {
+    if (queue_.empty() || !queue_.front().peer->greeted) {
       return false;
     }
     request = std::move(queue_.front());
@@ -76,10 +79,29 @@ class Channel {
     return ended_.load();
   }
 
+  /* Peers that have joined but have not been told what they joined. */
+  std::vector<std::shared_ptr<Peer>> take_ungreeted()
+  {
+    std::lock_guard lock(mutex_);
+    for (const auto &peer : ungreeted_) {
+      /* Marked on the way out, so a greeting that cannot be built does not
+       * leave the peer's requests unanswerable. */
+      peer->greeted = true;
+    }
+    return std::exchange(ungreeted_, {});
+  }
+
+  void greet(const std::shared_ptr<Peer> &peer, const std::string &line)
+  {
+    std::lock_guard lock(mutex_);
+    write(*peer, line + "\n");
+  }
+
  protected:
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<Request> queue_;
+  std::vector<std::shared_ptr<Peer>> ungreeted_;
   nlohmann::json active_id_;
   std::atomic<bool> ended_{false};
   bool stopping_ = false;
@@ -188,7 +210,8 @@ class SocketChannel : public Channel {
             socket_close(fd);
           }
           else {
-            peers_.push_back(std::make_shared<Peer>(Peer{fd, {}, {}, true}));
+            peers_.push_back(std::make_shared<Peer>(Peer{fd, {}, {}, true, false}));
+            ungreeted_.push_back(peers_.back());
           }
         }
       }
@@ -316,6 +339,9 @@ class StdioChannel : public Channel {
  public:
   explicit StdioChannel(FILE *output) : output_(output)
   {
+    /* The conversation exists from the start, so it is greeted before the
+     * first request is read. */
+    ungreeted_.push_back(peer_);
     thread_ = std::thread([this] { read_loop(); });
   }
 

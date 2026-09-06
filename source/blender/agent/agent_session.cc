@@ -439,6 +439,17 @@ int session_serve(bContext *C,
 
   bool closing = false;
   while (!closing) {
+    /* A peer is told what it joined before it is read from. */
+    for (const auto &peer : channel->take_ungreeted()) {
+      PyObject *greeting = PyObject_CallMethod(runtime, "greeting", nullptr);
+      if (greeting) {
+        channel->greet(peer, PyUnicode_AsUTF8(greeting));
+        Py_DECREF(greeting);
+      }
+      else {
+        PyErr_Print();
+      }
+    }
     Channel::Request request;
     bool received;
     Py_BEGIN_ALLOW_THREADS received = channel->next(request);

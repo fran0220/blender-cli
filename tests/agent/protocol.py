@@ -47,7 +47,14 @@ def main():
                                      input="".join(json.dumps(line) + "\n" for line in lines),
                                      capture_output=True, text=True)
             assert process.returncode == 0, (process.stdout, process.stderr)
-            return [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+            events = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+            # A conversation opens with the session it opened, before it is read from.
+            greeting, *rest = events
+            assert greeting["event"] == "session" and greeting["id"] is None, greeting
+            assert greeting["step"] == 0 and greeting["recovered_from"] is None, greeting
+            assert set(greeting) >= {"session", "file", "dirty", "step", "snapshot",
+                                     "feedback", "targets", "recovered_from"}, greeting
+            return rest
 
         help_result = raw("--help")
         assert help_result.returncode == 0 and "repl" in help_result.stdout, help_result

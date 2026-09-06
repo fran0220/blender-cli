@@ -41,6 +41,13 @@ def connection(endpoint):
         yield client
 
 
+def greeting(stream):
+    """Every peer is told what it joined before it asks anything."""
+    event = json.loads(stream.readline())
+    assert event["event"] == "session" and event["id"] is None, event
+    return event
+
+
 def events_until_end(stream, request_id):
     """Collect one request's events, in order, up to its terminal event."""
     events = []
@@ -172,19 +179,20 @@ len(mesh.vertices)
             # Cancellation is on a second connection while the original is executing, and
             # is answered at once instead of queueing behind the running request.
             with connection(local_endpoint) as running, connection(local_endpoint) as control:
+                run_stream, control_stream = running.makefile("rb"), control.makefile("rb")
+                assert greeting(run_stream)["step"] == greeting(control_stream)["step"]
                 running.sendall((json.dumps({"id": 9001, "op": "exec",
                                              "code": "while True:\n    pass"}) + "\n").encode())
                 time.sleep(0.1)
                 control.sendall((json.dumps({"id": 9002, "op": "cancel", "target": 9001}) + "\n").encode())
-                answer = json.loads(control.makefile("rb").readline())
+                answer = json.loads(control_stream.readline())
                 assert answer == {"id": 9002, "event": "done", "ok": True,
                                   "target": 9001, "cancelled": True}, answer
-                stream = running.makefile("rb")
-                final, = events_until_end(stream, 9001)
+                final, = events_until_end(run_stream, 9001)
                 assert final["event"] == "error" and final["type"] == "Cancelled", final
                 # An id that is not running is answered too, and changes nothing.
                 control.sendall((json.dumps({"id": 9003, "op": "cancel", "target": 4242}) + "\n").encode())
-                idle = json.loads(control.makefile("rb").readline())
+                idle = json.loads(control_stream.readline())
                 assert idle["cancelled"] is False, idle
             assert execute("x")["value"] == "9"
 
@@ -194,6 +202,7 @@ len(mesh.vertices)
                     message = {"id": 9100 + index, "op": "exec", "code": code}
                     pipeline.sendall((json.dumps(message) + "\n").encode())
                 stream = pipeline.makefile("rb")
+                greeting(stream)
                 first = events_until_end(stream, 9100)
                 second = events_until_end(stream, 9101)
                 assert first[-1]["event"] == "done" and second[-1]["event"] == "done"
@@ -206,11 +215,64 @@ len(mesh.vertices)
                                   "code": "bridged = 'yes'\nbridged"}) + "\n")
             assert bridged.returncode == 0, bridged
             streamed = [json.loads(line) for line in bridged.stdout.splitlines() if line.strip()]
+            opening = streamed.pop(0)
+            assert opening["event"] == "session" and opening["id"] is None, opening
+            assert opening["snapshot"] == call("session", "status")["snapshot"], opening
             order = ["value", "diff", "perception", "objective", "image", "done"]
             ranked = [order.index(event["event"]) for event in streamed]
             assert ranked == sorted(ranked) and streamed[-1]["event"] == "done", streamed
             assert streamed[0] == {"id": 9200, "event": "value", "value": "'yes'"}, streamed
             assert execute("bridged")["value"] == "'yes'", "repl shares the session namespace"
+
+            # The pipe outlives the process behind it. In its own directory, so a
+            # crashed session's recovery file cannot outlive this conversation.
+            channel = root / "channel"
+            channel.mkdir()
+            pipe = subprocess.Popen([executable, "repl"], cwd=channel, text=True, bufsize=1,
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            try:
+                def send(request):
+                    pipe.stdin.write(json.dumps(request) + "\n")
+                    pipe.stdin.flush()
+
+                def until(kind):
+                    while True:
+                        event = json.loads(pipe.stdout.readline())
+                        if event["event"] == kind:
+                            return event
+
+                # `repl` opens the session it needs, and says what it opened.
+                opening = until("session")
+                assert opening["id"] is None and opening["recovered_from"] is None, opening
+                send({"id": 9400, "op": "exec", "code": "bpy.ops.mesh.primitive_cube_add()",
+                      "feedback": {"mode": "off"}})
+                assert until("done")["ok"] is True
+                crashed_autosave = channel / ".blender-cli" / f'autosave-{opening["session"]}.blend'
+                wait_autosave(crashed_autosave)
+                send({"id": 9401, "op": "exec", "code": "import os; os._exit(3)"})
+                lost = json.loads(pipe.stdout.readline())
+                # What the reopened session rebuilt from is its own verdict; the
+                # bridge states it rather than deciding it.
+                assert lost == {"id": 9401, "event": "error", "ok": False, "type": "Crashed",
+                                "message": f'Session {opening["session"]} exited during this '
+                                           "request; see .blender-cli/session.log. The session "
+                                           "was reopened and this pipe still serves it",
+                                "recovered_from": lost["recovered_from"], "step": lost["step"],
+                                "snapshot": lost["snapshot"],
+                                "autosave": str(crashed_autosave)}, lost
+                assert lost["recovered_from"] in ("program", "autosave", None), lost
+                # The same pipe now serves the session it just reopened, and says so.
+                reopened = until("session")
+                assert reopened["session"] != opening["session"], reopened
+                assert reopened["recovered_from"] == lost["recovered_from"], (reopened, lost)
+                assert reopened["snapshot"] == lost["snapshot"], (reopened, lost)
+                send({"id": 9402, "op": "inspect"})
+                assert until("done")["ok"] is True, "the reopened session answers on this pipe"
+                pipe.stdin.close()
+                assert pipe.wait(timeout=60) == 0, "recovery succeeded, so the bridge did not fail"
+            finally:
+                pipe.kill()
+            subprocess.run([executable, "session", "close", "--json"], cwd=channel, timeout=60)
 
             failed = execute("raise RuntimeError('intentional')", ok=False)
             assert "diff" not in failed, failed

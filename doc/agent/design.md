@@ -106,6 +106,12 @@ changes no datablock takes no snapshot and does not advance `step`; its
 
 ### Events
 
+A peer is greeted the moment it joins a channel, before any request of its is
+read, with one unsolicited `session` event carrying the `session status`
+shape and no `id`. A conversation therefore opens knowing its step, snapshot,
+feedback budget, targets and — after a crash — what the scene was rebuilt
+from, without spending a round trip to ask.
+
 Every request produces an ordered sequence of events sharing its `id`, ending
 in exactly one `done` or `error`:
 
@@ -755,6 +761,16 @@ it carries no `fix`; the property record's ranges expose the limit instead.
 - **Channel**: `blender-cli repl [--file scene.blend] [--standalone]` holds
   one stdio pipe to the session for the whole conversation: requests in,
   events out, as the channel protocol defines. This is the primary mode.
+  The pipe outlives the process behind it. `repl` opens the session when
+  none is listening, and when a session dies it answers every request it
+  owed with `error` of type `Crashed` — carrying `recovered_from`, `step`,
+  `snapshot` and the dead session's `autosave` — reopens the session,
+  greets the conversation with the new `session` event, and keeps serving
+  the same pipe. It never decides what the reopened session rebuilds from;
+  it states the verdict the session gives. It exits non-zero only when
+  reopening itself fails. Everything it writes to stdout is one line of
+  protocol, including its own failures, which are `error` events with a null
+  `id`; `--json` means nothing to a channel that only ever writes JSON lines.
 - **Session + one-shot verbs**: `blender-cli session open [--file
   scene.blend]` starts a daemon bound to `<cwd>/.blender-cli/session.sock`.
   Any verb run in that directory sends one request to it and prints the
