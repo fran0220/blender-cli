@@ -266,9 +266,14 @@ warning 741 tokens per session. No exception occurred, so no corrective
   `fit`'s `error_map` produced it) arrives with every scoring.
 - W: `usage.md`'s crash section documents the plain reopen that rebuilds
   from the program and `repl`'s recovery behaviour once K lands it.
-- P: no change. `program get` is the read half of editing the program, not
-  a look at scene state; a host without the process's filesystem sends it
-  when it edits, which is when it needs the text.
+- P: `recover()` always recovers and the newest source wins. W found that
+  a plain reopen after a crash recovers nothing when the autosave is
+  newer than the program (`recovered_from: null`, empty scene, targets
+  still registered; which branch runs was an 11 ms mtime race). Autosave
+  newer → it is loaded, `recovered_from: "autosave"`; else the program
+  replays, `"program"`; null only when nothing existed. `repl`'s own
+  recovery reopens through the same code. `program get` is unchanged: it
+  is the read half of editing the program, not a look at scene state.
 
 ### X — product platforms
 
