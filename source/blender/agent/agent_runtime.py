@@ -514,7 +514,7 @@ def fresh_namespace():
 
 
 def default_feedback():
-    return {"perception": True, "objective": True,
+    return {"perception": True, "objective": True, "progress": "improvements",
             "image": {"mode": "delta", "threshold": 0.002, "views": ["front"],
                       "pass": "color", "size": 256, "samples": 8, "overlay": True,
                       "inline": False}}

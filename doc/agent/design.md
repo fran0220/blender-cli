@@ -154,6 +154,7 @@ function.
 ```
 {"perception": true,
  "objective":  true,
+ "progress":   "all|improvements|off",
  "image": {"mode": "delta|full|off", "threshold": 0.002, "views": ["front"],
            "pass": "color", "size": 256, "samples": 8, "overlay": true,
            "inline": false}}
@@ -163,6 +164,14 @@ Defaults are the values above. `threshold` is the fraction of changed
 pixels in the budget view below which no `image` event is sent. `exec` and
 `program` requests may carry `"feedback"` to override the image policy for
 one request; nothing else is per-request.
+
+`progress` is what a search pushes while it runs. The default,
+`improvements`, sends a `progress` event only for an evaluation that beat the
+best; every evaluation is already in `done.curve`, so pushing them all spends
+tokens repeating the answer. `fit`'s `budget` bounds the search the same way:
+`patience` evaluations without an improvement greater than `tolerance` end
+it, and `done.stopped` says which bound it hit — `budget`, `patience`,
+`seconds` or `cancel`.
 
 `samples` is the budget render's EEVEE sample count, deliberately below
 observation's fixed 32: a delta is read for where the picture moved, not for
