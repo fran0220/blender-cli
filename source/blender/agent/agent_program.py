@@ -847,29 +847,56 @@ def previous_autosave(root):
     return max(candidates, key=os.path.getmtime, default=None)
 
 
-def recover(program, session):
-    """Rebuild the scene from the program when it is newer than the recovered autosave.
+def load_autosave(session, path):
+    """Load a recovery file exactly as `session open --file` would, sidecar included."""
+    bpy.ops.wm.open_mainfile(filepath=path, load_ui=False, use_scripts=False)
+    metadata_path = os.path.splitext(path)[0] + ".json"
+    if os.path.isfile(metadata_path):
+        with open(metadata_path, encoding="utf-8") as stream:
+            metadata = json.load(stream)
+        session.native["restore_metadata"](metadata["filepath"], metadata["dirty"])
+    bpy.context.view_layer.update()
+    session.snapshot(None, "recover")
 
-    The program is the truth only when recovering. A session opened on a file asked
-    for that file, and replaying over it would destroy what the agent loaded.
+
+def at_base(program):
+    """Whether the live scene is the state the program's `# base:` line names."""
+    return program.base == (f"file {bpy.data.filepath}" if bpy.data.filepath else "factory")
+
+
+def recover(program, session):
+    """Recover the newest source, and never come back empty-handed.
+
+    A reopen that finds work left behind restores it: the program when its newest
+    version is newer than the recovery file, the recovery file otherwise, and the
+    recovery file again when replaying the program fails. `recovered_from` is null
+    only when there was nothing to recover.
+
+    A session opened on a file is not a recovery. The agent named what it wanted, and
+    replaying over it would destroy what it loaded.
     """
-    if not program.steps:
+    autosave = None if session.opened_file else previous_autosave(
+        os.path.dirname(program.directory))
+    if program.steps and not session.opened_file and (
+            autosave is None or os.path.getmtime(autosave) < program.modified):
+        try:
+            program.run()
+        except Exception as error:
+            # A program that no longer runs falls back to the file, never to nothing.
+            print(f"Agent program: replay failed, recovering the autosave instead: "
+                  f"{type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        else:
+            session.recovered_from = "program"
+            return
+    if autosave is not None:
+        load_autosave(session, autosave)
+        # The program's text is still the record; its prefix cache starts empty,
+        # because the scene now on screen is the file's, not any prefix of the program.
+        session.recovered_from = "autosave"
+        return
+    if not program.steps and at_base(program):
         # An empty program starts in sync with the session, so the base prefix is cached.
         program.cache[program.key(0)] = session.current
-        return
-    if session.opened_file or session.recovered_from == "autosave":
-        return
-    autosave = previous_autosave(os.path.dirname(program.directory))
-    if autosave and os.path.getmtime(autosave) >= program.modified:
-        return
-    try:
-        program.run()
-    except Exception as error:
-        # A program that no longer runs must not make its directory unopenable.
-        print(f"Agent program: recovery failed: {type(error).__name__}: {error}",
-              file=sys.stderr, flush=True)
-        return
-    session.recovered_from = "program"
 
 
 def register(session):

@@ -4,6 +4,7 @@
 
 """The program model against the real CLI: recording, prefix cache, versions, recovery."""
 
+import ast
 import contextlib
 import json
 import os
@@ -41,13 +42,14 @@ def main():
             """The repr of one expression, evaluated in the session."""
             return execute(code)["value"]
 
-        def wait_autosave(path):
-            deadline = time.monotonic() + 15
+        def wait_autosave(path, previous=None):
+            deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
-                if path.is_file() and path.stat().st_size > 0:
-                    return
+                if path.is_file() and path.stat().st_size > 0 \
+                        and path.stat().st_mtime_ns != previous:
+                    return path.stat().st_mtime_ns
                 time.sleep(0.05)
-            raise AssertionError(f"Autosave did not appear: {path}")
+            raise AssertionError(f"Autosave did not update: {path}")
 
         def steps_ran():
             ran = counters.read_text().split() if counters.exists() else []
@@ -138,14 +140,19 @@ def main():
 
             # The same state reached by a full run from the base is the same content.
             # These execs drive the program, so recording them would nest it in itself.
-            full = execute("import agent, agent_program\n"
+            full = execute("import agent, agent_program, time\n"
                            "_program = agent_program.attach(agent._session)\n"
                            "_program.cache.clear()\n"
-                           "_program.run()['digest']", "--no-record")
+                           "_started = time.perf_counter()\n"
+                           "_ran = _program.run()\n"
+                           "(_ran['digest'], round((time.perf_counter() - _started) * 1000, 1))",
+                           "--no-record")
             assert steps_ran() == [1, 2, 3], full
-            assert full["value"] == repr(edited["digest"]), (full["value"], edited["digest"])
-            print(f're-execution: 2 of 3 steps {edited["ms"]:.1f} ms, '
-                  f'3 of 3 steps from the base {full["ms"]:.1f} ms', flush=True)
+            digest, elapsed = ast.literal_eval(full["value"])
+            assert digest == edited["digest"], (digest, edited["digest"])
+            print(f"re-execution: 3 of 3 steps from the base {elapsed:.1f} ms in the process; "
+                  f'the whole `program set` request costs {edited["ms"]:.1f} ms '
+                  "with the feedback channel on", flush=True)
             print(f'program set transcript: ran={edited["ran"]} from_step={edited["from_step"]} '
                   f'cached={edited["cached"]} digest={edited["digest"]}', flush=True)
 
@@ -320,24 +327,36 @@ def main():
             large = program("set", "--text", circle.replace('"radius": 1.0', '"radius": 2.0'))
             assert large["digest"] != small["digest"], (small["digest"], large["digest"])
 
-            # A crash loses nothing the program can rebuild.
+            # A crash loses nothing. The unrecorded edit exists only in the autosave,
+            # so it tells the two recovery sources apart.
             restored = program("set", "--text", text)
             steps_ran()
             assert restored["reproducible"] is True, restored
-            wait_autosave(root / ".blender-cli" / f'autosave-{opened["session"]}.blend')
+            autosave = root / ".blender-cli" / f'autosave-{opened["session"]}.blend'
+            written = wait_autosave(autosave)
+            execute('bpy.ops.mesh.primitive_torus_add(major_radius=0.3)', "--no-record")
+            wait_autosave(autosave, written)
             execute("import os; os._exit(3)", ok=False)
         finally:
             # The crashed daemon leaves a stale endpoint; close reports it and cleans up.
             call("session", "close")
 
-        autosave = root / ".blender-cli" / f'autosave-{opened["session"]}.blend'
         assert autosave.is_file(), autosave
-        # An autosave newer than the program stays the recovery path.
+        # An autosave newer than the program is the newest source, so it is what a
+        # plain reopen restores. It must never come back empty-handed.
         os.utime(autosave, (time.time(), time.time()))
-        call("session", "open")
+        recovered = call("session", "open")
         try:
-            assert call("session", "status")["recovered_from"] is None, "autosave wins"
-            assert steps_ran() == []
+            # A reopen that finds work left behind never answers null.
+            assert recovered["recovered_from"] == "autosave", recovered
+            status = call("session", "status")
+            assert status["recovered_from"] == "autosave", status
+            print(f"crash recovery, autosave newer: {json.dumps(status)}", flush=True)
+            assert steps_ran() == [], "the autosave branch must not replay the program"
+            names = {obj["name"] for obj in call("inspect")["objects"]}
+            assert names == {"Cylinder", "Torus"}, names
+            # The program is still the record even when the file was the newest source.
+            assert program("get")["version"] == restored["version"]
         finally:
             call("session", "close")
 
@@ -348,8 +367,10 @@ def main():
         try:
             status = call("session", "status")
             assert status["recovered_from"] == "program", status
-            print(f"crash recovery: {json.dumps(status)}", flush=True)
+            print(f"crash recovery, program newer: {json.dumps(status)}", flush=True)
             assert steps_ran() == [1, 2, 3]
+            # The unrecorded Torus lives only in the autosave, so the program branch
+            # must not have it: this is the replay, not the file.
             rebuilt, = call("inspect")["objects"]
             assert rebuilt["name"] == "Cylinder", rebuilt
             assert rebuilt["scale"][2] == 2.0 and rebuilt["location"][2] == 0.5, rebuilt

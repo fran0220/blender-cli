@@ -519,14 +519,30 @@ survive a restart; the static verdict does.
 
 ### Crash recovery
 
-A session directory that holds a program compares the program's newest
-version time with the modification time of the recovery file another process
-left behind. When the program is newer, or no autosave survived, the scene is
-rebuilt by running the program from its base and `session status` reports
-`recovered_from: "program"`. Otherwise the autosave path applies unchanged,
-and a session opened explicitly on an autosave keeps `recovered_from:
-"autosave"`. A program that no longer runs reports the failure on stderr and
-leaves the session open rather than making its directory unopenable.
+Recovery always recovers, and the newest source wins. A session directory
+that holds work another process left behind compares the program's newest
+version time with the modification time of that process's recovery file:
+
+- the program is newer, or no recovery file survived: the scene is rebuilt
+  by running the program from its base, and `recovered_from` is `"program"`;
+- the recovery file is newer: it is loaded, sidecar included, exactly as
+  `session open --file` would load it, and `recovered_from` is `"autosave"`.
+  The program stays attached — its text is still the record — with an empty
+  prefix cache, because the scene on screen is the file's and not a prefix of
+  the program;
+- replaying the program raises: the recovery file is loaded instead and the
+  failure is reported on stderr. A program that no longer runs never leaves
+  its directory unopenable, and never leaves the agent empty-handed.
+
+`recovered_from` is null only when there was nothing to recover. It is
+reported by `session open` and by `session status`. Which branch a reopen
+takes is otherwise a race between two modification times, so an agent that
+had to notice a recovery file and reopen a second time to get its work back
+was the bug this rule removes.
+
+A session opened on a file is not a recovery: the agent named what it
+wanted, nothing is replayed over it, and a session opened explicitly on a
+recovery file keeps `recovered_from: "autosave"`.
 
 ### Registration
 
