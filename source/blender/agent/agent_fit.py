@@ -27,15 +27,23 @@ from agent_observe import png
 
 # The kernel's contract table owns these defaults; `seconds` has none, so the
 # evaluation count is the only bound unless the agent asks for a deadline.
-DEFAULT_BUDGET = {"evals": 200, "seconds": None, "size": 128}
+DEFAULT_BUDGET = {"evals": 200, "seconds": None, "size": 128,
+                  "patience": 16, "tolerance": 1e-3}
 METHODS = ("coordinate", "nelder-mead", "random")
+# `patience` is the convergence rule. This floor only stops a step small enough
+# that no trial differs from the point it came from, which would spin forever.
+STEP_FLOOR = 1e-12
 PROGRESS_INTERVAL = 0.5
 SEED = 0
 INDEX = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[(-?\d+)\]\Z")
 
 
 class Stop(Exception):
-    """The evaluation budget, the time budget or a cancel ended the search."""
+    """The search ended: `reason` is the `stopped` field of its `done`."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def split(path):
@@ -182,7 +190,7 @@ def clamp(value):
 def coordinate(point, loss, step=0.25):
     """Cyclic coordinate descent: keep walking an improving direction, halve a barren cycle."""
     best = loss(point)
-    while step > 1e-4:
+    while step > STEP_FLOOR:
         improved = False
         for axis in range(len(point)):
             for offset in (step, -step):
@@ -289,6 +297,8 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
         raise ValueError("budget needs evals >= 1 and size >= 16")
     if settings["seconds"] is not None and settings["seconds"] <= 0:
         raise ValueError("budget seconds must be greater than zero")
+    if settings["patience"] < 1 or settings["tolerance"] < 0:
+        raise ValueError("budget needs patience >= 1 and tolerance >= 0")
     parameters = [Parameter(spec) for spec in params]
     state = agent_target.store(session)
     namespace = session.namespace if session is not None else {}
@@ -306,15 +316,37 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
         bpy.context.view_layer.update()
         return values
 
+    policy = session.request_feedback["progress"] if session is not None else "improvements"
     start = time.perf_counter()
     deadline = start + settings["seconds"] if settings["seconds"] else math.inf
     progress = {"evals": 0, "failed": 0, "best": None, "point": None, "curve": [],
-                "at": start, "cache": {}}
+                "at": start, "cache": {}, "stale": 0}
+
+    def announce(improved):
+        """`all` is a heartbeat and is rate limited; `improvements` is news and is not."""
+        if emit is None or policy == "off":
+            return
+        now = time.perf_counter()
+        if policy == "all":
+            if now - progress["at"] < PROGRESS_INTERVAL:
+                return
+        elif not improved:
+            return
+        progress["at"] = now
+        emit({"event": "progress", "eval": progress["evals"], "of": settings["evals"],
+              "best": progress["best"],
+              "params": {p.key: p.denormalise(unit)
+                         for p, unit in zip(parameters, progress["point"])}})
 
     def loss(point):
-        if (progress["evals"] >= settings["evals"] or time.perf_counter() >= deadline
-                or cancelled(session)):
-            raise Stop
+        if cancelled(session):
+            raise Stop("cancel")
+        if progress["evals"] >= settings["evals"]:
+            raise Stop("budget")
+        if time.perf_counter() >= deadline:
+            raise Stop("seconds")
+        if progress["stale"] >= settings["patience"]:
+            raise Stop("patience")
         key = tuple(round(unit, 9) for unit in point)
         if key in progress["cache"]:
             return progress["cache"][key]
@@ -326,26 +358,31 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
             # not a failed request: cost it out and keep searching.
             progress["evals"] += 1
             progress["failed"] += 1
+            progress["stale"] += 1
             progress["cache"][key] = math.inf
             print(f"fit: {error}", file=sys.stderr, flush=True)
             return math.inf
         progress["evals"] += 1
         cost = -goal.direction * score
         progress["cache"][key] = cost
-        if progress["best"] is None or cost < -goal.direction * progress["best"]:
+        previous = progress["best"]
+        improved = previous is None or cost < -goal.direction * previous
+        if improved:
             progress["best"], progress["point"] = score, list(point)
             progress["curve"].append([progress["evals"], score])
-        now = time.perf_counter()
-        if emit is not None and now - progress["at"] >= PROGRESS_INTERVAL:
-            progress["at"] = now
-            emit({"event": "progress", "eval": progress["evals"], "of": settings["evals"],
-                  "best": progress["best"],
-                  "params": {p.key: p.denormalise(unit)
-                             for p, unit in zip(parameters, progress["point"])}})
+        # Only a gain worth waiting for resets the patience counter; a smaller
+        # one is still the best seen and still enters the curve.
+        if previous is None or (improved and abs(score - previous) > settings["tolerance"]):
+            progress["stale"] = 0
+        else:
+            progress["stale"] += 1
+        announce(improved)
         return cost
 
     point = [parameter.normalise(parameter.get(session)) for parameter in parameters]
-    stopped = False
+    # A method that exhausts its own step schedule ended for the reason
+    # `patience` names: it has no improvement left to find.
+    stopped = "patience"
     try:
         if method == "coordinate":
             coordinate(point, loss)
@@ -353,8 +390,8 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
             nelder_mead(point, loss)
         else:
             random_search(point, loss, settings["evals"])
-    except Stop:
-        stopped = True
+    except Stop as end:
+        stopped = end.reason
     if progress["point"] is None:
         raise ValueError(
             f"fit scored nothing: {progress['failed']} of {progress['evals']} evaluations "
@@ -364,8 +401,10 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
     result = {"method": method, "objective": goal.record(),
               "best": {"params": best, "score": progress["best"]},
               "evals": progress["evals"], "failed": progress["failed"],
-              "curve": progress["curve"], "applied": True,
-              "cancelled": stopped and cancelled(session)}
+              "curve": progress["curve"], "applied": True, "stopped": stopped,
+              # The contract's generic done field for an op whose `cancels` is
+              # `done`; `stopped` says which of the four reasons it was.
+              "cancelled": stopped == "cancel"}
     if session is not None:
         result["best"]["snapshot"] = session.snapshot(None, "fit")
     if goal.entries:

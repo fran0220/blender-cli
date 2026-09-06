@@ -278,6 +278,30 @@ measured against them. `agent.objective()` returns the same dict for the
 current state without recording it, so calling it never changes what the
 next event reports.
 
+Before it returns, the provider leaves what it scored in
+`session.last_objective`, so the image provider at order 400 draws the
+`error` kind from it rather than rendering the same views again:
+
+```python
+{"size": 256,
+ "targets": {"front": {"view":      "front",
+                       "reference": ndarray,   # bool, (size, size), the target
+                       "model":     ndarray,   # bool, (size, size), the render
+                       "worst":     {…the objective event's worst cell, verbatim…},
+                       "metric":    "iou",     # the target's primary metric
+                       "delta":     0.012}}}   # its change, None on the first scoring
+```
+
+`agent_target.error_image(reference, model)` composes the picture from the
+two masks — missing red, extra blue, agreement white, background black —
+and returns `uint8 (size, size, 3)`. It is the only composer of that image:
+`fit` returns it whole as `error_map` and the image provider crops it to
+`worst.region`, so the pushed picture and the fit's picture cannot drift.
+
+The provider clears `session.last_objective` in `before` as well as writing
+it in `after`, so a scoring from the previous action is never pictured as
+this one's. `agent.objective()` records nothing and leaves it alone.
+
 ### Image event
 
 `delta` is the changed region cropped out of the budget view with 8 px
@@ -653,12 +677,41 @@ must return a number. `budget` defaults to `{"evals": 200, "size": 128}`;
 `seconds` has no default, so the evaluation count is the only bound unless
 the agent asks for a wall-clock one.
 
-`progress` events are sent at most every 0.5 s and carry the best value and
-its parameters, so an agent watching a long fit never has to ask. `cancel`
-and an exhausted budget behave alike: the search stops, the best parameters
-are applied, and the request ends with `done`, not `error` — a cancelled fit
-that discarded its result would cost the agent everything it paid for. Only
-`fit` answers a cancel this way; every other request ends with `Cancelled`.
+`progress` follows `session feedback`'s `progress` policy. Under the default
+`improvements` an event is sent only when the best value improves, because
+an evaluation that changed nothing is a token the agent cannot act on;
+under `all` events are a heartbeat, sent at most every 0.5 s; under `off`
+none are sent. The improvements are also in `done.curve`, so `off` loses
+nothing but liveness.
+
+A search stops when the evaluation budget runs out, when `seconds` passes,
+when it is cancelled, or when `patience` consecutive evaluations fail to
+improve the best value by more than `tolerance`. `done.stopped` names which:
+`budget`, `seconds`, `cancel` or `patience`. A gain of `tolerance` or less is
+still recorded as the best and still enters the curve; it just does not
+persuade the search to keep paying for renders.
+
+`patience` is the only convergence rule. A method's own step schedule is not
+a second one: `coordinate` halves its step until no trial differs from the
+point it came from, so raising `patience` spends the whole evaluation budget
+rather than stopping early. A method that does reach that floor reports
+`patience`, since it ended for the reason `patience` names.
+
+`patience` counts evaluations, so it has to clear the longest barren stretch
+a method can make while still converging. A cyclic coordinate descent over
+`n` parameters probes `2n` points before it halves its step, and it may need
+two such cycles before the step is small enough to improve again. Below
+about `4n` the search stops while it still had progress to make: on a
+five-parameter fit the default 16 stops after 24 of 60 evaluations at IoU
+0.959, where 24 runs the full budget and reaches 0.997. Raise `patience`
+with the parameter count, or leave it at the default only for small
+searches.
+
+`cancel` and an exhausted budget behave alike: the search stops, the best
+parameters are applied, and the request ends with `done`, not `error` — a
+cancelled fit that discarded its result would cost the agent everything it
+paid for. Only `fit` answers a cancel this way; every other request ends
+with `Cancelled`.
 
 `done` returns
 
@@ -667,7 +720,7 @@ that discarded its result would cost the agent everything it paid for. Only
  "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]},
  "best": {"params": {"handle_x": 0.41}, "score": 0.994, "snapshot": "sha256:…"},
  "evals": 37, "failed": 0, "curve": [[1, 0.81], [4, 0.93], [19, 0.994]],
- "applied": true, "cancelled": false,
+ "applied": true, "stopped": "patience",
  "error_map": {"target": "front", "view": "front", "image": "…png",
                "size": [w, h], "region": [x0, y0, x1, y1]}}
 ```

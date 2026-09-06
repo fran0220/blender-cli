@@ -58,6 +58,7 @@ add_blender_test_impl(agent_fit "" "${TEST_PYTHON_EXE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/fit.py"
   "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
 )
-set_tests_properties(agent_fit PROPERTIES TIMEOUT 1800)
+# Every fit path, every metric and a 20-iteration loop, all against real renders.
+set_tests_properties(agent_fit PROPERTIES TIMEOUT 3600)
 set_tests_properties(agent_session agent_observe agent_feedback agent_fit
   PROPERTIES SKIP_RETURN_CODE 77)

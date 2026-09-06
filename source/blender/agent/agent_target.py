@@ -203,22 +203,35 @@ def score(entries, size, metrics=None, shared=False):
         wanted = entry.metrics if metrics is None else tuple(names(metrics, METRICS))
         result[entry.name] = {
             "metrics": measure(reference_rgb, reference_mask, render_rgb, render_mask, wanted),
-            "worst": worst_cell(reference_mask, render_mask, size)}
+            "worst": worst_cell(reference_mask, render_mask, size),
+            "model": render_mask, "reference": reference_mask,
+            "view": entry.view, "size": [size, size]}
     return result
 
 
+def error_image(reference, model):
+    """Silhouette error: missing red, extra blue, agreement white, background black.
+
+    The one composer for this picture. `fit` returns it as `error_map` and the
+    image provider crops it to the worst region for the `error` kind, so the
+    two never drift.
+    """
+    image = np.zeros(reference.shape + (3,), dtype=np.uint8)
+    image[reference & model] = (255, 255, 255)
+    image[reference & ~model] = (220, 40, 40)
+    image[model & ~reference] = (40, 90, 220)
+    return image
+
+
 def error_map(entry, size):
-    """Silhouette error for one target: missing red, extra blue, agreement white."""
+    """The error image for one target, rendered fresh, with its worst cell."""
     source = bpy.context.scene
     with isolated_data():
         _, reference_mask, _ = entry.tile(size)
         rendered, _ = render_views(source, [entry.view], size)
     _, render_mask = rendered[entry.view]
-    image = np.zeros((size, size, 3), dtype=np.uint8)
-    image[reference_mask & render_mask] = (255, 255, 255)
-    image[reference_mask & ~render_mask] = (220, 40, 40)
-    image[render_mask & ~reference_mask] = (40, 90, 220)
-    return image, worst_cell(reference_mask, render_mask, size)
+    return (error_image(reference_mask, render_mask),
+            worst_cell(reference_mask, render_mask, size))
 
 
 def event(session=None, record=True, shared=False):
@@ -245,6 +258,16 @@ def event(session=None, record=True, shared=False):
             "delta": {key: values[key] - previous[key] for key in values} if previous else None,
             "worst": scored[entry.name]["worst"]}
         best[entry.name] = dict(known)
+    if record and session is not None:
+        # What the image provider draws the error kind from, at the size it was
+        # scored. Set before this provider returns, read at order 400.
+        session.last_objective = {"size": FEEDBACK_SIZE, "targets": {
+            name: {"view": scored[name]["view"],
+                   "reference": scored[name]["reference"], "model": scored[name]["model"],
+                   "worst": targets[name]["worst"],
+                   "metric": state[name].metrics[0],
+                   "delta": (targets[name]["delta"] or {}).get(state[name].metrics[0])}
+            for name in targets}}
     return {"targets": targets, "best": best}
 
 
@@ -294,10 +317,12 @@ class Provider:
     order = 300
 
     def before(self, request, session):
-        pass
+        # A scoring from the previous action must never be pictured as this
+        # one's, so the handoff is cleared here rather than only replaced later.
+        session.last_objective = None
 
     def after(self, request, session, emit):
-        if not session.request_feedback.get("objective", True):
+        if not session.request_feedback["objective"]:
             return
         # Only here is the perception provider's budget render current.
         result = event(session, shared=True)

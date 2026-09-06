@@ -240,7 +240,8 @@ def main():
             print("fit progress[0]:", json.dumps(progress[0]), flush=True)
             print("fit progress[-1]:", json.dumps(progress[-1]), flush=True)
             print("fit done:", json.dumps(fitted), flush=True)
-            assert fitted["evals"] <= 40 and fitted["applied"] and not fitted["cancelled"], fitted
+            assert fitted["evals"] <= 40 and fitted["applied"], fitted
+            assert fitted["stopped"] == "budget", fitted
             assert fitted["method"] == "coordinate", fitted
             assert fitted["objective"] == {"targets": ["top"], "metric": "iou",
                                            "weights": [1.0]}, fitted
@@ -252,11 +253,11 @@ def main():
             assert Path(fitted["error_map"]["image"]).is_file(), fitted
             assert fitted["error_map"]["size"] == [512, 512], fitted
             assert fitted["error_map"]["target"] == "top", fitted
-            # Progress is rate limited, never one event per evaluation regardless of cost.
-            times = [event["at"] for event in progress]
-            gaps = [second - first for first, second in zip(times, times[1:])]
-            print(f"progress events={len(progress)} min gap={min(gaps):.3f}s", flush=True)
-            assert min(gaps) >= 0.5, gaps
+            # Under the default policy an event is sent only when the best
+            # improves, so the stream is exactly the curve and nothing else.
+            print(f"progress events={len(progress)} curve={len(curve)}", flush=True)
+            assert len(progress) == len(curve), (progress, curve)
+            assert [[event["eval"], event["best"]] for event in progress] == curve, progress
             for event in progress:
                 assert set(event) >= {"event", "eval", "of", "best", "params"}, event
                 assert event["of"] == 40 and set(event["params"]) == {X, Y}, event
@@ -271,6 +272,92 @@ def main():
             assert abs(applied[1] - TRUTH[1]) < 0.05, applied
             scored = channel.value("import json; json.dumps(agent.objective())")
             assert scored["targets"]["top"]["iou"] >= 0.98, scored
+
+            # The handoff the image provider reads at order 400. A provider of
+            # our own reads it exactly where F's will, in the same request and
+            # after the objective provider has run.
+            channel.request(op="exec", code="""
+import agent, agent_target
+
+
+class Peek:
+    name = "peek"
+    order = 401
+
+    def before(self, request, session):
+        pass
+
+    def after(self, request, session, emit):
+        state = session.last_objective
+        session.namespace['peeked'] = None if state is None else {
+            "size": state["size"],
+            "targets": {name: {"view": item["view"], "metric": item["metric"],
+                               "delta": item["delta"], "worst": item["worst"],
+                               "shapes": [list(item["reference"].shape),
+                                          list(item["model"].shape)],
+                               "dtypes": [item["reference"].dtype.name,
+                                          item["model"].dtype.name],
+                               "error": list(agent_target.error_image(
+                                   item["reference"], item["model"]).shape)}
+                        for name, item in state["targets"].items()}}
+
+
+agent.register_provider(Peek())
+""")
+            channel.request(op="exec", code=RESET)
+            handoff = channel.value("import json; json.dumps(peeked)")
+            print("last_objective:", json.dumps(handoff), flush=True)
+            assert handoff["size"] == 256, handoff
+            entry = handoff["targets"]["top"]
+            assert entry["view"] == "camera" and entry["metric"] == "iou", entry
+            assert entry["shapes"] == [[256, 256], [256, 256]], entry
+            assert entry["dtypes"] == ["bool", "bool"], entry
+            assert entry["error"] == [256, 256, 3], entry
+            assert set(entry["worst"]) == {"region", "iou", "missing", "extra"}, entry
+            assert isinstance(entry["delta"], float), entry
+
+            # A request that scores nothing must not leave the last one behind.
+            channel.done(op="target", action="clear", name="top")
+            channel.request(op="exec", code=RESET)
+            assert channel.value("import json; json.dumps(peeked)") is None
+            channel.done(op="target", action="set", name="top", ref="ref.png",
+                         view="camera", mask="none", fit="none")
+
+            # The other two progress policies: `all` is a rate-limited
+            # heartbeat, `off` sends nothing at all.
+            def short_fit(**budget):
+                channel.request(op="exec", code=RESET)
+                return channel.request(
+                    op="fit", params=[{"path": X, "min": 0.4, "max": 1.9},
+                                      {"path": Y, "min": 0.4, "max": 1.9}],
+                    objective={"target": "top", "metric": "iou"},
+                    budget={"seconds": 900, "size": 128, **budget})
+
+            channel.done(op="session", action="feedback", feedback={"progress": "all"})
+            beats = only(short_fit(evals=8), "progress")
+            times = [event["at"] for event in beats]
+            gaps = [second - first for first, second in zip(times, times[1:])]
+            print(f"progress all: events={len(beats)} min gap={min(gaps):.3f}s", flush=True)
+            assert len(beats) > 1 and min(gaps) >= 0.5, beats
+            channel.done(op="session", action="feedback", feedback={"progress": "off"})
+            assert not only(short_fit(evals=6), "progress")
+            channel.done(op="session", action="feedback", feedback={"progress": "improvements"})
+            assert channel.done(op="session", action="status")["feedback"]["progress"] == \
+                "improvements"
+
+            # A search that stops improving stops paying for renders. The same
+            # budget with a patience it cannot exhaust runs to the end instead.
+            patient = short_fit(evals=60)[-1]
+            print("patience stop:", json.dumps(
+                {key: patient[key] for key in ("evals", "stopped", "best")}), flush=True)
+            assert patient["stopped"] == "patience" and patient["evals"] < 60, patient
+            assert patient["best"]["score"] >= 0.99, patient
+            spent = short_fit(evals=60, patience=10 ** 6)[-1]
+            print("budget stop:", json.dumps(
+                {key: spent[key] for key in ("evals", "stopped")}), flush=True)
+            assert spent["stopped"] == "budget" and spent["evals"] == 60, spent
+            assert patient["evals"] < spent["evals"], (patient, spent)
+            assert spent["best"]["score"] - patient["best"]["score"] < 0.01, (patient, spent)
 
             # Cancel keeps the best: fit ends with done, not Cancelled.
             channel.request(op="exec", code=RESET)
@@ -292,7 +379,7 @@ def main():
             cancelled = events[-1]
             print("cancelled fit:", json.dumps(cancelled), flush=True)
             assert cancelled["event"] == "done" and cancelled["ok"], cancelled
-            assert cancelled["cancelled"] and cancelled["applied"], cancelled
+            assert cancelled["stopped"] == "cancel" and cancelled["applied"], cancelled
             assert cancelled["evals"] < 200, cancelled
             # The cancel itself was answered immediately, out of order.
             assert [event["id"] for event in channel.aside] == [9001], channel.aside
@@ -340,7 +427,7 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
 """)
             print("agent.fit():", json.dumps(in_code["best"]), flush=True)
             assert set(in_code) >= {"method", "objective", "best", "evals", "failed",
-                                    "curve", "applied", "cancelled", "error_map"}, in_code
+                                    "curve", "applied", "stopped", "error_map"}, in_code
             assert in_code["evals"] == 3 and set(in_code["best"]["params"]) == {"sx"}, in_code
 
             # nelder-mead recovers the same truth as coordinate descent.
