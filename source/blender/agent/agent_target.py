@@ -20,7 +20,7 @@ import time
 import bpy
 import numpy as np
 
-from agent_compare import METRICS, measure, reference
+from agent_compare import METRICS, denormalize, measure, normalize, reference
 from agent_observe import VIEWS, isolated_data, names, png, render_passes, render_scene, aim
 
 FEEDBACK_SIZE = 256
@@ -201,10 +201,18 @@ def score(entries, size, metrics=None, shared=False):
         reference_rgb, reference_mask, _ = tiles[entry.name]
         render_rgb, render_mask = rendered[entry.view]
         wanted = entry.metrics if metrics is None else tuple(names(metrics, METRICS))
+        scored_reference, scored_model = (reference_rgb, reference_mask), (render_rgb, render_mask)
+        view_reference = reference_mask
+        if entry.fit == "bbox" and render_mask.any():
+            model_rgb, model_mask, placement = normalize(render_rgb, render_mask, size)
+            scored_model = (model_rgb, model_mask)
+            # Metrics live in the normalised tile; every region on the wire is in
+            # the view's own pixels, so the reference comes back out of it.
+            view_reference = denormalize(reference_mask, placement, size)
         result[entry.name] = {
-            "metrics": measure(reference_rgb, reference_mask, render_rgb, render_mask, wanted),
-            "worst": worst_cell(reference_mask, render_mask, size),
-            "model": render_mask, "reference": reference_mask,
+            "metrics": measure(*scored_reference, *scored_model, wanted),
+            "worst": worst_cell(view_reference, render_mask, size),
+            "model": render_mask, "reference": view_reference,
             "view": entry.view, "size": [size, size]}
     return result
 
@@ -224,12 +232,15 @@ def error_image(reference, model):
 
 
 def error_map(entry, size):
-    """The error image for one target, rendered fresh, with its worst cell."""
+    """The error image for one target, rendered fresh, in the view's own pixels."""
     source = bpy.context.scene
     with isolated_data():
         _, reference_mask, _ = entry.tile(size)
         rendered, _ = render_views(source, [entry.view], size)
-    _, render_mask = rendered[entry.view]
+    render_rgb, render_mask = rendered[entry.view]
+    if entry.fit == "bbox" and render_mask.any():
+        reference_mask = denormalize(reference_mask,
+                                     normalize(render_rgb, render_mask, size)[2], size)
     return (error_image(reference_mask, render_mask),
             worst_cell(reference_mask, render_mask, size))
 

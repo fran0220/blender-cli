@@ -1537,11 +1537,26 @@ deliberately fixed scene-camera framing).
 Default `--fit bbox` / `fit="bbox"` segments the reference first, crops RGB and
 silhouette together to the foreground bounding box, then uniformly resizes
 and centers them at observe's `OCCUPANCY = 1 / 1.1` (0.9090909090909091).
+The **model silhouette passes through the identical transform**, because
+auto-framing fits the 3D world bounds and the projection of those bounds is
+not the 2D silhouette's bounding box: normalising only the reference leaves
+an exact model scoring well below 1 — 0.786 on a mug — and a `fit`
+optimising toward a displaced optimum. With both normalised, an exact model
+scores 1.0 under `fit bbox` and absolute IoU is comparable across sessions
+and scenes.
+
+**Every `region` on the channel is in the view's own pixels.** The
+normalised tile is internal to the metric and never appears on the wire:
+`worst`, `error_map` and `session.last_objective`'s masks map the reference
+back out of it by the inverse of the model's own bounding-box transform,
+which is an affine rescale of one rectangle onto another. So a `worst`
+region, a `delta` crop and `perception.changed.region` are all in the same
+space and an image event needs no field saying which.
 RGB and mask use pixel-center bilinear resizing; the mask is thresholded at
 0.5. Dimensions round to nearest integers, so a 512 tile targets 465 pixels
 while actual observation coverage can be 466 pixels. Empty foreground stays
-empty. This removes reference margins, not viewpoint, perspective or shape
-differences; it does not optimize against the rendered silhouette.
+empty. This removes reference margins and framing, not viewpoint, perspective
+or shape differences.
 
 `mask=auto` estimates the background by componentwise median RGB of the fitted
 image's four outer rows/columns (before padding). Let border RGB distances from

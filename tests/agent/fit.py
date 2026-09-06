@@ -273,6 +273,37 @@ def main():
             scored = channel.value("import json; json.dumps(agent.objective())")
             assert scored["targets"]["top"]["iou"] >= 0.98, scored
 
+            # Under `fit bbox` the model is normalised exactly as the reference
+            # is, so the model's own silhouette scores 1: the reference's 2D
+            # bounding box and the model's projected 3D bounds are not the same
+            # rectangle, and normalising only one displaces the optimum.
+            own = channel.value("""
+import json
+json.dumps(agent.observe(views=('front',), passes=('silhouette',), size=512)['image'])
+""")
+            channel.done(op="target", action="set", name="self", ref=own, view="front",
+                         mask="none", fit="bbox", metrics=["iou", "chamfer"])
+            exact, = only(channel.request(op="exec", code="pass"), "objective")
+            mine = exact["targets"]["self"]
+            print("exact model under fit bbox:", json.dumps(mine), flush=True)
+            assert mine["iou"] >= 0.98, mine
+            assert mine["chamfer"] < 0.5, mine
+            # Regions stay in the view's pixels: the worst cell has to sit
+            # inside the model's silhouette bounding box in the budget view.
+            box = channel.value("""
+import json, numpy as np, agent_target
+from agent_observe import isolated_data
+with isolated_data():
+    rendered, framing = agent_target.render_views(bpy.context.scene, ['front'], 256)
+ys, xs = np.nonzero(rendered['front'][1])
+json.dumps([int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1])
+""")
+            region = mine["worst"]["region"]
+            print("worst region vs model bbox:", json.dumps([region, box]), flush=True)
+            assert region[0] < box[2] and region[2] > box[0], (region, box)
+            assert region[1] < box[3] and region[3] > box[1], (region, box)
+            channel.done(op="target", action="clear", name="self")
+
             # The handoff the image provider reads at order 400. A provider of
             # our own reads it exactly where F's will, in the same request and
             # after the objective provider has run.

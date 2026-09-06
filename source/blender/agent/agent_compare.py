@@ -81,27 +81,74 @@ def reference(ref, size, policy, fit="bbox"):
         has_alpha = image.depth in (16, 32, 64, 128)
         mask = a >= 0.5 if has_alpha else (rgb @ np.array((0.2126, 0.7152, 0.0722))) >= 0.5
     rgb = rgb * a[:, :, None] + BACKGROUND * (1 - a[:, :, None])
-    if fit == "bbox" and mask.any():
-        ys, xs = np.nonzero(mask)
-        x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
-        rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
-        scale = size * OCCUPANCY / max(mask.shape)
-        rw, rh = max(1, round(mask.shape[1] * scale)), max(1, round(mask.shape[0] * scale))
+    if fit == "bbox":
         # Segment before cropping; cropped edges no longer identify the background.
-        rgb = resize(rgb, rw, rh)
-        mask = resize(mask[:, :, None].astype(float), rw, rh)[:, :, 0] >= 0.5
+        tile, silhouette, _ = normalize(rgb, mask, size)
+    else:
+        tile, silhouette = place(rgb, mask, size)
+    return tile, silhouette, record(silhouette, size, fit)
+
+
+def place(rgb, mask, size):
+    """Centre an already-scaled image and its mask in a background tile."""
     tile = np.full((size, size, 3), BACKGROUND, dtype=np.float64)
     silhouette = np.zeros((size, size), dtype=bool)
+    rh, rw = mask.shape
     x, y = (size - rw) // 2, (size - rh) // 2
     tile[y:y + rh, x:x + rw] = rgb
     silhouette[y:y + rh, x:x + rw] = mask
-    bbox = None
-    occupancy = 0.0
-    if silhouette.any():
-        ys, xs = np.nonzero(silhouette)
-        bbox = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
-        occupancy = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / size
-    return tile, silhouette, {"bbox": bbox, "occupancy": occupancy, "fit": fit}
+    return tile, silhouette
+
+
+def normalize(rgb, mask, size):
+    """Crop to the silhouette's own bounding box and scale it to observe's occupancy.
+
+    The reference and the model must pass through this same transform or an
+    exact model cannot score 1: auto-framing fits the *3D* world bounds, and
+    the projection of those bounds is not the 2D silhouette's bounding box.
+
+    Returns the tile, its mask, and the placement that maps the source's
+    bounding box onto its rectangle in the tile, so the transform can be
+    inverted; the placement is None for an empty mask, which has no box.
+    """
+    if not mask.any():
+        return (*place(rgb[:0, :0], mask[:0, :0], size), None)
+    ys, xs = np.nonzero(mask)
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
+    rgb, mask = rgb[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+    scale = size * OCCUPANCY / max(mask.shape)
+    rw, rh = max(1, round(mask.shape[1] * scale)), max(1, round(mask.shape[0] * scale))
+    tile, silhouette = place(resize(rgb, rw, rh),
+                             resize(mask[:, :, None].astype(float), rw, rh)[:, :, 0] >= 0.5, size)
+    left, top = (size - rw) // 2, (size - rh) // 2
+    return tile, silhouette, {"source": [x0, y0, x1, y1],
+                              "tile": [left, top, left + rw, top + rh]}
+
+
+def denormalize(mask, placement, size):
+    """Map a mask out of the normalised tile and back into the source's pixels.
+
+    The forward transform is an affine rescale of one rectangle onto another,
+    so this is that rescale run backwards. It is how a reference scored in the
+    normalised tile is reported in the view's own pixels.
+    """
+    sx0, sy0, sx1, sy1 = placement["source"]
+    tx0, ty0, tx1, ty1 = placement["tile"]
+    crop = mask[ty0:ty1, tx0:tx1, None].astype(float)
+    scaled = resize(crop, max(1, sx1 - sx0), max(1, sy1 - sy0))[:, :, 0] >= 0.5
+    restored = np.zeros((size, size), dtype=bool)
+    restored[sy0:sy0 + scaled.shape[0], sx0:sx0 + scaled.shape[1]] = scaled
+    return restored
+
+
+def record(silhouette, size, fit):
+    """The reference record: the final foreground's tile-pixel bbox and occupancy."""
+    if not silhouette.any():
+        return {"bbox": None, "occupancy": 0.0, "fit": fit}
+    ys, xs = np.nonzero(silhouette)
+    bbox = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+    return {"bbox": bbox, "occupancy": max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / size,
+            "fit": fit}
 
 
 def boundary(mask):
@@ -178,8 +225,13 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
         scene, points, center, radius, framing = render_scene(source, size, frame)
         near, far = aim(scene, source, view, points, center, radius)
         images = render_passes(scene, size, near, far)
-        result = {"view": view, "reference": reference_info, **measure(rgb, silhouette, images["color"] / 255,
-                                         images["silhouette"][:, :, 0] != 0, metrics)}
+        model_rgb, model_mask = images["color"] / 255, images["silhouette"][:, :, 0] != 0
+        if fit == "bbox" and model_mask.any():
+            # The reference was normalised; the model has to be, or an exact
+            # model scores below 1 and a fit optimises toward a displaced point.
+            model_rgb, model_mask, _ = normalize(model_rgb, model_mask, size)
+        result = {"view": view, "reference": reference_info,
+                  **measure(rgb, silhouette, model_rgb, model_mask, metrics)}
     if debug:
         directory = Path(tempfile.mkdtemp(prefix="blender-cli-compare-")) if debug is True else Path(debug).resolve()
         directory.mkdir(parents=True, exist_ok=True)
