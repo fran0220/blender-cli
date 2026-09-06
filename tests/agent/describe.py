@@ -143,7 +143,7 @@ def main():
                     assert field["ref"] in channel["defs"], (op, name, field)
         assert requests["exec"]["fields"]["code"]["type"] == "string", requests["exec"]
         assert requests["exec"]["fields"]["script"]["type"] == "string", requests["exec"]
-        assert requests["observe"]["fields"]["size"]["enum"] == [512, 768, 1024], requests["observe"]
+        assert requests["observe"]["fields"]["size"]["enum"] == [256, 512, 768, 1024], requests["observe"]
         assert requests["cancel"]["fields"]["target"]["type"] == "integer", requests["cancel"]
         assert requests["describe"]["fields"]["path"]["required"] is True, requests["describe"]
         assert "fix" in events["error"]["fields"] and "rna" in events["error"]["fields"], events["error"]

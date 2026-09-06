@@ -24,6 +24,12 @@ VIEWS = ("front", "back", "left", "right", "top", "bottom", "persp", "camera", "
 PASSES = ("color", "wire", "silhouette", "normal", "depth")
 BORDER = 2
 OCCUPANCY = 1 / 1.1
+# The silhouette is the metric's input, not a picture. It renders at this count
+# everywhere — observation, comparison, the budget view and the objective — so one
+# scene state is one score whichever path asks for it, and a silhouette saved by
+# `observe` scores exactly 1 against the scene that produced it. Picture quality is
+# the separate `image.samples` budget, which moves colour and never this.
+SILHOUETTE_SAMPLES = 8
 
 
 def names(value, allowed):
@@ -235,26 +241,53 @@ def wire_material():
     return material
 
 
-def render_passes(scene, size, near, far, wire=None):
-    """Unbordered RGB8 tiles shared by observation and numeric comparison."""
+def frame_at(scene, size, samples):
+    """Render the scene at one sample count and read its passes back as arrays."""
+    scene.eevee.taa_render_samples = samples
     buffers = agent._native["render"](scene.name)
 
     def pixels(name, channels):
         return np.frombuffer(buffers[name], dtype=np.float32).reshape(size, size, channels)[::-1]
 
-    combined = pixels("Combined", 4)
-    color = srgb(combined[:, :, :3] + (1 - combined[:, :, 3:4]) * 0.035)
-    depth = pixels("Depth", 1)
-    mask = (depth < scene.camera.data.clip_end) & (combined[:, :, 3:4] >= 0.5)
-    images = {"color": bytes_rgb(color), "silhouette": np.repeat(mask.astype(np.uint8) * 255, 3, axis=2),
-              "normal": bytes_rgb(np.where(mask, pixels("Normal", 3) * 0.5 + 0.5, 0)),
-              "depth": bytes_rgb(np.repeat(np.where(mask, 1 - (depth - near) / (far - near), 0), 3, axis=2))}
-    if wire:
-        scene.view_layers[0].material_override = wire
-        wire_buffers = agent._native["render"](scene.name)
-        edge = np.frombuffer(wire_buffers["Combined"], dtype=np.float32).reshape(size, size, 4)[::-1, :, :1]
-        images["wire"] = bytes_rgb(color * (1 - np.clip(edge, 0, 1) * 0.9))
-        scene.view_layers[0].material_override = None
+    return pixels
+
+
+def covered(scene, pixels):
+    """Where geometry covers the pixel: inside the far clip and at least half opaque."""
+    return (pixels("Depth", 1) < scene.camera.data.clip_end) & (pixels("Combined", 4)[:, :, 3:4] >= 0.5)
+
+
+def render_passes(scene, size, near, far, wire=None, passes=PASSES):
+    """Unbordered RGB8 tiles shared by observation, comparison and feedback.
+
+    Colour renders at whatever quality the caller set; the silhouette always renders
+    at `SILHOUETTE_SAMPLES`, because it is a metric input rather than a picture. When
+    the two agree — every default path — that is one render, not two.
+    """
+    requested, images, mask = set(passes), {}, None
+    quality = scene.eevee.taa_render_samples
+    if requested - {"silhouette"}:
+        pixels = frame_at(scene, size, quality)
+        combined, depth = pixels("Combined", 4), pixels("Depth", 1)
+        color = srgb(combined[:, :, :3] + (1 - combined[:, :, 3:4]) * 0.035)
+        mask = covered(scene, pixels)
+        if "color" in requested:
+            images["color"] = bytes_rgb(color)
+        if "normal" in requested:
+            images["normal"] = bytes_rgb(np.where(mask, pixels("Normal", 3) * 0.5 + 0.5, 0))
+        if "depth" in requested:
+            images["depth"] = bytes_rgb(
+                np.repeat(np.where(mask, 1 - (depth - near) / (far - near), 0), 3, axis=2))
+        if wire and "wire" in requested:
+            scene.view_layers[0].material_override = wire
+            edge = frame_at(scene, size, quality)("Combined", 4)[:, :, :1]
+            images["wire"] = bytes_rgb(color * (1 - np.clip(edge, 0, 1) * 0.9))
+            scene.view_layers[0].material_override = None
+    if "silhouette" in requested:
+        if mask is None or quality != SILHOUETTE_SAMPLES:
+            mask = covered(scene, frame_at(scene, size, SILHOUETTE_SAMPLES))
+        images["silhouette"] = np.repeat(mask.astype(np.uint8) * 255, 3, axis=2)
+    scene.eevee.taa_render_samples = quality
     return images
 
 
@@ -299,7 +332,7 @@ def render_budget(views, size, samples):
             counts["faces"] += len(getattr(obj.data, "polygons", ()))
         for view in views:
             near, far = aim(scene, source, view, points, center, radius)
-            images = render_passes(scene, size, near, far)
+            images = render_passes(scene, size, near, far, None, ("color", "silhouette"))
             tiles[view] = {"color": images["color"],
                            "silhouette": images["silhouette"][:, :, 0] != 0,
                            "axes": view_axes(view, scene.camera)}
@@ -309,8 +342,10 @@ def render_budget(views, size, samples):
 def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
             layout="sheet", frame=None, overlay=False, out=None, inline=False):
     views, passes = names(views, VIEWS), names(passes, PASSES)
-    if size not in (512, 768, 1024):
-        raise ValueError("size must be 512, 768 or 1024")
+    # 256 is the objective's scoring size: a silhouette taken there is the pixels a
+    # target will be compared against, rather than a resampling of a different raster.
+    if size not in (256, 512, 768, 1024):
+        raise ValueError("size must be 256, 512, 768 or 1024")
     if layout not in ("sheet", "separate"):
         raise ValueError("layout must be sheet or separate")
     if overlay and not ref:
@@ -328,7 +363,7 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
         wire = wire_material() if "wire" in passes else None
         for view in views:
             near, far = aim(scene, source, view, points, center, radius)
-            images = render_passes(scene, size, near, far, wire)
+            images = render_passes(scene, size, near, far, wire, passes)
             tiles.extend(images[pass_name] for pass_name in passes)
         reference = None
         if ref:

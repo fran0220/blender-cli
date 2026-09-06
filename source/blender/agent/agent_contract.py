@@ -203,8 +203,9 @@ REQUESTS = {
                       "doc": "Preset views."},
             "passes": {"type": "array", "items": {"type": "string"}, "default": ["color"],
                        "doc": "Render passes."},
-            "size": {"type": "integer", "enum": [512, 768, 1024], "default": 512,
-                     "doc": "Tile size."},
+            "size": {"type": "integer", "enum": [256, 512, 768, 1024], "default": 512,
+                     "doc": "Tile size; 256 is the size the objective scores at, so a "
+                            "silhouette taken there scores 1 against its own scene."},
             "ref": {"type": "string", "doc": "Reference image placed beside the first view."},
             "layout": {"type": "string", "enum": ["sheet", "separate"], "default": "sheet",
                        "doc": "One contact sheet or one file per view and pass."},

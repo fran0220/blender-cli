@@ -201,7 +201,7 @@ def main():
             assert call("session", "snapshot")["snapshot"] == before
             execute("bpy.context.scene.camera = None")
             assert "scene.camera" in call("observe", "--views", "camera", ok=False)["error"]["message"]
-            call("observe", "--size", "256", ok=False)
+            call("observe", "--size", "384", ok=False)
             call("observe", "--overlay", ok=False)
             call("observe", "--views", "unknown", ok=False)
             call("session", "rollback", before)

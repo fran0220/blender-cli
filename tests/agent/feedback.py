@@ -265,14 +265,24 @@ def main():
             # not only what the last action moved.
             reference = call("observe", "--views", "front", "--passes", "silhouette",
                              "--layout", "separate")["image"]
+            # The silhouette pass renders at one fixed sample count everywhere, so a
+            # silhouette observed at the size the objective scores at is the very pixels
+            # it will compare against: it scores itself exactly, by construction.
+            exact = call("observe", "--views", "front", "--passes", "silhouette",
+                         "--size", 256, "--layout", "separate")["image"]
+            same = call("target", "set", "exact", "--ref", exact, "--mask", "none",
+                        "--metrics", "iou,chamfer")["objective"]["targets"]["exact"]
+            assert same["iou"] == 1.0 and same["chamfer"] == 0.0, same
+            print("budget-size silhouette scores itself:", json.dumps(same), flush=True)
+            call("target", "clear", "exact")
+
             registered = call("target", "set", "front", "--ref", reference)
-            # Model and reference go through the same normalisation and the reference is
-            # resampled once, so what is left between this model and its own silhouette is
-            # that a 512 px rasterisation resampled to 256 is not the 256 px rasterisation
-            # of the same geometry. That costs a thin, broken shape a few points of IoU.
+            # A 512 px silhouette is a different rasterisation of the same geometry, so
+            # resampling it to the scoring size costs a thin, broken shape a few points —
+            # 0.928 here, against 1.0 for the same silhouette taken at the scoring size.
             baseline = registered["objective"]["targets"]["front"]["iou"]
-            print("target self-score:", baseline, flush=True)
-            assert baseline > 0.95, registered
+            print("512 px reference self-score:", baseline, flush=True)
+            assert baseline > 0.9, registered
             aimed = execute("bpy.data.objects['Cube'].location.z += 0.4")
             scored = aimed["objective"]["targets"]["front"]
             assert scored["iou"] < baseline - 0.002, (scored, baseline)

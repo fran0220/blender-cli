@@ -183,12 +183,15 @@ barren stretch can be before a search has actually converged depends on how
 many parameters it is moving: absent, `fit` derives it from the parameter
 count, as the `fit` section states.
 
-`samples` is the budget render's EEVEE sample count, deliberately below
-observation's fixed 32: a delta is read for where the picture moved, not for
-its finish, and samples are what the render's cost is made of. Observation
-keeps 32 and stays byte-deterministic; the budget view is deterministic at
-its own sample count, so an unchanged scene still produces an identical
-buffer and a zero delta.
+`samples` is the budget render's EEVEE sample count for **colour**,
+deliberately below observation's fixed 32: a delta is read for where the
+picture moved, not for its finish, and samples are what the render's cost is
+made of. It never reaches a score — the silhouette pass renders at its own
+fixed count everywhere, as *Targets* describes, so raising this buys a
+better-looking picture and moves no metric. Observation's colour keeps 32 and
+stays byte-deterministic; the budget view is deterministic at its own sample
+count, so an unchanged scene still produces an identical buffer and a zero
+delta.
 
 ### Perception event
 
@@ -686,6 +689,27 @@ objective costs one render per distinct target view; a target registered
 with `ssim` or `hist` pays for them on every action. A target bound to a
 budget view is scored from the render the perception provider already made
 for that request, so it costs nothing beyond the metrics.
+
+The silhouette pass follows that same rule and renders at
+`SILHOUETTE_SAMPLES` everywhere — observation, comparison, the budget view
+and the objective alike. It is the metric's input, not a picture, so
+`image.samples` is a colour budget: raising it buys a better-looking delta
+and moves no score.
+
+Together those two make `observe --passes silhouette --size 256` the very
+pixels the objective will compare against, so it scores exactly `iou: 1.0,
+chamfer: 0.0` against the scene that produced it, in a session and one-shot
+alike. That is why 256 is on the size ladder. It holds for a blocky, a thin,
+a fragmented and a concave silhouette alike, because `fit bbox` normalises
+both sides by their own bounding box.
+
+A silhouette taken at a *different* size is a different rasterisation of the
+same geometry, and resampling it to the objective size costs a thin or
+broken shape a few points of IoU — 0.93 for a scene whose silhouette is a
+wide band across four separate pieces. That is the rasteriser's resolution
+behaviour, not the comparison's: register a thin or broken reference with
+`observe --size 256`, and read the trajectory rather than the absolute
+otherwise.
 
 `fit`:
 
@@ -1386,7 +1410,7 @@ such as objects["Cube"].location`.
 ### `observe`
 
 ```
-observe [--views V,…] [--passes P,…] [--size 512|768|1024] [--ref IMG] [--layout sheet|separate] [--frame OBJECT]
+observe [--views V,…] [--passes P,…] [--size 256|512|768|1024] [--ref IMG] [--layout sheet|separate] [--frame OBJECT]
 ```
 
 - Views: `front back left right top bottom persp camera`. Default:

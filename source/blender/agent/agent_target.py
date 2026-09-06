@@ -21,7 +21,8 @@ import bpy
 import numpy as np
 
 from agent_compare import METRICS, denormalize, measure, normalize, reference
-from agent_observe import VIEWS, isolated_data, names, png, render_passes, render_scene, aim
+from agent_observe import (SILHOUETTE_SAMPLES, VIEWS, aim, isolated_data, names, png,
+                           render_passes, render_scene)
 
 # The objective is scored at this fixed size. It is deliberately not an image
 # lever: what the agent looks at must never move what it is measured against.
@@ -157,12 +158,15 @@ def worst_cell(reference_mask, render_mask, size):
 def render_views(source, views, size):
     """One converted scene, one render per distinct view; caller owns isolated data."""
     scene, points, center, radius, framing = render_scene(source, size, None)
+    # Scoring is the silhouette's business, so render at its count and pay for one
+    # frame per view rather than a quality frame plus a silhouette frame.
+    scene.eevee.taa_render_samples = SILHOUETTE_SAMPLES
     rendered = {}
     for view in views:
         if view == "camera" and source.camera is None:
             raise ValueError("The camera view requires scene.camera")
         near, far = aim(scene, source, view, points, center, radius)
-        images = render_passes(scene, size, near, far)
+        images = render_passes(scene, size, near, far, None, ("color", "silhouette"))
         rendered[view] = (images["color"] / 255, images["silhouette"][:, :, 0] != 0)
     return rendered, framing
 
