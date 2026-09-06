@@ -258,7 +258,11 @@ Sent after every action when at least one target is registered:
 ```
 
 Each target carries exactly the metrics it was registered with, scored at the
-feedback size in its own view; targets sharing a view share one render.
+objective size in its own view; targets sharing a view share one render.
+The objective size is a fixed 256 px. `image.size` sizes the pictures the
+image channel sends, not the scores: a target scores byte-identically at
+`image.size` 512 and 128, so tuning what the agent looks at never moves what
+it is measured against.
 `delta` is the change in each of those metrics since the previous scoring,
 and is `null` the first time a target is scored, exactly as perception's
 `changed` is `null` on the first action.
@@ -675,8 +679,8 @@ when a step fails. Setting a parameter no step reads re-executes nothing.
 `target set` stores the reference under `.blender-cli/targets/<name>/` with
 its preprocessed silhouette (mask policy and `fit` policy as in `compare`),
 bound to one view. Registered targets are scored by the objective provider
-after every state-changing request at the feedback size (256), and at
-`budget.size` during `fit`. A target scores only the metrics it was
+after every state-changing request at the objective size, a fixed 256 px,
+and at `budget.size` during `fit`. No image lever changes a score. A target scores only the metrics it was
 registered with, and targets sharing a view share one render, so the pushed
 objective costs one render per distinct target view; a target registered
 with `ssim` or `hist` pays for them on every action. A target bound to a
@@ -1514,7 +1518,8 @@ target clear [NAME]
 
 A target binds a reference image to a preset view. While targets exist, every
 state-changing request ends with an `objective` event scoring each target at
-the feedback size; `fit` optimises against them. Metrics: `iou` (silhouette
+the objective size, a fixed 256 px; `fit` optimises against them. Metrics:
+`iou` (silhouette
 intersection-over-union), `chamfer` (edge distance, pixels), `ssim`, `hist`
 (color-histogram distance); the default is `iou`, and the first one listed is
 the target's primary metric. `--mask auto` removes the reference
@@ -1545,7 +1550,7 @@ target clear {"ok": true, "cleared": ["front"]}
 
 `target clear` without a name clears every target; with an unknown name it is
 a `KeyError`, not a silent success. `reference` describes the preprocessed
-reference at the feedback size, in that tile's pixels. `target` changes no
+reference at the objective size, in that tile's pixels. `target` changes no
 scene data, so no `objective` event follows it; instead `target set` carries
 the first scoring in its `done` as `objective`, in the event's shape, so
 registering a target already answers how far the scene is from it without a
@@ -1612,8 +1617,8 @@ reference rendered at the budget size instead of at 512, the same scene
 gives exactly 1.0 and chamfer 0 — so the residual is that a 512-pixel
 rasterisation resampled to 256 is not the 256-pixel rasterisation of the
 same geometry, and no amount of care inside the comparison removes it.
-Register a reference at the size it will be scored at when a silhouette is
-thin and broken.
+Register the reference at the size it will be scored at — `observe --size
+256`, the objective size — when a silhouette is thin and broken.
 
 Morphological cleanup belongs to an estimate. The 3×3 opening and closing
 run only when the segmentation actually guessed: a mask read from alpha or

@@ -23,6 +23,8 @@ import numpy as np
 from agent_compare import METRICS, denormalize, measure, normalize, reference
 from agent_observe import VIEWS, isolated_data, names, png, render_passes, render_scene, aim
 
+# The objective is scored at this fixed size. It is deliberately not an image
+# lever: what the agent looks at must never move what it is measured against.
 FEEDBACK_SIZE = 256
 # The kernel's contract table owns this default; it is repeated, never redefined.
 DEFAULT_METRICS = ("iou",)
