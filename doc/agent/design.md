@@ -395,7 +395,9 @@ not a snapshot, so a program rebuilds its scene in any process.
 - A step that raises ends the request with `error`, whose `type` is the
   step's own exception type, `line` is relative to that step, and `message`
   is prefixed `step N:`. It also carries `step`, the `version` holding the
-  failing text, and `cached_through`, the last prefix still cached.
+  failing text, and `cached_through`, the last prefix still cached; those
+  three reach the wire through the kernel's `agent_fields` merge, so a
+  corrected `set` knows where to resume without asking.
 
   `Main` returns to the pre-request state: the kernel's rule that a failed
   request leaves no partial edit holds here too, so a failed edit never
@@ -488,8 +490,10 @@ Every `set|patch|rollback` and every recorded `exec` writes
 and so creates no version; it re-executes the current one. `current` names
 the checked-out version. Identical text reuses its version file and still
 appends a row, so the tree records the move. `program rollback` takes a
-version, a `sha256:`-less digest prefix or a label; `session snapshot
---label L` labels the current version.
+version, a `sha256:`-less digest prefix or a label. `session snapshot
+--label L` labels one state, so it labels the version that built it and
+answers that `version` beside the snapshot; a program with no version yet
+answers `null` and keeps its snapshot.
 
 ### `reproducible`
 

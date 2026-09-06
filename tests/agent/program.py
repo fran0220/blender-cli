@@ -42,14 +42,28 @@ def main():
             """The repr of one expression, evaluated in the session."""
             return execute(code)["value"]
 
-        def wait_autosave(path, previous=None):
-            deadline = time.monotonic() + 20
+        def wait_autosave(path, holds=None):
+            """Wait until the recovery file exists and, when asked, until it holds an object.
+
+            The autosave is written on a timer, so an mtime that changed after an edit
+            may still be a write queued before it. Reading the file back is the only
+            way to know the edit is in there.
+            """
+            reader = root / "reader"
+            reader.mkdir(exist_ok=True)
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
-                if path.is_file() and path.stat().st_size > 0 \
-                        and path.stat().st_mtime_ns != previous:
-                    return path.stat().st_mtime_ns
-                time.sleep(0.05)
-            raise AssertionError(f"Autosave did not update: {path}")
+                if path.is_file() and path.stat().st_size > 0:
+                    if holds is None:
+                        return
+                    try:
+                        saved = call("inspect", "--file", path, cwd=reader)["objects"]
+                    except Exception:
+                        saved = []
+                    if any(obj["name"] == holds for obj in saved):
+                        return
+                time.sleep(0.1)
+            raise AssertionError(f"Autosave never captured {holds or 'anything'}: {path}")
 
         def steps_ran():
             ran = counters.read_text().split() if counters.exists() else []
@@ -66,7 +80,8 @@ def main():
         try:
             assert program("get")["text"] == "# blender-cli program\n# base: factory\nP = {}\n"
             # An empty program has no version to label, and that is not an error.
-            assert call("session", "snapshot", "--label", "start")["snapshot"]
+            start = call("session", "snapshot", "--label", "start")
+            assert start["snapshot"] and start["version"] is None, start
 
             # Three actions become three steps, recorded by the exec path itself.
             execute("bpy.ops.wm.read_factory_settings(use_empty=True)")
@@ -170,6 +185,12 @@ def main():
                              "--no-record")
             assert unused["value"] == "[]" and steps_ran() == [], unused
 
+            # A labelled snapshot names one state, so it names the version that built it.
+            named = call("session", "snapshot", "--label", "milestone")
+            assert named["version"] == program("get")["version"], named
+            assert [row["label"] for row in program("history")["versions"]
+                    if row["version"] == named["version"]] == ["milestone"], named
+
             # History is a tree of parents; rollback moves between versions.
             history = program("history")
             versions = history["versions"]
@@ -210,6 +231,11 @@ def main():
             assert broken["error"]["type"] == "RuntimeError", broken
             assert broken["error"]["line"] == 2, broken
             assert broken["error"]["message"] == "step 2: step two", broken
+            # The error says which step broke, which version holds the failing text,
+            # and how far the prefix cache reached, so the correction below is free.
+            assert broken["error"]["step"] == 2, broken
+            assert broken["error"]["cached_through"] == 1, broken
+            assert broken["error"]["version"] == program("get")["version"], broken
             assert call("inspect")["objects"] == live, "a failed request leaves no partial edit"
             # The text keeps the edit that failed, and its version says why: a file is
             # not Main, and the agent patches the text it can see.
@@ -333,9 +359,8 @@ def main():
             steps_ran()
             assert restored["reproducible"] is True, restored
             autosave = root / ".blender-cli" / f'autosave-{opened["session"]}.blend'
-            written = wait_autosave(autosave)
             execute('bpy.ops.mesh.primitive_torus_add(major_radius=0.3)', "--no-record")
-            wait_autosave(autosave, written)
+            wait_autosave(autosave, holds="Torus")
             execute("import os; os._exit(3)", ok=False)
         finally:
             # The crashed daemon leaves a stale endpoint; close reports it and cleans up.
