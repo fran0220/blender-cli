@@ -226,7 +226,7 @@ Owns: `.amp/in/artifacts/` in its own orb; no repository files.
 | Item | Status |
 |---|---|
 | Dogfood run on the completed Linux build; friction list filed to owners | run 1 done on Linux at `b0b287bc`; items filed below; run 2 pending the fixes |
-| Dogfood run 2 on the build with the run-1 items closed; token and round-trip delta against run 1 recorded here | todo |
+| Dogfood run 2 on the build with the run-1 items closed; token and round-trip delta against run 1 recorded here | done on Linux at `91a0ba2f` |
 
 Run 1 (thread `T-01a073fe-9ff0-7699-9b6c-68d9e0d26220`; painter mug,
 front elevation; cylinder body, x-scaled torus handle, Solidify wall): 11
@@ -279,6 +279,43 @@ warning 741 tokens per session. No exception occurred, so no corrective
   replays, `"program"`; null only when nothing existed. `repl`'s own
   recovery reopens through the same code. `program get` is unchanged: it
   is the read half of editing the program, not a look at scene state.
+
+Run 2 (thread `T-01a073fe-9ff0-7699-9b6c-68d9e0d26220`; same painter mug,
+same plan, on `91a0ba2f` with every run-1 item closed): 11 channel
+requests — none look-only — and 1 launcher invocation, against run 1's 11
+requests with 1 look-only and 4 invocations. Pushed events 160 → 67,
+49,705 → 24,495 bytes, ~12,426 → ~6,123 tokens (−51 %) for a run that did
+more work: GUI datablocks 2,015 tokens → 0, the numpy warning 741 → 0,
+`progress` 100 events/5,224 tokens → 12 events/592 tokens with all 12
+improvements, so the share the agent could not use fell from ~58 % to
+~10 %. `fit` derived `patience` 25 and both searches ended at the
+coordinate step floor with `stopped: "patience"`: 102 evaluations and
+249.9 s became 89 and 229.6 s. The trajectory agrees with run 1 step for
+step in shape — handle +0.31, hollow and parameterisation exactly
+0.000000, first fit +0.03 — on a new scale, since `fit bbox` now
+normalises the model too. The `error` image changed one decision and it
+is the difference between the runs: after fit #1 it showed a red bar of
+constant width down the body's right edge, which a straight vertical edge
+identifies as body width, not handle parameters; run 1 saw only `worst`'s
+`missing`/`extra` numbers, searched the handle again and gained +0.0013
+in 40 evaluations, while run 2 promoted the `radius=0.5` literal to
+`P["body_r"]` in one `program set` and re-fitted for +0.0286 (IoU 0.9251
+→ 0.9537, chamfer 2.65 → 1.57) in 42 evaluations — the same cost for 22×
+the gain. The crash was answered on the pipe: the killed request ended
+with `error` type `Crashed` carrying `recovered_from: "program"`, the
+greeting re-announced it, targets survived, `repl` never exited, and
+`program run` answered `cached: 4, ran: []` with the bevel from the
+killed request in the scene, scoring 0.953755 against 0.953700 before
+the crash. Byte-identical program text reproduced run 1's `version
+d4d4d742…` and `digest 7805c4e8…` across builds and processes. Again no
+exception occurred, so no corrective `fix` was observed. Evidence in the
+run's orb at `.amp/in/artifacts/run2/`. One item filed, with the ruling:
+
+- T: `fit`'s `done` sends `cancelled` beside `stopped`, and `cancelled`
+  is exactly `stopped == "cancel"`; a field the agent can compute does
+  not earn its tokens, so `cancelled` leaves the wire, the contract table
+  and the tests in one commit, and `stopped: "cancel"` is the only way a
+  cancelled search reports itself.
 
 ### X — product platforms
 
