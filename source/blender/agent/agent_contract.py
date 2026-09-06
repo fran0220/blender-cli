@@ -277,7 +277,12 @@ EVENTS = {
               "fields": {"kind": {"type": "string", "enum": ["delta", "full", "overlay", "error"]},
                          "view": {"type": "string"}, "pass": {"type": "string"},
                          "path": {"type": "string"}, "inline": {"type": "string"},
-                         "size": {"type": "array"}, "region": {"type": "array"}}},
+                         "size": {"type": "array"}, "region": {"type": "array"},
+                         "target": {"type": "string",
+                                    "doc": "For an `error` map, the target it scores."},
+                         "message": {"type": "string",
+                                     "doc": "Why no picture was produced, when a render "
+                                            "failed rather than being under budget."}}},
     "progress": {"doc": "Search progress, at most every 0.5 s.",
                  "fields": {"eval": {"type": "integer"}, "of": {"type": "integer"},
                             "best": {"type": "number"}, "params": {"type": "object"}}},

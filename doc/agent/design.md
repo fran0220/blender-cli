@@ -323,7 +323,9 @@ nothing has no consequences to push. A provider that raises is reported as a
 `log` event on `stderr` and skipped; it never fails the request. Providers
 read session state through `Session`; they do not call each other. The image
 provider reads the perception provider's last result through
-`session.last_perception`.
+`session.last_perception` and the objective provider's through
+`session.last_objective`, which is how an `error` map knows which target
+scored worst and where.
 
 Each module named in `PROVIDER_MODULES` is imported once per session and must
 expose `register(session)`, where it installs its providers, request handlers,
@@ -925,6 +927,12 @@ compact JSON document. No inspection arrays are truncated.
 
 ID diff compares Main's top-level ID lists by `session_uid`; `type` is the
 uppercased upstream ID-type name (for example `OBJECT`, `MESH`, `NODETREE`).
+Datablocks with no scene consequence are left out entirely: `WINDOWMANAGER`,
+`SCREEN`, `WORKSPACE`, `BRUSH` and `PALETTE`, and the `Render Result` and
+`Viewer Node` images. They are the synthetic context, the data a factory read
+recreates, and the buffers the render pipeline reuses — a single
+`read_factory_settings` tags 46 of them, and in the dogfood run they were
+71% of every `diff`'s bytes. `FREESTYLELINESTYLE` stays: it reaches the render.
 Added/removed entries contain only type/name; surviving tagged IDs are changed.
 The initial view layer is evaluated before the boundary. C++ samples original
 `ID.recalc` at both boundaries and resets `recalc_after_undo_push` at the start;

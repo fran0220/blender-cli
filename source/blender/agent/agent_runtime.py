@@ -47,8 +47,11 @@ the dispatch or the event assembly:
   register_record_hook(f)  `f(session, code, step)` runs after an `exec` whose
                            diff is non-empty and whose `record` is not false.
                            Workstream P records the program step there.
-  Session.last_perception  Written by F's perception provider, read by F's
-                           image provider.
+  Session.last_perception  Written by F's perception provider (order 200),
+                           read by F's image provider (order 400).
+  Session.last_objective   Written by T's objective provider (order 300), read
+                           by F's image provider for the `error` map: which
+                           target scored worst and where.
   Session.last_diff        The diff dict of the request being answered.
   Session.previous_snapshot
                            The snapshot current when the request started, so a
@@ -72,6 +75,15 @@ import sys
 import time
 import tokenize
 import traceback
+import warnings
+
+# Blender runs with flush-to-zero and denormals-are-zero set, so numpy's first
+# import measures the smallest float32 subnormal as zero and says so. It is a
+# true statement about the process and nothing the agent can act on; without
+# this it reaches the channel as eight `log` events every time a provider
+# imports numpy. Filtered here, before any provider does.
+warnings.filterwarnings("ignore", message="The value of the smallest subnormal",
+                        category=UserWarning)
 
 import bpy
 import bmesh
@@ -206,6 +218,20 @@ def helper(name):
     return HELPERS[name]
 
 
+# Datablocks whose changes are not consequences of the agent's statement: the
+# synthetic window/screen/workspace the context needs, the brush and palette
+# data a factory read recreates, and the two images the render pipeline reuses.
+# `read_factory_settings` alone tags 46 of them, four times over in a program
+# replay. FREESTYLELINESTYLE stays: it reaches the render.
+UNSEEN_TYPES = frozenset({"WINDOWMANAGER", "SCREEN", "WORKSPACE", "BRUSH", "PALETTE"})
+UNSEEN_IMAGES = frozenset({"Render Result", "Viewer Node"})
+
+
+def scene_visible(type_name, name):
+    return type_name not in UNSEEN_TYPES and not (
+        type_name == "IMAGE" and name in UNSEEN_IMAGES)
+
+
 class DiffProvider:
     """The structural channel: which datablocks changed, and the state they left."""
 
@@ -307,11 +333,18 @@ def id_diff(before, after, fields):
     def identity(item):
         return {"type": item[0], "name": item[1]}
 
-    added = [identity(after[uid]) for uid in after.keys() - before.keys()]
-    removed = [identity(before[uid]) for uid in before.keys() - after.keys()]
+    def visible(item):
+        return scene_visible(item[0], item[1])
+
+    added = [identity(after[uid]) for uid in after.keys() - before.keys()
+             if visible(after[uid])]
+    removed = [identity(before[uid]) for uid in before.keys() - after.keys()
+               if visible(before[uid])]
     changed = []
     for uid in before.keys() & after.keys():
         item = after[uid]
+        if not visible(item):
+            continue
         groups = [name for name, mask in fields.items() if item[2] & mask]
         if before[uid][1] != item[1]:
             groups.append("name")
@@ -559,6 +592,7 @@ class Session:
         self.last_code = ""
         self.previous_snapshot = None
         self.last_perception = None
+        self.last_objective = None
         self.recovered_from = None
         self.opened_file = config.get("file") or None
         self.snapshot_taken = False
