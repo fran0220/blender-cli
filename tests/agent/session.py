@@ -363,7 +363,10 @@ len(mesh.vertices)
         assert killed["error"]["type"] == "SessionError", killed
         assert killed["autosave"] == str(autosave), killed
         assert "exited unexpectedly" in killed["error"]["message"], killed
-        assert "session open --file" in killed["error"]["message"], killed
+        # A plain reopen recovers from the newest source; naming the autosave
+        # would make it a chosen file and recover nothing.
+        assert "`session open` recovers it" in killed["error"]["message"], killed
+        assert "--file" not in killed["error"]["message"], killed
         assert "session.log" in killed["error"]["message"], killed
         logged = [json.loads(line.removeprefix("Agent request: "))
                   for line in (root / ".blender-cli/session.log").read_text().splitlines()
@@ -375,10 +378,12 @@ len(mesh.vertices)
             dead = call(*args, ok=False)
             assert dead["error"]["type"] == "SessionError" and "exited unexpectedly" in dead["error"]["message"], dead
             assert dead["autosave"] == str(autosave), dead
+        # A named file is not a recovery: nothing replays over it, so the result
+        # names the recovery file that is still there rather than a source.
         recovered = call("session", "open", "--file", autosave)
         quiet()
         assert recovered["previous_autosave"] == str(autosave), recovered
-        assert recovered["recovered_from"] == "autosave", recovered
+        assert "recovered_from" not in recovered, recovered
         with autosave.with_suffix(".json").open() as stream:
             metadata = json.load(stream)
         assert metadata["filepath"] == "", metadata

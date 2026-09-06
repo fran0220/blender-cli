@@ -291,8 +291,9 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
             {{"type", "SessionError"},
              {"message",
               "Session " + std::to_string(pid) +
-                  " exited unexpectedly; see .blender-cli/session.log. Recover with "
-                  "`session open --file <autosave>` or discard with `session close`"}}}}));
+                  " exited unexpectedly; see .blender-cli/session.log. `session open` "
+                  "recovers it from the newest of its program and autosave; "
+                  "`session close` discards it"}}}}));
     };
     /* A repl recovers a dead session itself; every other verb reports it. */
     if (!opening && !closing && !repl && std::filesystem::exists(pidfile) && !process_alive(pid)) {
@@ -375,14 +376,32 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
       nlohmann::json result = {{"session", std::to_string(pid)}, {"socket", path.string()}};
       Socket fd = socket_connect(path.string());
       if (fd != invalid_socket) {
-        /* The daemon knows what it rebuilt its scene from; the launcher does not. */
-        const auto status = converse(fd, {{"id", 1}, {"op", "session"}, {"action", "status"}}, 0);
+        /* The session states what it rebuilt its scene from when it greets a
+         * peer, so opening it reads the verdict rather than asking for it. */
+        nlohmann::json greeting;
+        try {
+          LineReader reader(fd);
+          greeting = nlohmann::json::parse(reader.next(), nullptr, false);
+        }
+        catch (const std::exception &) {
+          /* Accepting the endpoint is not being open: the loop binds its
+           * socket before it has a scene, so a session that cannot greet
+           * failed to start. */
+          socket_close(fd);
+          throw std::runtime_error("Session " + std::to_string(pid) +
+                                   " exited while opening; see .blender-cli/session.log");
+        }
         socket_close(fd);
-        if (status.contains("recovered_from") && !status["recovered_from"].is_null()) {
-          result["recovered_from"] = status["recovered_from"];
+        if (greeting.is_object() && !greeting["recovered_from"].is_null()) {
+          result["recovered_from"] = greeting["recovered_from"];
         }
       }
-      return print(with_autosave(result, "previous_autosave"));
+      /* `recovered_from` names the source. The recovery file is worth naming
+       * only when nothing was recovered from it and it is still there. */
+      if (!result.contains("recovered_from")) {
+        result = with_autosave(result, "previous_autosave");
+      }
+      return print(result);
     }
     Socket fd = socket_connect(path.string());
     if (fd == invalid_socket) {

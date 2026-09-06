@@ -1007,8 +1007,13 @@ caller's capture pipes, so the detached daemon cannot hold their EOF open.
 returned session ID. A process-held `.blender-cli/session.lock` serializes
 open/forced-close operations. The directory is owner-only on POSIX. Opening
 an already-live session fails; a dead PID permits stale socket cleanup. Opening
-over a dead session reports `previous_autosave` (absolute path) when its recovery
-file exists, and preserves that file. Closing a dead session reports
+over a dead session recovers it: the result carries `recovered_from`, read from
+the session's own greeting, naming the source it rebuilt the scene from. It
+carries `previous_autosave` (absolute path) only when nothing was recovered and
+a recovery file is still there; the two never appear together, because
+`recovered_from` already names the source. The recovery file is preserved
+either way. `session open --file <autosave>` is not recovery — it is a chosen
+file, and nothing replays over it. Closing a dead session reports
 `{ok: true, stale: true, autosave?: path}`, removes the socket/PID/lock, and
 preserves its recovery file.
 `session close` does not save. It requests normal loop termination through

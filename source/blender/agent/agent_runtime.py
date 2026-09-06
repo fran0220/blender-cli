@@ -618,8 +618,10 @@ class Session:
                     and os.path.isfile(metadata_path)):
                 with open(metadata_path, encoding="utf-8") as stream:
                     metadata = json.load(stream)
+                # The sidecar restores what the file cannot carry. It is not a
+                # recovery verdict: the agent named this file, and `recovered_from`
+                # is decided in one place, by the program module's recovery.
                 native["restore_metadata"](metadata["filepath"], metadata["dirty"])
-                self.recovered_from = "autosave"
         agent._native["context"]()
         bpy.context.view_layer.update()
         self.before = native["id_state"](True)
