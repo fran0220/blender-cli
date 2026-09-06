@@ -222,7 +222,53 @@ Owns: `.amp/in/artifacts/` in its own orb; no repository files.
 
 | Item | Status |
 |---|---|
-| Dogfood run on the completed Linux build; friction list filed to owners | todo |
+| Dogfood run on the completed Linux build; friction list filed to owners | run 1 done on Linux at `b0b287bc`; items filed below; run 2 pending the fixes |
+| Dogfood run 2 on the build with the run-1 items closed; token and round-trip delta against run 1 recorded here | todo |
+
+Run 1 (thread `T-01a073fe-9ff0-7699-9b6c-68d9e0d26220`; painter mug,
+front elevation; cylinder body, x-scaled torus handle, Solidify wall): 11
+channel requests — 9 that did work, 1 `session status` forced by the
+recovery verdict not being pushed, 1 deliverable `observe` — plus 4
+launcher invocations to open or recover the channel. Objective trajectory
+(front, 256 px, mask auto, fit bbox): `target set` on the factory cube
+IoU 0.626 → body 0.586 → handle 0.903 → hollow body 0.903 (no render,
+`fraction` 1.5e-05) → `program set` promoting seven parameters 0.903 with a
+byte-identical picture → `fit` coordinate, 60 evaluations, 148.9 s, 0.935 →
+`fit` nelder-mead, 40 evaluations, 101.0 s, 0.936 → SIGKILL during a bevel
+→ reopen `recovered_from: "program"`, `program run` `cached: 4, ran: []`,
+IoU 0.935921258928053 digit for digit, the bevel from the killed request
+preserved. Final IoU 0.9359, chamfer 2.28. Pushed events: 160, 49,705
+bytes, ~12,426 tokens; ~58 % were tokens the agent could not use —
+`progress` 42 % (13 of 100 events improved the best and those are already
+in `done.curve`), GUI datablocks 71 % of `diff` bytes, a numpy subnormal
+warning 741 tokens per session. No exception occurred, so no corrective
+`fix` was observed. Items filed, with the ruling each owner builds to:
+
+- K: a request killed with the process ends with an `error` on the same
+  pipe and `repl` exits non-zero; `repl` recovers a dead session itself
+  (program first, autosave second) and opens every conversation with a
+  `session` event carrying the `session status` shape, so the recovery
+  verdict is pushed and never asked for; `repl`'s own failures are one
+  compact line; `diff` never lists UI datablocks (`WINDOWMANAGER`,
+  `SCREEN`, `WORKSPACE`, `BRUSH`, `PALETTE`, the `Render Result` and
+  `Viewer Node` images); the numpy subnormal warning is silenced once in
+  the runtime before any provider imports numpy; `progress` joins the
+  feedback policy (`all|improvements|off`, default `improvements`) and
+  `budget` gains `patience` and `tolerance`.
+- T: `fit` emits `progress` per the policy and stops on `patience`
+  evaluations without an improvement above `tolerance`, reporting
+  `stopped` in `done`; the objective provider leaves each target's
+  silhouette error masks at the budget size in session state for the
+  image provider.
+- F: the `error` image kind design.md already describes — the worst
+  region's missing/extra map against the reference — is pushed after an
+  action under the image budget, so the picture that settled run 1 (only
+  `fit`'s `error_map` produced it) arrives with every scoring.
+- W: `usage.md`'s crash section documents the plain reopen that rebuilds
+  from the program and `repl`'s recovery behaviour once K lands it.
+- P: no change. `program get` is the read half of editing the program, not
+  a look at scene state; a host without the process's filesystem sends it
+  when it edits, which is when it needs the text.
 
 ### X — product platforms
 
