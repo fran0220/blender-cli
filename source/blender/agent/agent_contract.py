@@ -18,8 +18,9 @@ that change `Main`), `exactly_one_of`, and `cancels`.
 `cancels` names how an op answers a `cancel` that reaches it. The default is
 `"error"`: the request ends with `error` of type `Cancelled`, having restored
 the state it started from. `"done"` means the op keeps what it produced and
-ends successfully with `cancelled: true`, which is what a paid-for search
-does — discarding its result would be the opposite of the point.
+ends successfully, saying in its own result that a cancel is why it stopped,
+which is what a paid-for search does — discarding its result would be the
+opposite of the point.
 """
 
 DEFS = {
@@ -301,9 +302,8 @@ EVENTS = {
     "done": {"doc": "Terminal success event, carrying the op-specific result fields.",
              "fields": {"ok": {"type": "boolean"}, "ms": {"type": "number"},
                         "cancelled": {"type": "boolean",
-                                      "doc": "For an op whose `cancels` is `done`, that it was "
-                                             "cancelled and kept its result; on a `cancel`, "
-                                             "whether a request with that id was running."},
+                                      "doc": "On a `cancel`, whether a request with that id "
+                                             "was running."},
                         "target": {"type": "integer",
                                    "doc": "On a `cancel`, the id it was aimed at."},
                         "stopped": {"type": "string",

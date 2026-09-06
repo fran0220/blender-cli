@@ -415,10 +415,7 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
     result = {"method": method, "objective": goal.record(),
               "best": {"params": best, "score": progress["best"]},
               "evals": progress["evals"], "failed": progress["failed"],
-              "curve": progress["curve"], "applied": True, "stopped": stopped,
-              # The contract's generic done field for an op whose `cancels` is
-              # `done`; `stopped` says which of the four reasons it was.
-              "cancelled": stopped == "cancel"}
+              "curve": progress["curve"], "applied": True, "stopped": stopped}
     if session is not None:
         result["best"]["snapshot"] = session.snapshot(None, "fit")
     if goal.entries:
