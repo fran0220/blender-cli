@@ -87,9 +87,10 @@ DEFS = {
                       "doc": "Maximum evaluations."},
             "seconds": {"type": "number", "minimum": 0, "exclusive_minimum": True,
                         "doc": "Wall-clock bound."},
-            "patience": {"type": "integer", "minimum": 1, "default": 16,
+            "patience": {"type": "integer", "minimum": 1,
                          "doc": "Stop after this many evaluations without an improvement "
-                                "greater than `tolerance`."},
+                                "greater than `tolerance`. Absent: derived from the number "
+                                "of parameters, `max(16, k × parameters)`; see design.md fit."},
             "tolerance": {"type": "number", "minimum": 0, "default": 1e-3,
                           "doc": "Score improvement below which an evaluation counts as none."},
             "size": {"type": "integer", "minimum": 1, "default": 128,
@@ -293,7 +294,8 @@ EVENTS = {
                          "message": {"type": "string",
                                      "doc": "Why no picture was produced, when a render "
                                             "failed rather than being under budget."}}},
-    "progress": {"doc": "Search progress, at most every 0.5 s.",
+    "progress": {"doc": "Search progress: at most every 0.5 s under `all`, one per "
+                        "improvement under `improvements`.",
                  "fields": {"eval": {"type": "integer"}, "of": {"type": "integer"},
                             "best": {"type": "number"}, "params": {"type": "object"}}},
     "done": {"doc": "Terminal success event, carrying the op-specific result fields.",

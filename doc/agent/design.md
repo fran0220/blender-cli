@@ -177,7 +177,10 @@ best; every evaluation is already in `done.curve`, so pushing them all spends
 tokens repeating the answer. `fit`'s `budget` bounds the search the same way:
 `patience` evaluations without an improvement greater than `tolerance` end
 it, and `done.stopped` says which bound it hit — `budget`, `patience`,
-`seconds` or `cancel`.
+`seconds` or `cancel`. `patience` has no fixed default, because how long a
+barren stretch can be before a search has actually converged depends on how
+many parameters it is moving: absent, `fit` derives it from the parameter
+count, as the `fit` section states.
 
 `samples` is the budget render's EEVEE sample count, deliberately below
 observation's fixed 32: a delta is read for where the picture moved, not for
