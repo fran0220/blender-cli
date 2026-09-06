@@ -261,6 +261,65 @@ def main():
             assert [event["kind"] for event in recovered["images"]] == ["delta", "overlay"], recovered
             assert execute("pass")["perception"]["changed"]["fraction"] == 0.0
 
+            # With a target registered, every action also pictures what is still wrong,
+            # not only what the last action moved.
+            reference = call("observe", "--views", "front", "--passes", "silhouette",
+                             "--layout", "separate")["image"]
+            registered = call("target", "set", "front", "--ref", reference)
+            # Model and reference now go through the same bbox normalisation, so the only
+            # thing between this model and its own silhouette is the reference's 512 to 256
+            # resample: about a pixel of edge error along a long boundary, which costs a
+            # thin shape several points of IoU. A same-size reference scores ~0.9999.
+            baseline = registered["objective"]["targets"]["front"]["iou"]
+            print("target self-score:", baseline, flush=True)
+            assert baseline > 0.9, registered
+            aimed = execute("bpy.data.objects['Cube'].location.z += 0.4")
+            scored = aimed["objective"]["targets"]["front"]
+            assert scored["iou"] < baseline - 0.002, (scored, baseline)
+            assert scored["delta"]["iou"] < -0.002, scored
+            maps = [event for event in aimed["images"] if event["kind"] == "error"]
+            assert len(maps) == 1, aimed["images"]
+            wrong = maps[0]
+            assert wrong["target"] == "front", wrong
+            assert wrong["pass"] == "silhouette" and wrong["view"] == "front", wrong
+            x0, y0, x1, y1 = scored["worst"]["region"]
+            assert wrong["region"] == [max(0, x0 - 8), max(0, y0 - 8),
+                                       min(256, x1 + 8), min(256, y1 + 8)], (wrong, scored)
+            _, _, rows = read_png(picture(wrong))
+            colours = {row[index:index + 3] for row in rows for index in range(0, len(row), 3)}
+            assert len(colours) > 1, colours
+            assert {bytes((220, 40, 40)), bytes((40, 90, 220))} & colours, sorted(colours)
+            print("target error map:", json.dumps(wrong), flush=True)
+            print("worst cell:", json.dumps(scored["worst"]), flush=True)
+
+            # Every region on the channel is budget-view pixels. The error map's model
+            # side must therefore be exactly the budget view's silhouette inside the same
+            # region: if the objective pictured its normalised comparison tile instead,
+            # the two would disagree while both looked plausible on their own.
+            paired = stream({"id": 33, "op": "exec",
+                             "feedback": {"mode": "full", "pass": "silhouette"},
+                             "code": "bpy.data.objects['Cube'].location.z += 0.3"})
+            pictures = {event["kind"]: event for event in paired if event["event"] == "image"}
+            assert set(pictures) == {"full", "error"}, paired
+            _, _, budget = read_png(picture(pictures["full"]))
+            _, _, mapped = read_png(picture(pictures["error"]))
+            x0, y0, x1, y1 = pictures["error"]["region"]
+            model_colours = (bytes((255, 255, 255)), bytes((40, 90, 220)))
+            for row in range(y1 - y0):
+                for column in range(x1 - x0):
+                    index = column * 3
+                    colour = mapped[row][index:index + 3]
+                    lit = budget[y0 + row][(x0 + column) * 3] == 255
+                    assert (colour in model_colours) == lit, (row, column, colour, lit)
+            print("error map agrees with the budget view over",
+                  (x1 - x0) * (y1 - y0), "pixels", flush=True)
+
+            # A target whose score did not move is a number, not a picture.
+            still = execute("pass")
+            assert still["objective"]["targets"]["front"]["delta"]["iou"] == 0.0, still
+            assert "images" not in still, still
+            call("target", "clear")
+
             # NUDGE changes a datablock and returns it, so it renders but shows nothing.
             costs = {"cube settled": [execute("pass")["ms"] for _ in range(3)],
                      "cube rendered": [execute(NUDGE)["ms"] for _ in range(3)],

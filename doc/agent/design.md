@@ -312,9 +312,39 @@ padding, in the budget view's own pixels; its `region` is that padded crop,
 so it always covers `perception.changed.region`. `overlay` is the same
 region's silhouettes before and after (before red, after cyan, agreement
 white, neither RGB 32); `error` is the target's silhouette error map
-(missing red, extra blue) for the worst region, or, when the feedback render
-itself failed, a `message` and no image at all; `full` is a whole frame at
-budget size.
+(missing red, extra blue, agreement white) for the worst region, naming the
+target it scores, or, when the feedback render itself failed, a `message`
+and no image at all; `full` is a whole frame at budget size. `overlay` and
+`error` depict silhouettes, so their `pass` is `silhouette` whatever the
+policy's pass is.
+
+A `delta` says what the last action moved; an `error` says what is still
+wrong. Both are pushed, because an agent working towards a reference needs
+the second more than the first: it is the picture that tells it where to act
+next. The image provider emits one `error` per registered target after the
+objective has scored, cropped to that target's worst 4×4 cell with the same
+8 px margin as a delta, from the same budget render, so it costs no render.
+A target is pictured on its first scoring and whenever its primary metric
+moved by more than `threshold`; a target whose score barely moved is a
+number, not a picture.
+
+The objective provider (order 300) leaves what it scored in
+`session.last_objective` for the image provider (order 400):
+
+```python
+{"size": 256,                      # budget size the masks are at
+ "targets": {"front": {"view": "front",
+                       "reference": <bool ndarray (size, size)>,
+                       "model":     <bool ndarray (size, size)>,
+                       "worst": {...the objective event's worst cell...},
+                       "metric": "iou",        # the target's primary metric
+                       "delta": 0.012}}}       # its change, null on first scoring
+```
+
+It is `None` when nothing was scored, and reset to `None` before every
+request so a stale scoring is never pictured. `agent_target.error_image(
+reference, model)` composes the map, so the objective owns how it looks and
+`fit`'s `error_map` and this event are the same picture.
 
 The image provider sends one image per budget view per action, and nothing
 when the view's changed fraction is below `threshold`. A view the agent has

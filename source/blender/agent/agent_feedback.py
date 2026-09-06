@@ -195,10 +195,11 @@ def overlay(previous, current, region):
     return rgb
 
 
-def emit_image(kind, view, rgb, region, policy):
+def emit_image(kind, view, rgb, region, policy, pass_name=None, **extra):
     data = png(np.ascontiguousarray(rgb))
-    event = {"event": "image", "kind": kind, "view": view, "pass": policy["pass"],
-             "size": [rgb.shape[1], rgb.shape[0]], "region": region}
+    event = {"event": "image", "kind": kind, "view": view,
+             "pass": pass_name or policy["pass"],
+             "size": [rgb.shape[1], rgb.shape[0]], "region": region, **extra}
     if policy["inline"]:
         # An inline image crosses the boundary instead of a file, never beside one.
         return {**event, "inline": base64.b64encode(data).decode("ascii")}
@@ -208,6 +209,38 @@ def emit_image(kind, view, rgb, region, policy):
     path = directory / (hashlib.sha256(data).hexdigest() + ".png")
     path.write_bytes(data)
     return {**event, "path": str(path)}
+
+
+def target_images(session, pending):
+    """One error map per scored target: where the model disagrees with its reference.
+
+    The objective provider scored at order 300 from this request's budget render and
+    left the masks behind, so this costs no render. It answers the question a delta
+    cannot: a delta shows what the last action moved, an error map shows what is still
+    wrong. The picture itself is the objective's, cropped here to the worst region.
+    """
+    policy = pending["policy"]["image"]
+    objective = session.last_objective
+    if not objective:
+        return []
+    # The objective owns how the map looks, so `fit`'s picture and this one are one picture.
+    from agent_target import error_image
+
+    size = objective["size"]
+    events = []
+    for name in sorted(objective["targets"]):
+        target = objective["targets"][name]
+        # A target that barely moved is a number, not a picture; a first scoring is both.
+        if target["delta"] is not None and abs(target["delta"]) <= policy["threshold"]:
+            continue
+        x0, y0, x1, y1 = target["worst"]["region"]
+        region = [max(0, x0 - PADDING), max(0, y0 - PADDING),
+                  min(size, x1 + PADDING), min(size, y1 + PADDING)]
+        crop = error_image(target["reference"], target["model"])[region[1]:region[3],
+                                                                region[0]:region[2]]
+        events.append(emit_image("error", target["view"], crop, region, policy,
+                                 target=name, pass_name="silhouette"))
+    return events
 
 
 def view_images(view, pending):
@@ -227,8 +260,8 @@ def view_images(view, pending):
     crop = buffer(tile, policy["pass"])[region[1]:region[3], region[0]:region[2]]
     events = [emit_image("delta", view, crop, region, policy)]
     if policy["overlay"]:
-        events.append(emit_image("overlay", view,
-                                 overlay(pending["previous"][view], tile, region), region, policy))
+        events.append(emit_image("overlay", view, overlay(pending["previous"][view], tile, region),
+                                 region, policy, pass_name="silhouette"))
     return events
 
 
@@ -274,3 +307,5 @@ class Image:
         for view in pending["views"]:
             for event in view_images(view, pending):
                 emit(event)
+        for event in target_images(session, pending):
+            emit(event)
