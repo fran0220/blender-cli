@@ -19,32 +19,38 @@ blender-cli exec -c 'bpy.ops.wm.read_factory_settings(use_empty=True)' --save em
 blender-cli repl --file empty.blend
 ```
 
-Four requests in, and what came back on stdout:
+Three requests in, and what came back on stdout:
 
 ```json
 {"id": 1, "op": "exec", "code": "bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=2.0)\nbpy.context.object.name = 'Handle'\nbpy.context.object.dimensions[:]"}
 {"id": 2, "op": "exec", "code": "bpy.data.objects['Handle'].scale.x = 1.8"}
 {"id": 3, "op": "exec", "code": "bpy.data.objects['Handle'].locaton"}
-{"id": 4, "op": "session", "action": "status"}
 ```
 
 ```json
+{"id": null, "event": "session", "session": "162386", "file": "/tmp/u6/empty.blend", "dirty": false, "step": 0, "snapshot": "sha256:2bcb52bc…", "feedback": {"perception": true, "objective": true, "progress": "improvements", "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
 {"id": 1, "event": "value", "value": "(0.800000011920929, 0.800000011920929, 2.0)"}
-{"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:98459a73…", "step": 1}
+{"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:4e694aa7…", "step": 1}
 {"id": 1, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.4, -0.4, -1.0], "high": [0.4, 0.4, 1.0]}, "dims": [0.8, 0.8, 2.0], "framing": {"bounds": {…}, "center": [0.0, 0.0, 0.0], "radius": 1.1489125391646506, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": null, "symmetry": {"x": 0.9787234042553191, "y": null, "z": 1.0}}
-{"id": 1, "event": "image", "kind": "full", "view": "front", "pass": "color", "size": [256, 256], "region": [0, 0, 256, 256], "path": "/tmp/u4/.blender-cli/feedback/94e15039….png"}
-{"id": 1, "event": "done", "ok": true, "ms": 1419.8384599994824}
+{"id": 1, "event": "image", "kind": "full", "view": "front", "pass": "color", "size": [256, 256], "region": [0, 0, 256, 256], "path": "/tmp/u6/.blender-cli/feedback/94e15039….png"}
+{"id": 1, "event": "done", "ok": true, "ms": 1500.149801999214}
 {"id": 2, "event": "value", "value": null}
-{"id": 2, "event": "diff", "added": [], "changed": [{"type": "OBJECT", "name": "Handle", "fields": ["transform", "copy_on_eval", "parameters"]}], "removed": [], "snapshot": "sha256:f3bf8e86…", "step": 2}
+{"id": 2, "event": "diff", "added": [], "changed": [{"type": "OBJECT", "name": "Handle", "fields": ["transform", "copy_on_eval", "parameters"]}], "removed": [], "snapshot": "sha256:37766c21…", "step": 2}
 {"id": 2, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.72, -0.4, -1.0], "high": [0.72, 0.4, 1.0]}, "dims": [1.4399999380111694, 0.8, 2.0], "framing": {…, "radius": 1.2955307658126247, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": {"objects": ["Handle"], "view": "front", "region": [43, 11, 213, 245], "fraction": 0.497772216796875, "silhouette_delta": 0.4464285714285714}, "symmetry": {"x": 1.0, "y": null, "z": 1.0}}
 {"id": 2, "event": "image", "kind": "delta", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/7c642250….png"}
 {"id": 2, "event": "image", "kind": "overlay", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/52413ccc….png"}
-{"id": 2, "event": "done", "ok": true, "ms": 629.0661460006959}
+{"id": 2, "event": "done", "ok": true, "ms": 630.5600579999009}
 {"id": 3, "event": "error", "ok": false, "type": "AttributeError", "message": "'Object' object has no attribute 'locaton'", "line": 1, "rna": {"struct": "Object", "nearest": ["location", "lock_rotation", "lock_location", "delta_location", "lock_rotation_w"], "type": "float[3]"}, "fix": {"code": "bpy.data.objects['Handle'].location", "reason": "Object has no 'locaton'; nearest 'location' (similarity 0.93)"}}
-{"id": 4, "event": "done", "ok": true, "ms": 0.0430369991590851, "session": "139208", "file": "/tmp/u4/empty.blend", "dirty": false, "step": 2, "snapshot": "sha256:f3bf8e86…", "feedback": {"perception": true, "objective": true, "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
 ```
 
 Read that transcript for what the loop costs. Nothing in it was asked for.
+
+The channel greets you before it reads anything: a `session` event with
+`id: null` carrying the whole of `session status` — which scene is open, the
+step and snapshot it is at, the feedback policy in force, the registered
+targets, and whether this session was recovered. There is never a reason to
+open a conversation by asking what state it is in.
+
 Request 1 answered with the value of its last expression, the datablocks it
 added, the snapshot the scene is now at, its counts and world bounds, and the
 first picture of the view. Request 2 scaled the handle and answered with the
@@ -54,6 +60,10 @@ result and a before/after overlay — instead of a whole frame. Request 3
 misspelled a property and came back with the five nearest identifiers, the type
 of the right one, and a `fix.code` that runs as it stands. No `observe` and no
 `compare` request appears anywhere: looking is what an action already answers.
+
+`diff` names the datablocks the agent can act on. Blender's windows, screens,
+workspaces, brushes and palettes change constantly and mean nothing to a model,
+so they are not listed.
 
 `--file` names the scene the session opens; without it the session starts from
 Blender's factory startup, **including its default cube**. `--standalone` runs
@@ -100,7 +110,7 @@ cost. The policy is per session:
 
 ```sh
 blender-cli session feedback image.size=128 image.mode=delta --json
-# {"feedback":{"perception":true,"objective":true,"image":{"mode":"delta","threshold":0.002,"views":["front"],"pass":"color","size":128,"samples":8,"overlay":true,"inline":false}},"ms":0.060274000134086236,"ok":true}
+# {"feedback":{"perception":true,"objective":true,"progress":"improvements","image":{"mode":"delta","threshold":0.002,"views":["front"],"pass":"color","size":128,"samples":8,"overlay":true,"inline":false}},"ms":0.039956999899004586,"ok":true}
 ```
 
 A setting is a dotted path into the policy and its value is JSON when it parses
@@ -305,35 +315,65 @@ selects the newest checkpoint while older ones stay reachable by their IDs, and
 
 ## When the process dies
 
-Native code can terminate the session. The killed request says so, names the
-dead PID and the autosave, and so does every request after it:
+Native code can terminate the session, and the agent does not have to do
+anything about it. The pipe outlives the process behind it: every request still
+outstanding is answered with an `error` of type `Crashed`, the session is
+reopened, and the channel greets you again with the state it came back at.
+
+```json
+{"id": 4, "event": "objective", "targets": {"front": {"iou": 0.9800367922599986, "delta": {"iou": 0.17515740025647397}, …}}, "best": {"front": {"iou": 0.9800367922599986, "snapshot": "sha256:a1a7c07b…", "step": 3}}}
+{"id": 5, "op": "exec", "code": "import os; os._exit(1)"}
+{"event": "error", "id": 4, "type": "Crashed", "ok": false, "message": "Session 161358 exited during this request; see .blender-cli/session.log. The session was reopened and this pipe still serves it", "recovered_from": "program", "snapshot": "sha256:6cb355a9…", "step": 0}
+{"event": "error", "id": 5, "type": "Crashed", "ok": false, …}
+{"event": "error", "id": 6, "type": "Crashed", "ok": false, …}
+{"event": "session", "id": null, "session": "161459", "step": 0, "snapshot": "sha256:6cb355a9…", "targets": ["front"], "recovered_from": "program", …}
+```
+
+The next request is answered by the recovered session, and it is the scene that
+was there before the kill:
+
+```json
+{"id": 7, "op": "exec", "code": "agent.objective()['targets']['front']['iou']", "record": false}
+{"id": 7, "event": "value", "value": "0.9800367922599986"}
+{"id": 8, "op": "program", "action": "run"}
+{"id": 8, "event": "done", "ok": true, "steps": 3, "cached": 3, "ran": []}
+```
+
+`0.9800367922599986` before the kill and `0.9800367922599986` after it, digit
+for digit, with the registered target still registered and nothing left for
+`program run` to replay. `repl` exits non-zero only when the recovery itself
+fails.
+
+Recovery always recovers, and the newest source wins. The program and the
+autosave are both on disk; whichever was written last is the one that is used,
+and `recovered_from` names it. One-shot verbs get the same treatment from a
+plain `session open` — there is never a second open naming a file:
 
 ```sh
 blender-cli exec -c 'import os; os._exit(1)' --json
-# {"autosave":"/tmp/u5/.blender-cli/autosave-140957.blend","error":{"message":"Session 140957 exited unexpectedly; see .blender-cli/session.log. Recover with `session open --file <autosave>` or discard with `session close`","type":"SessionError"},"ok":false}
-blender-cli session open --file .blender-cli/autosave-140957.blend --json
-# {"previous_autosave":"/tmp/u5/.blender-cli/autosave-140957.blend","recovered_from":"autosave","session":"141175","socket":"/tmp/u5/.blender-cli/session.sock"}
-blender-cli session status --json
-# {"file":"/tmp/u5/empty.blend","dirty":false,"recovered_from":"autosave","session":"141175","snapshot":"sha256:ac193f44…","step":0,…}
-blender-cli inspect --select 'objects["Knob"].location' --json
-# {"ms":0.05440199947770452,"ok":true,"selected":{"objects[\"Knob\"].location":[0.0,0.0,1.5]}}
+# {"ok":false,"error":{"type":"SessionError","message":"Session 161875 exited unexpectedly; …"},"autosave":"/tmp/r2/.blender-cli/autosave-161875.blend"}
+blender-cli session open --json
+# {"session":"161988","socket":"/tmp/r2/.blender-cli/session.sock","previous_autosave":"…/autosave-161875.blend","recovered_from":"autosave"}
+blender-cli exec -c 'agent.objective()["targets"]["front"]["iou"]' --no-record --json
+# {"ok":true,"value":"0.9800367922599986"}
 ```
 
-Recovery is explicit: `session open` on its own starts a **new empty session**
-and only reports `previous_autosave`; naming the autosave is what restores the
-scene, and `recovered_from` says which path was taken. The restored session
-keeps the original live filepath (`empty.blend` above), not the recovery file,
-so it will not overwrite its own lifeboat — keep the autosave's adjacent
-`.json` sidecar, which is where that filepath and the dirty flag live.
+That session was idle long enough for its autosave to be written after its last
+program version, so the autosave won; the `repl` transcript above ended on a
+burst of edits, so the program did. Both came back at the same objective. The
+distinction is worth knowing only because `recovered_from` reports it, not
+because it changes what you do.
 
-Recovery restores the last completed autosave, not the failed call and not
-Python variables. The program survives independently in
-`.blender-cli/program/`, so the cheapest recovery is often to reopen and
-`program run`. `session.log` names the request that was running and the crash
-file `.blender-cli/session-<pid>.crash.txt`; a native rendering crash also
-carries the Python stack captured before the renderer took the GIL. `os._exit`
-and SIGKILL bypass the handlers, so they leave recovery files but no dump.
-Closing a dead session discards it and keeps its crash file.
+Neither source restores the failed call or Python variables, and an autosave is
+the last *completed* write rather than every acknowledged edit. A recovered
+session keeps the original live filepath rather than the recovery file, so it
+will not overwrite its own lifeboat — keep the autosave's adjacent `.json`
+sidecar, which is where that filepath and the dirty flag live. `session.log`
+names the request that was running and the crash file
+`.blender-cli/session-<pid>.crash.txt`; a native rendering crash also carries
+the Python stack captured before the renderer took the GIL. `os._exit` and
+SIGKILL bypass the handlers, so they leave recovery files but no dump. Closing
+a dead session discards it and keeps its crash file.
 
 ## Looking at the scene
 
