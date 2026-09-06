@@ -266,13 +266,13 @@ def main():
             reference = call("observe", "--views", "front", "--passes", "silhouette",
                              "--layout", "separate")["image"]
             registered = call("target", "set", "front", "--ref", reference)
-            # Model and reference now go through the same bbox normalisation, so the only
-            # thing between this model and its own silhouette is the reference's 512 to 256
-            # resample: about a pixel of edge error along a long boundary, which costs a
-            # thin shape several points of IoU. A same-size reference scores ~0.9999.
+            # Model and reference go through the same normalisation and the reference is
+            # resampled once, so what is left between this model and its own silhouette is
+            # that a 512 px rasterisation resampled to 256 is not the 256 px rasterisation
+            # of the same geometry. That costs a thin, broken shape a few points of IoU.
             baseline = registered["objective"]["targets"]["front"]["iou"]
             print("target self-score:", baseline, flush=True)
-            assert baseline > 0.9, registered
+            assert baseline > 0.95, registered
             aimed = execute("bpy.data.objects['Cube'].location.z += 0.4")
             scored = aimed["objective"]["targets"]["front"]
             assert scored["iou"] < baseline - 0.002, (scored, baseline)
