@@ -958,6 +958,9 @@ lists it, without a hand-written line anywhere. The naming rule is:
 | string | `--<field> V`, the enum values when bounded |
 | anything structured | `--<field> JSON` |
 
+Everything `--help` prints is ASCII, because it is read on a console whose code
+page is not the process's business.
+
 The projections that this rule does not produce are `exec -c CODE` and its
 `SCRIPT.py` argument, `--image` for the per-request feedback override, and the
 action of `session`, `program` and `target` with its argument, which read as
@@ -979,7 +982,7 @@ answers them itself, so they are the only verbs that are not requests.
 ```
 session open  [--file F]        start daemon for cwd; answers {"session": id, "socket": path}
 session status                  {"session", "file", "dirty", "step", "snapshot", "feedback", "targets"}
-session feedback [KEY=VALUE…]   merge those settings into the policy; answers the policy
+session feedback [KEY=VALUE...] merge those settings into the policy; answers the policy
 session save  [--file F]        write the .blend
 session close                   write nothing, stop the daemon
 session snapshot [--label L]    {"snapshot": "sha256:…", "label": L}
@@ -1386,7 +1389,7 @@ re-execution landed where a full run would.
 ### `inspect`
 
 ```
-inspect [--object NAME] [--full] [--select PATH…]
+inspect [--object NAME] [--full] [--select PATH...]
 ```
 
 Emits scene state from RNA: objects (type, transform, bounds, parent,
@@ -1415,7 +1418,7 @@ such as objects["Cube"].location`.
 ### `observe`
 
 ```
-observe [--views V,…] [--passes P,…] [--size 256|512|768|1024] [--ref IMG] [--layout sheet|separate] [--frame OBJECT]
+observe [--views V,...] [--passes P,...] [--size 256|512|768|1024] [--ref IMG] [--layout sheet|separate] [--frame OBJECT]
 ```
 
 - Views: `front back left right top bottom persp camera`. Default:
@@ -1540,7 +1543,7 @@ Vulkan evidence cannot establish either.
 ### `target`
 
 ```
-target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none] [--metrics M,…]
+target set NAME --ref IMG [--view V] [--mask auto|none] [--fit bbox|none] [--metrics M,...]
 target list
 target clear [NAME]
 ```

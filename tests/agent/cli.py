@@ -26,8 +26,11 @@ def main():
         root = Path(directory)
 
         def raw(*args, stdin=None):
+            # The binary speaks UTF-8 on every platform; decoding with the
+            # console's code page would corrupt any answer that is not ASCII.
             return subprocess.run([executable, *map(str, args)], cwd=root, input=stdin,
-                                  capture_output=True, text=True, timeout=300)
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  timeout=300)
 
         def call(*args, ok=True, stdin=None):
             process = raw(*args, "--json", stdin=stdin)
@@ -51,6 +54,8 @@ def main():
         help_text = raw("--help")
         assert help_text.returncode == 0, help_text
         usage = help_text.stdout
+        # --help is read by a human on a console whose code page is not ours.
+        assert usage.isascii(), [line for line in usage.splitlines() if not line.isascii()]
 
         # One flag per field, one field per flag, and --help shows every one.
         for verb in verbs:
@@ -106,6 +111,15 @@ def main():
             assert call("exec", "-c", "@" + str(script))["value"] == "2"
             assert call("exec", "-c", "-", stdin="len(bpy.data.objects)\n")["value"] == "2"
             assert call("exec", "-c", "@@literal", ok=False)["error"]["type"] == "SyntaxError"
+            # A value is UTF-8 on the way in and on the way out, through a
+            # script file, an argument and a result, whatever the console's
+            # code page is.
+            named = root / "unicode.py"
+            named.write_text("bpy.data.objects['Cube'].name = '模型'\n"
+                             "bpy.data.objects['模型'].name\n", encoding="utf-8")
+            assert call("exec", named)["value"] == "'模型'"
+            assert call("inspect", "--object", "模型")["objects"][0]["name"] == "模型"
+            assert call("exec", "-c", "bpy.data.objects['模型'].name = 'Cube'")["ok"] is True
             steps = len(call("program", "get")["steps"])
             call("exec", "-c", "bpy.ops.mesh.primitive_cube_add()", "--no-record")
             assert len(call("program", "get")["steps"]) == steps, "--no-record must not record"

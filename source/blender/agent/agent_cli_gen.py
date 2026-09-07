@@ -21,13 +21,17 @@ Naming rule, applied to every field that has no entry in `IRREGULAR`:
     boolean, default true    --no-<field>            clears it
     boolean, otherwise       --<field>               sets it
     (an underscore in a field name is a hyphen in its flag)
-    array of strings         --<field> FIELD,…       comma-separated
+    array of strings         --<field> FIELD,...     comma-separated
     integer / number         --<field> FIELD         parsed as a number
     string                   --<field> FIELD         verbatim, `a|b` when bounded
     anything structured      --<field> JSON          literal JSON, or @FILE to read it
 
 `IRREGULAR` is the complete list of fields whose projection is not that rule.
 Every entry is a deliberate contract decision, and each one says why.
+
+Everything emitted here reaches a terminal through `--help`, so it stays ASCII:
+a Windows console on its ANSI code page renders a UTF-8 ellipsis as mojibake,
+and a placeholder is not worth a typographic character.
 """
 
 import ast
@@ -67,7 +71,7 @@ IRREGULAR = {
     ("session", "action"): {"position": 0},
     ("session", "snapshot"): {"position": 1},
     ("session", "feedback"): {"position": 1, "when": "feedback", "kind": "Settings",
-                              "value": "KEY=VALUE…"},
+                              "value": "KEY=VALUE..."},
     # The scene to save; every other verb's --file selects the one-shot scene.
     ("session", "file"): {"kind": "Path", "value": "F"},
     ("program", "action"): {"position": 0},
@@ -81,7 +85,7 @@ IRREGULAR = {
     ("target", "name"): {"position": 1},
     ("describe", "path"): {"position": 0, "value": "RNA_PATH|channel|schema"},
     # RNA paths contain commas inside subscripts, so they are separate words.
-    ("inspect", "select"): {"kind": "Words", "value": "PATH…"},
+    ("inspect", "select"): {"kind": "Words", "value": "PATH..."},
 }
 
 
@@ -109,7 +113,7 @@ def projection(op, field, spec, defs):
     elif spec.get("type") == "boolean":
         kind, value = ("NoFlag", "") if spec.get("default") is True else ("Flag", "")
     elif spec.get("type") == "array":
-        kind, value = "List", name + ",…"
+        kind, value = "List", name + ",..."
     elif spec.get("type") in ("integer", "number"):
         kind = "Int" if spec["type"] == "integer" else "Num"
         value = "|".join(str(item) for item in spec["enum"]) if "enum" in spec else name

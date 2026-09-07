@@ -165,7 +165,7 @@ inline std::string cli_synopsis(const CliVerb &verb)
 inline void cli_usage()
 {
   std::string text =
-      "blender-cli — one Blender process serving an agent over one channel.\n"
+      "blender-cli - one Blender process serving an agent over one channel.\n"
       "Every verb below is one request; it prints the events that request\n"
       "produced, folded into one document.\n\n";
   for (const CliVerb &verb : CLI_VERBS) {
