@@ -339,7 +339,10 @@ class Provider:
         session.last_objective = None
 
     def after(self, request, session, emit):
-        if not session.request_feedback["objective"]:
+        # Scoring a target is a render. Without a device there is nothing to
+        # say that the greeting's `device: null` has not already said, and a
+        # log line per action would only repeat it.
+        if session.device is None or not session.request_feedback["objective"]:
             return
         # Only here is the perception provider's budget render current.
         result = event(session, shared=True)

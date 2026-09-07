@@ -293,6 +293,12 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
     if session is None:
         import agent
         session = agent._session
+    if session is not None and session.device is None:
+        # The render entry refuses on its own, but only once an evaluation has
+        # already assigned parameters. Refusing here leaves the scene untouched.
+        import agent_runtime
+        raise agent_runtime.NoDevice(
+            "no GPU device: a search scores by rendering, and there is nothing to render with")
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}")
     if not params:
