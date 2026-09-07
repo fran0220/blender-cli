@@ -68,9 +68,8 @@ if __name__ == "__main__":
         first, second = root / "original.png", root / "trimmed.png"
         gpu = smoke(original, root, first)
         assert smoke(trimmed, root, second, first) == gpu, "Packaging changed device availability"
-        # Exercise the actual trimmed importers/exporters, not merely their polls.
-        subprocess.run([sys.executable, str(Path(__file__).with_name("io.py")), str(trimmed)],
-                       check=True, timeout=1800)
+        # Full IO round trips run once in the CMake-derived trimmed suite.
+        # This smoke retains the distinct before/after registration checks above.
         if gpu:
             assert first.read_bytes() == second.read_bytes(), "Packaging changed observation bytes"
             print("BYTE_IDENTICAL", hashlib.sha256(first.read_bytes()).hexdigest())

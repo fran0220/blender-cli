@@ -564,6 +564,16 @@ job still covers build, installed tests and this step. Another dispatch awaits
 coordinator authorization. Windows installed 772,171,059 B, trimmed 290,680,354 B,
 ZIP 104,142,401 B remain provisional until the complete package gate passes.
 
+Coordinator rejects the interim 180-minute aggregate fix: each test phase needs
+at least twice measured time, independently of the other's budget. X splits
+build/installed and package jobs, each capped at 360 minutes. Installed tests
+receive 240 minutes against 102 measured; packaging receives 300 against ~126.
+The install crosses as a gzip tar artifact with no second artifact compression.
+The duplicate `io.py` subprocess in package smoke is removed; IO runs once in
+the CMake-derived nine-script loop. Distinct before/after operator polls remain.
+Both-platform workflow validation is authorized after this change is committed;
+the installed nine-test product evidence on 0f526b4f stands independently.
+
 ## Ordering
 
 ```diagram

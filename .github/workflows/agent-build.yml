@@ -66,13 +66,15 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
-      - uses: actions/cache@v4
-        if: inputs.full && runner.os == 'Windows'
+      - &mesa-cache
+        uses: actions/cache@v4
+        if: runner.os == 'Windows'
         with:
           path: .cache/mesa/mesa3d-25.0.7-release-msvc.7z
           key: mesa-windows-x64-25.0.7-e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287
-      - name: Windows software Vulkan ICD
-        if: inputs.full && runner.os == 'Windows'
+      - &mesa-install
+        name: Windows software Vulkan ICD
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $archive = '.cache\mesa\mesa3d-25.0.7-release-msvc.7z'
@@ -133,14 +135,77 @@ jobs:
         run: python3 tests/agent/gpu.py build/ci/bin/blender-cli.exe
       - name: Protocol tests
         if: inputs.full || runner.os == 'Linux'
-        timeout-minutes: 120
+        # 34147274931: installed suite 102 min; >=2x measured harness budget.
+        timeout-minutes: 240
         run: ctest --test-dir build/ci -R agent --output-on-failure
+      - name: Compress install handoff
+        if: '!cancelled() && steps.install.outcome == ''success'''
+        run: |
+          # One gzip stream preserves macOS symlinks/modes and avoids uploading
+          # the ~770 MB install as individually compressed artifact files.
+          tar -czf build/install.tar.gz -C build/ci bin
+      - uses: actions/upload-artifact@v4
+        if: '!cancelled() && steps.install.outcome == ''success'''
+        with:
+          name: install-${{ matrix.platform }}
+          compression-level: 0
+          if-no-files-found: error
+          path: build/install.tar.gz
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats
+      - uses: actions/cache/save@v4
+        if: always() && steps.compiler-cache.outcome == 'success' && steps.compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: .cache/sccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.platform }}-${{ inputs.full && 'full' || 'gate' }}
+          path: |
+            build/ci/CMakeCache.txt
+            build/ci/Testing/Temporary/LastTest.log
+            build/ci/Testing/Temporary/LastTestsFailed.log
+  package:
+    name: ${{ matrix.platform }} / package
+    needs: build
+    if: '!cancelled() && (inputs.full || contains(inputs.platforms, ''linux_x64''))'
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.full && inputs.platforms || '["linux_x64"]') }}
+    runs-on: ${{ matrix.platform == 'macos_arm64' && 'macos-15' || matrix.platform == 'windows_x64' && 'windows-2022' || 'ubuntu-24.04' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: install-${{ matrix.platform }}
+          path: build
+      - name: Restore install
+        run: |
+          mkdir -p build/ci
+          tar -xzf build/install.tar.gz -C build/ci
+      - name: Package prerequisites
+        run: |
+          if [[ "$RUNNER_OS" = macOS ]]; then brew install zstd; fi
+          if [[ "$RUNNER_OS" = Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y mesa-vulkan-drivers zstd
+          fi
+      - *mesa-cache
+      - *mesa-install
       - name: Trim, archive and verify installed package
         id: package
-        if: '!cancelled() && steps.install.outcome == ''success'''
-        # Nine scripts plus IO package smoke exceed 120 minutes on lavapipe:
-        # run 34147274931 reached the final script before the aggregate cutoff.
-        timeout-minutes: 180
+        # 34147274931: ~126 min including duplicate IO, >=2x even before
+        # removing that duplicate. A separate job gives this step its budget.
+        timeout-minutes: 300
         run: |
           platform='${{ matrix.platform }}'
           platform="${platform/_/-}"
@@ -188,20 +253,8 @@ jobs:
             build/blender-cli-*.tar.zst
             build/blender-cli-*.zip
             build/release.json
-      - name: Compiler cache statistics
-        if: always()
-        run: sccache --show-stats
-      - uses: actions/cache/save@v4
-        if: always() && steps.compiler-cache.outcome == 'success' && steps.compiler-cache.outputs.cache-hit != 'true'
-        with:
-          path: .cache/sccache
-          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: diagnostics-${{ matrix.platform }}-${{ inputs.full && 'full' || 'gate' }}
-          path: |
-            build/ci/CMakeCache.txt
-            build/ci/Testing/Temporary/LastTest.log
-            build/ci/Testing/Temporary/LastTestsFailed.log
-            build/release.json
+          name: diagnostics-${{ matrix.platform }}-package
+          path: build/release.json
