@@ -33,7 +33,12 @@ def morphology(mask, dilate):
 
 def load(ref):
     """Load with Blender's codecs; caller owns the isolated-data lifetime."""
-    image = bpy.data.images.load(str(Path(ref).resolve()), check_existing=False)
+    path = Path(ref).resolve()
+    # Named before anything is rendered or decoded, and the same error a target
+    # gives for the same mistake, rather than a codec's report of it.
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
+    image = bpy.data.images.load(str(path), check_existing=False)
     w, h = image.size
     if not w or not h:
         raise ValueError("Reference image has no pixels")
@@ -263,11 +268,15 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
     if view == "camera" and source.camera is None:
         raise ValueError("The camera view requires scene.camera")
     with isolated_data():
+        # The reference depends on nothing the render produces, so it is read
+        # first: a missing or unreadable one then costs no render at all, which
+        # on a software device is the difference between milliseconds and tens
+        # of seconds.
+        rgb, silhouette, reference_info = reference(ref, size, mask, fit)
         scene, points, center, radius, framing = render_scene(source, size, frame)
         near, far = aim(scene, source, view, points, center, radius)
         images = render_passes(scene, size, near, far)
         model_rgb, model_mask = images["color"] / 255, images["silhouette"][:, :, 0] != 0
-        rgb, silhouette, reference_info = reference(ref, size, mask, fit)
         if fit == "bbox" and model_mask.any():
             # The reference was normalised; the model has to be, or an exact
             # model scores below 1 and a fit optimises toward a displaced point.

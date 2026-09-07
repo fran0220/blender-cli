@@ -746,6 +746,25 @@ json.dumps(rows)
     for size, (tile, cropped) in ladder.items():
         assert cropped == [int(size), int(size)], (size, tile, cropped)
 
+    # A reference that cannot be read costs no render. The bound is measured
+    # against a real comparison on this machine rather than a fixed number, so
+    # it holds on a software device where one render is tens of seconds — and
+    # it fails on the ordering that rendered before reading the reference,
+    # which cost a full render before it could report a missing file.
+    start = time.perf_counter()
+    compare("self.png", mask="none", fit="none")
+    rendered = time.perf_counter() - start
+    start = time.perf_counter()
+    refused = channel.request(
+        op="exec", code="agent.compare('nothing-here.png', 'front')", ok=False)[-1]
+    without = time.perf_counter() - start
+    print(f"missing reference: {refused['type']} in {without:.3f}s "
+          f"against {rendered:.3f}s for a comparison", flush=True)
+    assert refused["type"] == "FileNotFoundError", refused
+    assert refused["message"].endswith("nothing-here.png"), refused
+    assert refused["message"].startswith("/"), refused
+    assert without < rendered / 4, (without, rendered)
+
     # Comparison reads the scene; it writes no file and changes no data.
     files = {str(path) for path in root.rglob("*.png")}
     before = channel.done(op="session", action="snapshot")["snapshot"]
