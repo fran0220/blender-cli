@@ -330,8 +330,8 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 | Item | Status |
 |---|---|
 | macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4): build passes, 6/8 CTests pass, feedback and fit fail path assertions (below); W's final docs pending, so a final dispatch follows |
-| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — same run/revision as macOS; no native Windows run has passed the current runtime tests |
-| Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; package smoke fails Cycles registration, so these are not validated release sizes; Windows pending |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | unverified — same run/revision as macOS: build passes, five tests fail and three legitimately skip for no Vulkan ICD; no Windows runtime test passes (details below) |
+| Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; Windows installed 769,620,906 B, trimmed 290,673,358 B, ZIP 104,135,330 B. Both package smoke checks fail, so these are not validated release sizes |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
 is replaced with all eight scripts. Installed CTests and package verification
@@ -352,7 +352,23 @@ engine enum. Upstream `addon_utils.reset_all()` enumerates add-on directories,
 not general modules: preference-driven Cycles and pose_library must stay in
 `addons_core`. The package layout and explicit factory-reset smoke assertion
 are corrected, native verification pending. Trimmed suite did not run because
-smoke failed. Windows remains in build at this checkpoint.
+smoke failed.
+
+Windows results from the same run: protocol fails 5.68 s, describe 8.50 s,
+program 1.79 s on the first successful mutation/default feedback: Vulkan
+instance initialization fails, the OpenGL fallback reports missing WGL
+extensions, then `EXCEPTION_ACCESS_VIOLATION` (0xC0000005). K/F were notified
+to make missing-device feedback safe rather than hiding it with test skips.
+CLI fails 1.26 s (`KEY=VALUE` ellipsis becomes U+FFFD in the contract but not
+help); session fails 1.18 s on the 600-character Chinese value round trip
+after ten ASCII execs pass. K/W own the encoding diagnosis. Observe (0.20 s),
+feedback (0.21 s), fit (0.19 s) skip with code 77 because the bundled Vulkan
+loader reports `VK_ERROR_INCOMPATIBLE_DRIVER`; these are not passes or render
+evidence. Package smoke's original session also crashes on mutation, so the
+trimmed DLL/manifest runtime and complete session recovery remain unverified.
+The hosted `windows-2022` runner has no usable Vulkan ICD; completing Windows
+render evidence needs a Windows environment with one. Final dispatch is held
+until the coordinator confirms all surface and documentation fixes have landed.
 
 ## Ordering
 
