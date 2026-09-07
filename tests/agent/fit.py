@@ -761,8 +761,12 @@ json.dumps(rows)
     print(f"missing reference: {refused['type']} in {without:.3f}s "
           f"against {rendered:.3f}s for a comparison", flush=True)
     assert refused["type"] == "FileNotFoundError", refused
-    assert refused["message"].endswith("nothing-here.png"), refused
-    assert refused["message"].startswith("/"), refused
+    # The error names exactly the file the agent asked for, resolved against the
+    # session's directory. Compared as paths rather than as text: the separator,
+    # the drive letter and the case are the platform's business, not this
+    # assertion's, and spelling one of them here only tests the platform.
+    named = Path(refused["message"]).resolve()
+    assert named == (root / "nothing-here.png").resolve(), (refused, root)
     assert without < rendered / 4, (without, rendered)
 
     # Comparison reads the scene; it writes no file and changes no data.
