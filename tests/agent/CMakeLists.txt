@@ -48,6 +48,15 @@ add_blender_test_impl(agent_program "" "${TEST_PYTHON_EXE}"
 )
 set_tests_properties(agent_program PROPERTIES TIMEOUT 600)
 
+add_blender_test_impl(agent_io "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/io.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+# Seven formats, including fresh-process replay and nine real fit evaluations each.
+# Non-render IO remains mandatory on a no-device machine: never skip the test.
+set_tests_properties(agent_io PROPERTIES TIMEOUT 1800)
+
 add_blender_test_impl(agent_observe "" "${TEST_PYTHON_EXE}"
   ${TEST_PYTHON_EXE_EXTRA_ARGS}
   "${CMAKE_CURRENT_SOURCE_DIR}/observe.py"

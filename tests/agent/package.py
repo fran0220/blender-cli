@@ -28,6 +28,20 @@ def smoke(executable, root, image, reference=None, gpu=True):
 
     call("session", "open")
     try:
+        operators = call("exec", "-c", """
+bpy.ops.wm.read_factory_settings(use_empty=True)
+assert 'io_scene_gltf2' in bpy.context.preferences.addons
+assert 'io_scene_fbx' in bpy.context.preferences.addons
+operators = [bpy.ops.wm.obj_import, bpy.ops.wm.obj_export,
+             bpy.ops.import_scene.fbx, bpy.ops.export_scene.fbx,
+             bpy.ops.wm.stl_import, bpy.ops.wm.stl_export,
+             bpy.ops.wm.ply_import, bpy.ops.wm.ply_export,
+             bpy.ops.import_scene.gltf, bpy.ops.export_scene.gltf,
+             bpy.ops.wm.open_mainfile, bpy.ops.wm.save_as_mainfile]
+assert all(operator.poll() for operator in operators)
+len(operators)
+""")
+        assert operators["value"] == "12", operators
         call("exec", "-c", "import bpy, agent, agent_runtime, agent_observe, agent_compare, agent_rna; "
              "bpy.ops.wm.read_factory_settings(); "
              "bpy.data.objects['Cube'].scale.x = 0.6; "
@@ -61,9 +75,11 @@ if __name__ == "__main__":
         first, second = root / "original.png", root / "trimmed.png"
         smoke(original, root, first, gpu=gpu)
         smoke(trimmed, root, second, first, gpu=gpu)
+        # Exercise the actual trimmed importers/exporters, not merely their polls.
+        subprocess.run([sys.executable, str(Path(__file__).with_name("io.py")), str(trimmed)],
+                       check=True, timeout=1800)
         if gpu:
             assert first.read_bytes() == second.read_bytes(), "Packaging changed observation bytes"
             print("BYTE_IDENTICAL", hashlib.sha256(first.read_bytes()).hexdigest())
         else:
             print("SKIP: package render equality and comparison unverified: no native GPU device")
-            raise SystemExit(77)

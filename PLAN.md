@@ -317,6 +317,27 @@ run's orb at `.amp/in/artifacts/run2/`. One item filed, with the ruling:
   and the tests in one commit, and `stopped: "cancel"` is the only way a
   cancelled search reports itself.
 
+### I — model IO
+
+Owns: `tests/agent/io.py`, `tests/agent/CMakeLists.txt`,
+`tests/agent/package.py` (IO smoke), `agent_rna.py` (trimmed-format errors),
+`packaging/package.py` (IO dependencies if needed), `doc/agent/usage.md`
+(model IO recipe), and this workstream's evidence.
+
+Done when: binary-built OBJ, FBX, STL, PLY, glTF/GLB and blend models survive
+export → empty scene → import with format-appropriate geometry, material and
+UV checks; recorded absolute-path imports reproduce the live digest in a fresh
+process at another cwd; imported objects emit edit feedback and support RNA
+target fitting; the trimmed package passes the same IO test and operator polls
+after factory reset; USD/Alembic imports fail clearly without crashing; and
+all agent CTests pass. No import/export verb or wire change.
+
+| Item | Status |
+|---|---|
+| Protocol round trips, cross-cwd program replay, imported-object edits/fit and trimmed package IO | doing — test scaffold written; supervised Linux setup/configure/install running in `build/orb`; no runtime evidence yet |
+| Tested usage recipe and format-preservation table | todo — commands and output follow binary verification |
+| Product-platform IO evidence | unverified — Linux development evidence does not prove macOS/Windows IO |
+
 ### X — product platforms
 
 Done when: all agent tests pass on macOS arm64 and Windows x64 from the
