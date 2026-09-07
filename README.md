@@ -27,6 +27,12 @@ persistent channel, feedback pushed with every action, a re-executable program
 as the record of the scene, in-process parameter search, self-description from
 live RNA, and errors that name the nearest valid identifier.
 
+What that costs an agent: modelling a mug from a reference image took 11
+requests over one channel and about 6,123 tokens of pushed feedback — two
+parameter searches, a program edit, and a recovery from a killed process that
+the channel answered without dropping the conversation. None of the 11 existed
+only to look at the scene. The run is recorded in [PLAN.md](PLAN.md).
+
 Start with [the working recipe](doc/agent/usage.md); the contract is
 [design.md](doc/agent/design.md), the constraints are [AGENTS.md](AGENTS.md),
 and [build and packaging details](doc/agent/build-profile.md) cover the build

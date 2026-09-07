@@ -122,6 +122,13 @@ worth sending, `image.size` and `image.samples` are what that render costs
 (8 samples by default, against `observe`'s 32), and `progress` decides how much
 a running `fit` says while it works.
 
+None of those move a score. The objective is scored at a fixed 256 px and the
+silhouette it measures renders at one sample count everywhere, so `image.size`
+and `image.samples` buy a better-looking picture and change no number —
+[design.md](design.md) states the rule and what it is for. Turn the picture
+budget up while you are looking at something and down while you are not,
+without wondering whether the objective moved underneath you.
+
 `exec` and `program` take `--image` to override the picture for one request —
 a whole frame when something needs looking at, nothing when the answer is
 already known:
@@ -168,7 +175,7 @@ picture says which way the model is wrong rather than only that it moved:
 ```sh
 blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.0, 1.0, 1.0)' --json
 # {"ok":true,…,"images":[{"kind":"full","view":"front","region":[0,0,128,128],"size":[128,128],…},
-#                        {"kind":"error","view":"front","region":[56,56,136,136],"size":[80,80],…}]}
+#                        {"kind":"error","view":"front","region":[56,0,136,72],"size":[80,72],…}]}
 ```
 
 ## The scene is a program
@@ -243,27 +250,38 @@ the model should look like, let every action say how far it is, and hand the
 numeric part to the process. Start with a reference image bound to a view:
 
 ```sh
-blender-cli target set front --ref reference.png --view front --metrics iou,chamfer --json
-# {"ok":true,"name":"front","view":"front","mask":"auto","fit":"bbox","metrics":["iou","chamfer"],
-#  "ref":"/tmp/f5/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
+blender-cli target set front --ref reference.png --view front --mask none --metrics iou,chamfer --json
+# {"ok":true,"name":"front","view":"front","mask":"none","fit":"bbox","metrics":["iou","chamfer"],
+#  "ref":"/tmp/p2/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
 #  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
-#  "objective":{"targets":{"front":{"iou":0.6985361145369725,"chamfer":11.768228939327805,"delta":null,
-#    "worst":{"region":[64,64,128,128],"iou":0.5493951612903226,"missing":0.0,"extra":1.0}}},
-#   "best":{"front":{"iou":0.6985361145369725,"snapshot":"sha256:…","step":1}}}}
+#  "objective":{"targets":{"front":{"iou":0.7111992708947622,"chamfer":9.531271046920601,"delta":null,
+#    "worst":{"region":[128,64,192,128],"iou":0.6128274009402284,"missing":0.0,"extra":1.0}}},
+#   "best":{"front":{"iou":0.7111992708947622,"snapshot":"sha256:35b2e2ce…","step":1}}}}
 ```
 
-Registering already scores: `iou` 0.70, and the worst 4×4 cell is the
-bottom-right quadrant with `extra: 1.0` — every pixel wrong there is model that
-the reference does not have. Every action from here carries an `objective`, so
-the agent never asks how it is doing.
+Registering already scores: `iou` 0.71, and the worst 4×4 cell has
+`extra: 1.0` — every pixel wrong there is model the reference does not have.
+Every action from here carries an `objective`, so the agent never asks how it
+is doing.
 
-The score is absolute, not just comparable with itself: the model is normalised
-the way the reference is, so a model that matches scores `iou` 1.0 and
-`chamfer` 0.0. (Rendering the default cube, registering that render, and
-scoring it against the cube it came from gives exactly that.) A thin silhouette
-costs a little to resampling — the cylinder above, matched exactly, scores
-0.974 rather than 1.0 — so near-1.0 is a match, and the remainder can be the
-reference's resolution rather than the model.
+The score is absolute, not merely comparable with itself: a model that matches
+scores `iou` 1.0 and `chamfer` 0.0. Getting exactly that from a reference this
+process rendered is a recipe, because the objective compares silhouettes at
+256 px:
+
+```sh
+blender-cli observe --views front --passes silhouette --size 256 --out ref.png --json
+blender-cli target set front --ref ref.png --view front --mask none --json
+# iou 1.0, chamfer 0.0
+```
+
+Those are the very pixels the objective will compare against, so there is
+nothing left to resample and nothing to segment — `--mask none` because a
+silhouette is already two-valued. Ask for the same silhouette at 512 and the
+same scene scores 0.9956 instead: the gap is the reference's resolution, not
+the model. Use 256 whenever the reference is one you rendered; a reference
+from outside is whatever size it is, and `--mask auto` will find its
+foreground.
 
 The numeric part is `fit`. Name the program parameters to search, the objective
 to optimise and a budget, and the search runs inside the process. Over the
@@ -271,31 +289,38 @@ channel it reports as it goes:
 
 ```json
 {"id": 1, "op": "fit", "params": [{"name": "height", "min": 1.0, "max": 4.0}], "objective": {"target": "front", "metric": "iou"}, "budget": {"evals": 40}}
-{"id": 1, "event": "progress", "eval": 1, "of": 40, "best": 0.7054329371816639, "params": {"height": 2.0}}
-{"id": 1, "event": "progress", "eval": 2, "of": 40, "best": 0.9287510477787091, "params": {"height": 2.75}}
-{"id": 1, "event": "progress", "eval": 6, "of": 40, "best": 0.9493263034563562, "params": {"height": 2.9375}}
-{"id": 1, "event": "progress", "eval": 7, "of": 40, "best": 0.9510324483775812, "params": {"height": 3.03125}}
-{"id": 1, "event": "progress", "eval": 11, "of": 40, "best": 0.9516651930445034, "params": {"height": 3.0078125}}
-{"id": 1, "event": "done", "ok": true, "method": "coordinate", "evals": 23, "failed": 0, "stopped": "patience", "applied": true, …
- "best": {"params": {"height": 3.0078125}, "score": 0.9516651930445034, "snapshot": "sha256:217ef370…"},
- "curve": [[1, 0.7054329371816639], [2, 0.9287510477787091], [6, 0.9493263034563562], [7, 0.9510324483775812], [11, 0.9516651930445034]],
- "error_map": {"target": "front", "view": "front", "image": "…/.blender-cli/fit/642f4e8c….png", "size": [128, 128], "region": [32, 32, 64, 64]},
- "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]}, "ms": 39945.02247499986}
+{"id": 1, "event": "progress", "eval": 1, "of": 40, "best": 0.720560152768937, "params": {"height": 2.0}}
+{"id": 1, "event": "progress", "eval": 2, "of": 40, "best": 0.9477653631284916, "params": {"height": 2.75}}
+{"id": 1, "event": "progress", "eval": 6, "of": 40, "best": 0.9652351738241309, "params": {"height": 2.9375}}
+{"id": 1, "event": "progress", "eval": 7, "of": 40, "best": 0.9661864157600706, "params": {"height": 3.03125}}
+{"id": 1, "event": "progress", "eval": 9, "of": 40, "best": 0.9665591082428865, "params": {"height": 2.984375}}
+{"id": 1, "event": "progress", "eval": 17, "of": 40, "best": 0.9671457905544147, "params": {"height": 2.9814453125}}
+{"id": 1, "event": "done", "ok": true, "method": "coordinate", "evals": 22, "failed": 0, "stopped": "patience", "applied": true,
+ "best": {"params": {"height": 2.9814453125}, "score": 0.9671457905544147, "snapshot": "sha256:b3e770f4…"},
+ "curve": [[1, 0.720560152768937], [2, 0.9477653631284916], [6, 0.9652351738241309], [7, 0.9661864157600706], [9, 0.9665591082428865], [17, 0.9671457905544147]],
+ "error_map": {"target": "front", "view": "front", "image": "…/.blender-cli/fit/39df6ff3….png", "size": [128, 128], "region": [64, 64, 96, 96]},
+ "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]}, "ms": 18606.213983999623}
 ```
 
-Twenty-three evaluations of a budget of forty, five `progress` events, `iou`
-0.705 → 0.952, and the answer is a number the agent never had to guess: the
-model was built with `height` 2.0 and the reference was rendered from 3.0. The
-best parameters are applied to the live scene and written into the program's
-`P` block, so `program get` now reports `{"height": 3.0078125, "radius": 0.4}`
-and the program still reproduces the scene.
+Twenty-two evaluations of a budget of forty, six `progress` events, and the
+answer is a number the agent never had to guess: the model was built with
+`height` 2.0 and the reference was rendered from 3.0, and the search returned
+2.9814453125. The best parameters are applied to the live scene and written
+into the program's `P` block, so `program get` now reports
+`{"height": 2.9814453125, "radius": 0.4}` and the program still reproduces the
+scene. Scored where the objective scores, that model is at `iou`
+0.9976686470632473.
 
 Three fields say what the search did with the money. `stopped` is why it ended
 — `budget`, `seconds`, `cancel` or `patience`; this one converged, so it
-stopped at 23 rather than spending all 40. `curve` records only the evaluations
+stopped at 22 rather than spending all 40. `curve` records only the evaluations
 that improved the best value, so it is the trajectory and not the transcript,
 and a flat tail means the budget was enough. `error_map` is a picture of what
 is still wrong, at the 4×4 cell contributing most of it.
+
+A search evaluates at its own `budget.size` — 128 by default, cheaper than the
+objective's 256 — so `best.score` is the search's own reading and the next
+pushed `objective` is the one to compare with the rest of the session.
 
 `patience` is the convergence rule: the search gives up after that many
 evaluations without a real improvement. It has no fixed default, because the
@@ -316,17 +341,15 @@ says so immediately:
 
 ```sh
 blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
-# {"ok":true,"ms":609.7895390012127,…,"objective":{"targets":{"front":{"iou":0.8174197773411919,"chamfer":6.722321428571428,
-#   "delta":{"iou":-0.14427467962140395,"chamfer":5.038742664988529},
-#   "worst":{"region":[64,64,128,128],"iou":0.6474645030425964,"missing":0.04487917146144994,"extra":0.9551208285385501}}},
-#  "best":{"front":{"iou":0.9616944569625958,"snapshot":"sha256:217ef370…","step":2}}}}
+# {"ok":true,"ms":539.8677059965848,…,"objective":{"targets":{"front":{"iou":0.8289790865854453,"chamfer":4.684057971014493,
+#   "delta":{"iou":-0.16868956047780204,"chamfer":4.6259848484848485},
+#   "worst":{"region":[128,64,192,128],"iou":0.7152,"missing":0.05196629213483146,"extra":0.9480337078651685}}},
+#  "best":{"front":{"iou":0.9976686470632473,"snapshot":"sha256:b3e770f4…","step":2}}}}
 ```
 
-That cost 0.14 of `iou`, and `best` still names the snapshot that scored 0.96,
-so returning to it is `session rollback 'sha256:217ef370…'` — the process did
-the bookkeeping. (The fit scored 0.952 at its 128 px budget size and the pushed
-objective scores 0.962 at the 256 px feedback size; compare a score with others
-taken at the same size.)
+That cost 0.17 of `iou`, and `best` still names the snapshot that scored
+0.9977, so returning to it is `session rollback 'sha256:b3e770f4…'` — the
+process did the bookkeeping.
 
 `--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
 0.5, "max": 2}`) for values that are not program parameters, `--objective` takes
