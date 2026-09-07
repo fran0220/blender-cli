@@ -33,7 +33,7 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 assert 'io_scene_gltf2' in bpy.context.preferences.addons
 assert 'io_scene_fbx' in bpy.context.preferences.addons
 operators = [bpy.ops.wm.obj_import, bpy.ops.wm.obj_export,
-             bpy.ops.import_scene.fbx, bpy.ops.export_scene.fbx,
+             bpy.ops.wm.fbx_import, bpy.ops.import_scene.fbx, bpy.ops.export_scene.fbx,
              bpy.ops.wm.stl_import, bpy.ops.wm.stl_export,
              bpy.ops.wm.ply_import, bpy.ops.wm.ply_export,
              bpy.ops.import_scene.gltf, bpy.ops.export_scene.gltf,
@@ -41,7 +41,7 @@ operators = [bpy.ops.wm.obj_import, bpy.ops.wm.obj_export,
 assert all(operator.poll() for operator in operators)
 len(operators)
 """)
-        assert operators["value"] == "12", operators
+        assert operators["value"] == "13", operators
         call("exec", "-c", "import bpy, agent, agent_runtime, agent_observe, agent_compare, agent_rna; "
              "bpy.ops.wm.read_factory_settings(); "
              "bpy.data.objects['Cube'].scale.x = 0.6; "

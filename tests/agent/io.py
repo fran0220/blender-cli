@@ -40,15 +40,21 @@ objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
 assert len(objects) == 1, [obj.name for obj in objects]
 obj = objects[0]
 points = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+low = [min(p[i] for p in points) for i in range(3)]
+high = [max(p[i] for p in points) for i in range(3)]
 facts = {
     'name': obj.name,
     'vertices': len(obj.data.vertices),
     'faces': len(obj.data.polygons),
-    'bounds': [[min(p[i] for p in points) for i in range(3)],
-               [max(p[i] for p in points) for i in range(3)]],
+    'bounds': [low, high],
     'materials': [mat.name for mat in obj.data.materials],
-    'uv': sorted(set(tuple(round(float(v), 5) for v in item.uv)
-                     for item in obj.data.uv_layers.active.data)) if obj.data.uv_layers else [],
+    'colors': [tuple(mat.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value)
+               for mat in obj.data.materials],
+    'material_indices': sorted(set(poly.material_index for poly in obj.data.polygons)),
+    'uv': sorted(set((tuple(round((points[loop.vertex_index][i] - low[i]) / (high[i] - low[i]), 5)
+                            for i in range(3)),
+                      tuple(round(float(v), 5) for v in obj.data.uv_layers.active.data[loop.index].uv))
+                     for loop in obj.data.loops)) if obj.data.uv_layers else [],
 }
 facts
 """
@@ -57,7 +63,8 @@ facts
 # and per-vertex attributes; omit normals to avoid flat-normal vertex splitting.
 FORMATS = {
     'obj': ('wm.obj_export', 'wm.obj_import', '', '', 8, 6, True, True),
-    'fbx': ('export_scene.fbx', 'import_scene.fbx', '', '', 8, 6, True, True),
+    'fbx': ('export_scene.fbx', 'wm.fbx_import', '', '', 8, 6, True, True),
+    'fbx-addon': ('export_scene.fbx', 'import_scene.fbx', '', '', 8, 6, True, True),
     'stl': ('wm.stl_export', 'wm.stl_import', '', '', 8, 12, False, False),
     'ply': ('wm.ply_export', 'wm.ply_import', ', export_normals=False', '', 8, 6, False, True),
     'gltf': ('export_scene.gltf', 'import_scene.gltf',
@@ -103,6 +110,9 @@ def main():
                        for a, b in zip(row, other)), (actual, expected)
             if materials:
                 assert actual['materials'] == expected['materials'], actual
+                assert actual['material_indices'] == expected['material_indices'], actual
+                assert all(abs(a - b) < 1e-5 for color, other in zip(actual['colors'], expected['colors'])
+                           for a, b in zip(color, other)), (actual, expected)
             else:
                 assert actual['materials'] == [], actual
             assert actual['uv'] == (expected['uv'] if uv else []), actual
@@ -115,7 +125,8 @@ def main():
                                             for name in ('source', 'live', 'other-cwd', 'reader')]
             for path in (source, live, replay, reader):
                 path.mkdir(parents=True)
-            asset = source / ('asset.' + extension)
+            suffix = extension.split('-')[0]
+            asset = source / ('asset.' + suffix)
             export = f'bpy.ops.{exporter}(filepath={str(asset)!r}{export_options})'
             imported = f'bpy.ops.{importer}(filepath={str(asset)!r}{import_options})'
             original = call('exec', '-c', MODEL + '\n' + export + '\n' + FACTS, cwd=source)
@@ -169,7 +180,7 @@ def main():
                 if device:
                     assert fitted['applied'] and fitted['failed'] == 0, fitted
                     assert fitted['curve'][-1][1] > fitted['curve'][0][1], fitted
-                    assert fitted['objective']['targets']['front']['iou'] > 0.98, fitted
+                    assert fitted['curve'][-1][1] > 0.98, fitted
                 else:
                     assert fitted['error']['type'] == 'NoDevice', fitted
 
@@ -177,7 +188,7 @@ def main():
                 # recovered by fitting, and inspect it in another one-shot process.
                 call('exec', '-c', f'bpy.data.objects[{name!r}].scale.x = 1.25', cwd=live)
                 modified = facts(live)
-                output = live / ('asset.' + extension)
+                output = live / ('asset.' + suffix)
                 call('exec', '-c', f'bpy.ops.{exporter}(filepath={str(output)!r}{export_options})', cwd=live)
                 roundtrip = call('exec', '-c', 'bpy.ops.wm.read_factory_settings(use_empty=True)\n'
                                  f'bpy.ops.{importer}(filepath={str(output)!r}{import_options})\n' + FACTS, cwd=reader)
