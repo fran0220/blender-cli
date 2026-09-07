@@ -330,7 +330,7 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 | Item | Status |
 |---|---|
 | macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4): build passes, 6/8 CTests pass, feedback and fit fail path assertions (below); W's final docs pending, so a final dispatch follows |
-| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — K-requested retry [34083367870](https://github.com/fran0220/blender-cli/actions/runs/34083367870) at [8016542f1ec](https://github.com/fran0220/blender-cli/commit/8016542f1ec324557a3790376ea69181d0b97345), includes K's device probe/ASCII envelope fixes, W's ASCII help, X's lavapipe ICD and package fixes; previous run had five failures/three no-ICD skips |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — K-requested retry [34083367870](https://github.com/fran0220/blender-cli/actions/runs/34083367870) at [8016542f1ec](https://github.com/fran0220/blender-cli/commit/8016542f1ec324557a3790376ea69181d0b97345): build passes; ICD preflight fails, installed CTests not run; trimmed describe/program pass, protocol/cli/session fail, observe/feedback/fit skip77 (below) |
 | Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; Windows installed 769,620,906 B, trimmed 290,673,358 B, ZIP 104,135,330 B. Both package smoke checks fail, so these are not validated release sizes |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
@@ -369,14 +369,27 @@ trimmed DLL/manifest runtime and complete session recovery remain unverified.
 The hosted `windows-2022` runner has no usable Vulkan ICD; completing Windows
 render evidence needs a Windows environment with one. Per coordinator ruling,
 X adds a pinned, checksum-verified, cached mesa-dist-win 25.0.7 lavapipe ICD
-outside the package, selected only through `VK_DRIVER_FILES`; a bundled-loader
+outside the package, registered in the disposable runner's driver registry; a bundled-loader
 probe must pass before the suite. This is software-Vulkan evidence, not
 Windows 11 GPU-hardware evidence. Final Windows hardware and macOS Metal-device
 rows remain unverified until the final revision is exercised on those devices.
 K owns missing-device probing/errors plus both encoding defects and will request
 native retries; final dispatch otherwise waits for the coordinator's all-landed
-confirmation. The current completed run predates X's Cycles fix, so cannot
-verify it; the next native run must do so.
+confirmation.
+
+Retry 34083367870: X's environment-only ICD selection still returns no driver.
+The next workflow uses native backslash paths and HKLM registration because
+the Windows loader ignores environment overrides in elevated processes; loader
+debug output is enabled on preflight to distinguish discovery/load failures.
+The run does prove K's no-device safety and X's package Cycles fix: original
+and trimmed smoke pass factory reset, Cycles assignment, inspect and describe;
+render equality skips77. Trimmed describe and program pass, protocol fails
+because provider NoDevice diagnostics join stderr, CLI passes the encoding
+checks then fails its expected full image, and session passes Unicode/raw
+AF_UNIX/20 round trips before failing the reopen after missing-file startup
+(`tests/agent/session.py:314`, alive-but-unresponsive PID; sent to K).
+Observe/feedback/fit skip77. Measured Windows bytes: installed 759,137,531,
+trimmed 290,677,679, ZIP 104,141,306; still not validated rendering/package evidence.
 
 ## Ordering
 

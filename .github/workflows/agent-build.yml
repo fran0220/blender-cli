@@ -73,18 +73,27 @@ jobs:
           key: mesa-windows-x64-25.0.7-e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287
       - name: Windows software Vulkan ICD
         if: inputs.full && runner.os == 'Windows'
+        shell: pwsh
         run: |
-          archive=.cache/mesa/mesa3d-25.0.7-release-msvc.7z
-          mkdir -p .cache/mesa
-          if [[ ! -f "$archive" ]]; then
-            curl --fail --location --retry 3 \
-              https://github.com/pal1000/mesa-dist-win/releases/download/25.0.7/mesa3d-25.0.7-release-msvc.7z \
-              --output "$archive"
-          fi
-          echo "e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287  $archive" | sha256sum --check
-          7z x -y "$archive" -o.cache/mesa/25.0.7 x64/lvp_icd.x86_64.json x64/vulkan_lvp.dll
-          echo "VK_DRIVER_FILES=$(cygpath -am .cache/mesa/25.0.7/x64/lvp_icd.x86_64.json)" >> "$GITHUB_ENV"
-          echo 'DEVICE_EVIDENCE: Windows x64 / Mesa 25.0.7 lavapipe (software Vulkan, not Windows 11 GPU hardware)'
+          $archive = '.cache\mesa\mesa3d-25.0.7-release-msvc.7z'
+          New-Item -ItemType Directory -Force '.cache\mesa' | Out-Null
+          if (!(Test-Path $archive)) {
+            Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/25.0.7/mesa3d-25.0.7-release-msvc.7z' -OutFile $archive
+          }
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287') {
+            throw 'Mesa archive checksum mismatch'
+          }
+          7z x -y $archive '-o.cache\mesa\25.0.7' 'x64\lvp_icd.x86_64.json' 'x64\vulkan_lvp.dll'
+          if ($LASTEXITCODE -ne 0) { throw 'Mesa extraction failed' }
+          $icd = (Resolve-Path '.cache\mesa\25.0.7\x64\lvp_icd.x86_64.json').Path
+          $dll = Join-Path (Split-Path $icd) 'vulkan_lvp.dll'
+          Get-Item $icd, $dll | Select-Object FullName, Length
+          Get-Content $icd
+          # Elevated Windows processes ignore VK_DRIVER_FILES. Register the software
+          # ICD on this disposable runner, with native paths for relative DLL lookup.
+          reg.exe add 'HKLM\SOFTWARE\Khronos\Vulkan\Drivers' /v $icd /t REG_DWORD /d 0 /f /reg:64
+          if ($LASTEXITCODE -ne 0) { throw 'Mesa ICD registration failed' }
+          Write-Output 'DEVICE_EVIDENCE: Windows x64 / Mesa 25.0.7 lavapipe (software Vulkan, not Windows 11 GPU hardware)'
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: actions/cache/restore@v4
         id: compiler-cache
@@ -119,6 +128,8 @@ jobs:
           echo BUILD_EXIT=0
       - name: Verify Windows ICD through the installed Vulkan loader
         if: inputs.full && runner.os == 'Windows'
+        env:
+          VK_LOADER_DEBUG: all
         run: python3 tests/agent/gpu.py build/ci/bin/blender-cli.exe
       - name: Protocol tests
         if: inputs.full || runner.os == 'Linux'

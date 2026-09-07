@@ -153,8 +153,12 @@ Windows full runs install a CI-only software Vulkan ICD from
 matching the Linux development Mesa version. The MSVC release archive is pinned
 by SHA-256 `e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287`
 and cached by version and digest; every cache hit is checksum-verified. Only
-`x64/lvp_icd.x86_64.json` and `x64/vulkan_lvp.dll` are extracted, and
-`VK_DRIVER_FILES` selects that ICD without registry changes or WGL deployment.
+`x64/lvp_icd.x86_64.json` and `x64/vulkan_lvp.dll` are extracted. The software
+ICD is registered under `HKLM\SOFTWARE\Khronos\Vulkan\Drivers` on the disposable
+runner (native absolute manifest path, DWORD zero). Elevated Windows processes
+ignore loader driver environment overrides, so `VK_DRIVER_FILES` alone is not
+reliable here. Native backslashes also preserve relative DLL resolution from
+the manifest directory. No WGL driver is deployed.
 The existing device probe must succeed through Blender's bundled Vulkan loader
 before CTest starts. The ICD stays outside both install and release trees:
 it is not distributed or counted in package sizes. These runs establish
