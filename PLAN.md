@@ -452,3 +452,28 @@ K lands and finishes after F/T/P/D. L runs on the first build where W is
 - Upstream exceptions beyond registration and build wiring are limited to the
   Vulkan descriptor-pool rollover and the crash-dump path hook, both recorded
   in `doc/agent/upstream.md`.
+- Picture levers never move the score. `image.samples`, `image.size`, the
+  mask policy and `fit`'s `budget.size` change what the agent looks at; the
+  `objective` event at the fixed objective size (256 px, silhouette pass at
+  a fixed sample count) is the only number it is measured against. `fit`'s
+  `curve` is the search's own reading at its `budget.size`; `done` carries
+  `best.params` and `best.snapshot`, no score. Four defects resolved the same
+  way (samples on the unshared path, morphology on exact references, a
+  256 reference at a 260 tile, `best.score` beside `curve`); a fifth goes
+  here too. Morphology applies only to estimated segmentation: alpha and
+  two-valued references skip it, so `mask auto` equals `mask none` on them.
+- No device is a state, not a crash. `session.device` is `null`, `"vulkan"`
+  or `"metal"` in the greeting and `session status`, probed once through the
+  loader before any GPU context. When null, `exec`, `program`, `inspect` and
+  `describe` are untouched, render-bearing providers push nothing (no
+  `images`, no `objective`, no provider log), and `observe`, `fit` and
+  `agent.perceive()` end as `error` type `NoDevice`. The feedback policy
+  keeps saying what the session would send. The GL fallback is never
+  entered. Tests assert both branches of this contract; exit 77 is reserved
+  for tests whose whole subject is a render.
+- Every byte the CLI writes is ASCII: events, the folded envelope, `repl`
+  error lines, `--help`. No reader chooses an encoding; tests still decode
+  UTF-8 explicitly rather than trust a console code page.
+- Software Vulkan (lavapipe) on a hosted Windows runner is evidence for the
+  Vulkan code path, not for a Windows 11 GPU; real-device rows stay
+  `unverified` until run on one.
