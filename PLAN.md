@@ -547,6 +547,13 @@ is running for nine installed and nine trimmed tests plus package smoke.
 The earlier macOS eight-test evidence stands for its revision; this run adds
 the Metal IO evidence and supplies the final nine-test package measurements.
 
+The macOS job of 34147274931 succeeds: nine installed CTests and nine trimmed
+scripts pass without skips. Seconds: protocol 55.57, describe 30.91, cli 67.49,
+session 170.32, program 54.19, IO 184.76, observe 53.42, feedback 24.19,
+fit 298.35. Package smoke and the same original/trimmed byte equality pass.
+Validated nine-test macOS sizes at 0f526b4f: installed 744,885,109 B,
+trimmed 346,213,975 B, tar.zst 72,827,125 B. Windows is still running.
+
 ## Ordering
 
 ```diagram
