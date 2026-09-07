@@ -367,8 +367,16 @@ loader reports `VK_ERROR_INCOMPATIBLE_DRIVER`; these are not passes or render
 evidence. Package smoke's original session also crashes on mutation, so the
 trimmed DLL/manifest runtime and complete session recovery remain unverified.
 The hosted `windows-2022` runner has no usable Vulkan ICD; completing Windows
-render evidence needs a Windows environment with one. Final dispatch is held
-until the coordinator confirms all surface and documentation fixes have landed.
+render evidence needs a Windows environment with one. Per coordinator ruling,
+X adds a pinned, checksum-verified, cached mesa-dist-win 25.0.7 lavapipe ICD
+outside the package, selected only through `VK_DRIVER_FILES`; a bundled-loader
+probe must pass before the suite. This is software-Vulkan evidence, not
+Windows 11 GPU-hardware evidence. Final Windows hardware and macOS Metal-device
+rows remain unverified until the final revision is exercised on those devices.
+K owns missing-device probing/errors plus both encoding defects and will request
+native retries; final dispatch otherwise waits for the coordinator's all-landed
+confirmation. The current completed run predates X's Cycles fix, so cannot
+verify it; the next native run must do so.
 
 ## Ordering
 

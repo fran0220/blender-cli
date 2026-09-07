@@ -148,6 +148,21 @@ Native device absence returns CTest skip code 77 with an explicit
 Metal/Vulkan reason; render errors are never converted to skips. A skipped
 render is not product-platform rendering evidence; execution status lives in PLAN.
 
+Windows full runs install a CI-only software Vulkan ICD from
+[mesa-dist-win 25.0.7](https://github.com/pal1000/mesa-dist-win/releases/tag/25.0.7),
+matching the Linux development Mesa version. The MSVC release archive is pinned
+by SHA-256 `e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287`
+and cached by version and digest; every cache hit is checksum-verified. Only
+`x64/lvp_icd.x86_64.json` and `x64/vulkan_lvp.dll` are extracted, and
+`VK_DRIVER_FILES` selects that ICD without registry changes or WGL deployment.
+The existing device probe must succeed through Blender's bundled Vulkan loader
+before CTest starts. The ICD stays outside both install and release trees:
+it is not distributed or counted in package sizes. These runs establish
+**Windows software-Vulkan evidence only**, not Windows 11 physical-GPU evidence.
+Final-surface Windows hardware and macOS Metal-device validation remain
+unverified until the final revision runs on those devices; earlier macOS Metal
+results remain evidence only for their explicitly recorded revisions.
+
 ## Measured — Linux x86_64 (dev)
 
 Debian 12, xPack GCC 14.3.0, Release, pinned upstream libraries, Mesa 25.0.7
