@@ -537,6 +537,16 @@ trimmed 290,680,354 B and ZIP 104,142,404 B remain provisional because the
 complete gate fails. The new IO CTest is not yet in the eight-script trimmed
 loop; coordinator is notified of this additional surface before changing scope.
 
+Coordinator confirms the surface is nine, including IO. The trimmed loop now
+derives scripts from CMake test registrations (no separately maintained list).
+YAML/Bash syntax and extraction of all nine scripts pass. T's native resolved
+path equality and K's session 3000 s / IO 2400 s / fit 4800 s budgets are landed.
+Authorized both-platform [run 34147274931](https://github.com/fran0220/blender-cli/actions/runs/34147274931)
+at [0f526b4f](https://github.com/fran0220/blender-cli/commit/0f526b4f176269d645742eefab3a667445512f59)
+is running for nine installed and nine trimmed tests plus package smoke.
+The earlier macOS eight-test evidence stands for its revision; this run adds
+the Metal IO evidence and supplies the final nine-test package measurements.
+
 ## Ordering
 
 ```diagram
