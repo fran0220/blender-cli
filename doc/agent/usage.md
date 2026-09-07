@@ -103,6 +103,135 @@ serialization: `"(0.8, 0.8, 2.0)"` is text, and `ast.literal_eval` turns it back
 into a tuple. `diff` names datablocks and depsgraph update categories, not a
 property patch.
 
+## Bringing a model in and taking it out
+
+Import and export are Python statements, not verbs. Use the same `exec` and
+the same session as for modelling: an import adds datablocks, is recorded as
+a program step, and its objects are ordinary `bpy` objects. A transform,
+modifier or bmesh edit gives the same feedback as on a model built from
+primitives; `target set` and an RNA-path `fit` work on those objects too.
+
+Here is a complete GLB exchange. The source file was made by the binary in
+`/tmp/model-io-recipe/source`, a directory with no live session. The input
+could equally be a file supplied by another application:
+
+```sh
+blender-cli exec -c "bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(); bpy.context.object.name = 'Part'; bpy.ops.export_scene.gltf(filepath='/tmp/model-io-recipe/input.glb', export_format='GLB')" --json | jq -c '{ok,value}'
+# {"ok":true,"value":"{'FINISHED'}"}
+```
+
+In `/tmp/model-io-recipe/live`, keep the scene in a session. Perception and
+images are off for this exchange; restore `perception=true image.mode=delta`
+when the change needs a picture. `jq` below only selects fields from the real
+JSON, not a different response shape:
+
+```sh
+blender-cli session open --json
+# {"session":"77819","socket":"/tmp/model-io-recipe/live/.blender-cli/session.sock"}
+blender-cli session feedback perception=false image.mode=off --json
+blender-cli exec -c 'bpy.ops.wm.read_factory_settings(use_empty=True)' --json | jq -c '{ok,value}'
+# {"ok":true,"value":"{'FINISHED'}"}
+blender-cli exec -c "bpy.ops.import_scene.gltf(filepath='/tmp/model-io-recipe/input.glb'); [(o.name, len(o.data.vertices), len(o.data.polygons)) for o in bpy.context.scene.objects]" --json | jq -c '{ok,value,added:.diff.added}'
+# {"ok":true,"value":"[('Part', 24, 12)]","added":[{"name":"Cube","type":"MESH"},{"name":"Part","type":"OBJECT"}]}
+blender-cli program get --json | jq -c '{digest,steps:[.steps[]|{n,reproducible}]}'
+# {"digest":"sha256:85990ad8a719d4ec36acbce10b0eb11fa72483747a7c9a7e77a48ddbd4d60e05","steps":[{"n":1,"reproducible":true},{"n":2,"reproducible":false}]}
+blender-cli exec -c 'bpy.data.objects["Part"].scale.x = 1.5' --json | jq -c '{ok,changed:.diff.changed}'
+# {"ok":true,"changed":[{"fields":["transform","copy_on_eval","parameters"],"name":"Part","type":"OBJECT"}]}
+blender-cli exec -c "bpy.ops.object.select_all(action='DESELECT'); obj=bpy.data.objects['Part']; obj.select_set(True); bpy.context.view_layer.objects.active=obj; bpy.ops.export_scene.gltf(filepath='/tmp/model-io-recipe/modified.glb', export_format='GLB', use_selection=True)" --no-record --json | jq -c '{ok,value}'
+# {"ok":true,"value":"{'FINISHED'}"}
+blender-cli session close --json
+```
+
+A new one-shot process in `/tmp/model-io-recipe/reader` reads the exported
+result, not the old scene in memory:
+
+```sh
+blender-cli exec -c "bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath='/tmp/model-io-recipe/modified.glb'); bpy.context.view_layer.update(); tuple(bpy.data.objects['Part'].dimensions)" --json | jq -c '{ok,value}'
+# {"ok":true,"value":"(3.0, 2.0, 2.0)"}
+```
+
+The cube came in at 2 × 2 × 2 and left at 3 × 2 × 2. It imported as 24
+vertices / 12 triangles because default glTF export keeps the cube's normal
+and UV seams. Those are the same six surfaces, not six new objects.
+
+The exchange surface is upstream Blender's. These are the operators in this
+build, including the trimmed package; prefix each with `bpy.ops.`:
+
+| Format | Import | Export | What survives the mesh round trip |
+|---|---|---|---|
+| OBJ + MTL | `wm.obj_import` | `wm.obj_export` | Polygon topology, bounds, object name, UV-to-corner mapping, material assignment/name/base color. Keep the adjacent MTL and any textures. Transforms are baked into geometry. |
+| FBX | `wm.fbx_import` (native), or `import_scene.fbx` (add-on) | `export_scene.fbx` | Both importers preserve the tested polygon topology, bounds, object name, UV mapping and material assignment/name/base color. FBX is not a copy of a Blender shader graph. |
+| STL | `wm.stl_import` | `wm.stl_export` | Surface geometry and bounds; quads become triangles. No UVs or materials. The imported object's name comes from the filename. |
+| PLY | `wm.ply_import` | `wm.ply_export` | Polygon geometry, bounds and vertex UVs. No material slots or stored object names; the filename names the imported mesh. Attribute seams can split vertices; multiple objects are combined. |
+| glTF (`.gltf` + `.bin`) / GLB (`.glb`) | `import_scene.gltf` | `export_scene.gltf` | Bounds, object name, UV mapping and the tested PBR base color/material assignment. Geometry is triangulated. `.gltf` with `export_format='GLTF_SEPARATE'` has sidecar files; `export_format='GLB'` puts the model in one binary file. |
+| Blender (`.blend`) | `wm.open_mainfile` | `wm.save_as_mainfile` | Native scene data, including polygon topology, object names, materials and UVs. Opening replaces the whole scene rather than adding a mesh to it. `session save` also writes a blend file. |
+| USD | `wm.usd_import` — absent | `wm.usd_export` — absent | Trimmed: `WITH_USD=OFF`. |
+| Alembic | `wm.alembic_import` — absent | `wm.alembic_export` — absent | Trimmed: `WITH_ALEMBIC=OFF`. |
+| Grease Pencil SVG/PDF | `wm.grease_pencil_import_svg` — absent | `wm.grease_pencil_export_svg`, `wm.grease_pencil_export_pdf` — absent | Trimmed: `WITH_IO_GREASE_PENCIL=OFF`. This does not remove mesh IO. |
+
+The round-trip check builds a 2.5 × 1.5 × 3 box in the binary, with eight
+vertices, six quads, continuous UVs and one material. OBJ, both FBX importers,
+PLY and blend return 8 vertices / 6 faces; STL and glTF/GLB return 8 / 12.
+Bounds and material base colors have an absolute tolerance of 1e-5 (Blender
+units and linear RGBA respectively), allowing text/float32 conversion; UV
+mapping is compared at five decimal places. This is mesh evidence, not a
+promise that every format preserves rigs, animations, procedural materials
+or Blender-only data.
+
+For that topology check, PLY and glTF export with `export_normals=False`.
+glTF requires separate vertices at discontinuous normals or UVs, so exporting
+a normally shaded cube can legitimately yield more than eight vertices.
+Its importer offers `merge_vertices=True`, but vertices with different
+normals cannot be merged. Do not confuse a vertex-count change at seams with
+missing geometry, and do not turn normals off merely to make a production
+asset's vertex count smaller.
+
+There are a few boundaries worth making explicit:
+
+- **Record absolute input paths.** An absolute literal in the import statement
+  keeps the program runnable from another cwd. `//` is relative to the current
+  blend file, not to `model.py`. Keep the input and its sidecars immutable:
+  program history does not copy arbitrary model files. The static
+  `reproducible: false` flag on an external-file step is intentional even when
+  a fresh-process replay produces the exact same `digest`.
+- **Reset before enabling add-ons.** Factory startup and
+  `read_factory_settings(use_empty=True)` enable glTF and FBX in both the
+  installed and trimmed builds; no manual enable is needed for these formats.
+  A reset discards custom add-on preferences. If enabling other add-ons, do
+  it after the reset, not before it.
+- **Selection is not an import result.** Importers can select several objects
+  and change the active object. Inspect the resulting names, then address the
+  intended object explicitly. Before a selection-only export, deselect the
+  rest, select what should leave, and make the intended object active.
+  `describe` gives each exporter's own selection flag; defaults need not
+  mean “only the object just imported”.
+- **Agree on axes and units at both ends.** Blender is Z-up; glTF is Y-up;
+  OBJ's default conversion uses −Z forward / Y up. FBX carries axis and unit
+  metadata. STL and PLY do not give you a universal physical-unit convention.
+  Matching default importer/exporter settings preserve the tested bounds, but
+  files from another application can require explicit axis or scale options.
+  Check world bounds before modifying a model, not just its apparent size in
+  an automatically framed image.
+- **External writes are not rollback state.** Export to a new path rather
+  than overwriting the input the program replays. Use `exec --no-record` for
+  delivery-only exports: repeating an export is not how a scene is rebuilt.
+  Snapshots cannot undo an overwritten OBJ, GLB or blend file.
+
+An unsupported format is a normal error, and the next request still works.
+The original Blender exception is retained; `rna.description` explains the
+build constraint rather than suggesting a different importer for the same
+file:
+
+```sh
+blender-cli exec -c "bpy.ops.wm.usd_import(filepath='/tmp/model-io-recipe/input.usd')" --json
+# {"error":{"line":1,"message":"Calling operator \"bpy.ops.wm.usd_import\" error, could not be found","rna":{"description":"USD support is not built in (WITH_USD=OFF). Convert the file externally to OBJ, FBX, STL, PLY, glTF or .blend before importing through exec.","nearest":[],"struct":"bpy.ops.wm"},"type":"AttributeError"},"ok":false}
+```
+
+Alembic answers the same way, naming `Alembic` and `WITH_ALEMBIC=OFF`.
+For fitting, use the imported name in the usual RNA path, for example
+`objects["Part"].scale[0]`. RNA collection keys must use double quotes; that
+path is Blender RNA syntax, not an arbitrary Python expression.
+
 ## Feedback budgets
 
 Every action's consequences come back on their own; what varies is how much they
