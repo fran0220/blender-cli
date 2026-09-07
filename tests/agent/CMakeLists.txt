@@ -9,7 +9,15 @@
 # 222.08, describe 118.31, cli 84.85, session 1108.22, program 135.47, observe
 # 334.13, feedback 150.58, fit 1309.31 seconds. A diagnostic run on a slower
 # host had already ended protocol at 240.02 s against its 240 s budget, which is
-# what an 8% margin buys. Re-measure these when the evidence platform changes.
+# what an 8% margin buys.
+#
+# Run 34114563805 then measured a slower Windows host, which is the basis now:
+# describe 190.58, cli 121.47, program 221.48, observe 540.94, feedback 241.66,
+# fit 2085.22 seconds, a consistent 1.58x. Its protocol and session times were
+# not reported; at that factor they would be about 351 s and 1754 s, so their
+# 600 and 2400 hold at 1.7x and 1.4x -- under the floor, and to be corrected
+# from measurement rather than from this estimate. Re-measure when the evidence
+# platform changes.
 
 # Follow the installed TEST_BLENDER_EXE layout, including the macOS app bundle.
 get_filename_component(agent_bin_dir "${TEST_BLENDER_EXE}" DIRECTORY)
@@ -77,6 +85,6 @@ add_blender_test_impl(agent_fit "" "${TEST_PYTHON_EXE}"
   "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
 )
 # Every fit path, every metric and a 20-iteration loop, all against real renders.
-set_tests_properties(agent_fit PROPERTIES TIMEOUT 3600)
+set_tests_properties(agent_fit PROPERTIES TIMEOUT 4800)
 set_tests_properties(agent_session agent_observe agent_feedback agent_fit
   PROPERTIES SKIP_RETURN_CODE 77)
