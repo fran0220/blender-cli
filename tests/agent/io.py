@@ -149,8 +149,10 @@ def main():
                 assert program['steps'][-1]['reproducible'] is False, program
                 digest = program['digest']
                 shutil.copytree(live / '.blender-cli/program', replay / '.blender-cli/program')
-                call('session', 'open', cwd=replay)
+                reopened = call('session', 'open', cwd=replay)
                 try:
+                    assert reopened['recovered_from'] == 'program', reopened
+                    assert reopened['session'] != events[0]['session'], reopened
                     rebuilt = call('program', 'run', cwd=replay)
                     assert rebuilt['digest'] == digest, (extension, digest, rebuilt)
                     check(facts(replay), expected, vertices, faces, materials, uv, name)
@@ -174,7 +176,7 @@ def main():
                 else:
                     assert not any(event['event'] in ('perception', 'objective', 'image')
                                    for event in changed), changed
-                params = json.dumps([{'path': f'objects[{name!r}].scale[0]', 'min': 0.5, 'max': 1.5}])
+                params = json.dumps([{'path': f'objects[{json.dumps(name)}].scale[0]', 'min': 0.5, 'max': 1.5}])
                 fitted = call('fit', '--params', params, '--objective', '{"target":"front","metric":"iou"}',
                               '--budget', '{"evals":9,"size":256}', cwd=live, ok=bool(device))
                 if device:
@@ -205,7 +207,10 @@ def main():
             for operator, label in (('usd_import', 'USD'), ('alembic_import', 'Alembic')):
                 events = stream(f'bpy.ops.wm.{operator}(filepath={str(errors / "absent")!r})', errors, ok=False)
                 error = events[-1]
-                assert label.lower() in error['message'].lower() and 'not built in' in error['message'], error
+                assert error['type'] == 'AttributeError' and error['line'] == 1, error
+                assert error['message'] == f'Calling operator "bpy.ops.wm.{operator}" error, could not be found', error
+                assert label + ' support is not built in' in error['rna']['description'], error
+                assert error['rna']['nearest'] == [] and 'fix' not in error, error
                 assert call('exec', '-c', '42', cwd=errors)['value'] == '42'
         finally:
             call('session', 'close', cwd=errors)

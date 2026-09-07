@@ -301,6 +301,16 @@ def attribute_context(parent, name, node=None, tree=None):
     elif parent is bpy.types or operator_module(parent):
         result = {"struct": "bpy.types" if parent is bpy.types else parent.__name__}
         identifiers = dir(parent)
+        if operator_module(parent) and parent.__name__ == "bpy.ops.wm" and name not in identifiers:
+            # Compiled-out formats are not misspellings. Suggesting another
+            # importer cannot make that same file readable. Use Blender's live
+            # build flags, preserving the original exception type/message/line.
+            for prefix, label in (("usd", "USD"), ("alembic", "Alembic")):
+                if name in (prefix + "_import", prefix + "_export") and not getattr(bpy.app.build_options, prefix):
+                    return {**result, "nearest": [],
+                            "description": f"{label} support is not built in (WITH_{prefix.upper()}=OFF). "
+                                           "Convert the file externally to OBJ, FBX, STL, PLY, glTF or .blend "
+                                           "before importing through exec."}, None
     else:
         return None, None
     scored = ranked(name, identifiers)
