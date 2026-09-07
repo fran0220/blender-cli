@@ -523,6 +523,20 @@ was dispatched at [26b6c839](https://github.com/fran0220/blender-cli/commit/26b6
 It includes K's measured-platform harness budgets and T's reference-load-before-render
 fix; this retry supplies the final Windows number. macOS evidence stands unchanged.
 
+Retry 34128930729 completes with protocol 294.64 s, describe 160.94 s,
+cli 99.91 s, session 1281.04 s, program 176.59 s, observe 421.48 s and
+feedback 191.57 s passing. Newly added `agent_io` also passes (1159.13 s).
+Fit fails after 1363.24 s, not by timeout: T's new `fit.py:765` assertion
+requires the missing-reference path to start with `/`, but Windows returns
+the correct absolute `C:\Users\runneradmin\...\nothing-here.png` path.
+The same assertion fails trimmed; the other seven trimmed scripts pass.
+T is asked to assert the native resolved path; this is outside the authorized
+fit-timeout retry, so another dispatch awaits coordinator authorization.
+Package smoke/byte equality pass; measured installed 772,171,059 B,
+trimmed 290,680,354 B and ZIP 104,142,404 B remain provisional because the
+complete gate fails. The new IO CTest is not yet in the eight-script trimmed
+loop; coordinator is notified of this additional surface before changing scope.
+
 ## Ordering
 
 ```diagram
