@@ -127,15 +127,25 @@ def main():
                         ok=False)["error"]["type"] == "TimeoutError"
 
             # --image is the per-request image policy, and it is the request's
-            # `feedback` field: a whole frame when asked for one, nothing when not.
+            # `feedback` field. What it can answer with depends on the machine:
+            # a session with no GPU pushes no pictures at all, so the flag is
+            # asserted against the device the session reports rather than
+            # against the one this test happens to run on.
+            device = call("session", "status")["device"]
+            assert device in (None, "vulkan", "metal"), device
+            print("device:", device, flush=True)
             # The first change establishes the view the next one is a delta of.
             call("session", "feedback", "perception=true", "image.mode=delta", "image.size=128")
             call("exec", "-c", "bpy.data.objects['Cube'].scale.z = 2.5")
-            frames = call("exec", "-c", "bpy.data.objects['Cube'].scale.x = 2.0",
-                          "--image", "full")["images"]
-            assert [image["kind"] for image in frames] == ["full"], frames
-            assert frames[0]["size"] == [128, 128], frames
-            assert frames[0]["region"] == [0, 0, 128, 128], frames
+            asked = call("exec", "-c", "bpy.data.objects['Cube'].scale.x = 2.0", "--image", "full")
+            if device:
+                frames = asked["images"]
+                assert [image["kind"] for image in frames] == ["full"], frames
+                assert frames[0]["size"] == [128, 128], frames
+                assert frames[0]["region"] == [0, 0, 128, 128], frames
+            else:
+                assert "images" not in asked, asked
+                assert "objective" not in asked, asked
             assert "images" not in call("exec", "-c", "bpy.data.objects['Cube'].scale.y = 1.5",
                                         "--image", "off")
             call("session", "feedback", "perception=false", "image.mode=off")

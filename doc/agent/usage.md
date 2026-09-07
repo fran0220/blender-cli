@@ -28,7 +28,7 @@ Three requests in, and what came back on stdout:
 ```
 
 ```json
-{"id": null, "event": "session", "session": "162386", "file": "/tmp/u6/empty.blend", "dirty": false, "step": 0, "snapshot": "sha256:2bcb52bc…", "feedback": {"perception": true, "objective": true, "progress": "improvements", "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
+{"id": null, "event": "session", "session": "268544", "file": "/tmp/u7/empty.blend", "dirty": false, "step": 0, "snapshot": "sha256:c4b0284f…", "device": "vulkan", "feedback": {"perception": true, "objective": true, "progress": "improvements", "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
 {"id": 1, "event": "value", "value": "(0.800000011920929, 0.800000011920929, 2.0)"}
 {"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:4e694aa7…", "step": 1}
 {"id": 1, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.4, -0.4, -1.0], "high": [0.4, 0.4, 1.0]}, "dims": [0.8, 0.8, 2.0], "framing": {"bounds": {…}, "center": [0.0, 0.0, 0.0], "radius": 1.1489125391646506, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": null, "symmetry": {"x": 0.9787234042553191, "y": null, "z": 1.0}}
@@ -47,9 +47,9 @@ Read that transcript for what the loop costs. Nothing in it was asked for.
 
 The channel greets you before it reads anything: a `session` event with
 `id: null` carrying the whole of `session status` — which scene is open, the
-step and snapshot it is at, the feedback policy in force, the registered
-targets, and whether this session was recovered. There is never a reason to
-open a conversation by asking what state it is in.
+step and snapshot it is at, whether the machine has a GPU, the feedback policy
+in force, the registered targets, and whether this session was recovered. There
+is never a reason to open a conversation by asking what state it is in.
 
 Request 1 answered with the value of its last expression, the datablocks it
 added, the snapshot the scene is now at, its counts and world bounds, and the
@@ -131,7 +131,7 @@ without wondering whether the objective moved underneath you.
 
 `exec` and `program` take `--image` to override the picture for one request —
 a whole frame when something needs looking at, nothing when the answer is
-already known:
+already known. On a session with a GPU, that is:
 
 ```sh
 blender-cli exec -c "bpy.data.objects['Handle'].scale.z = 0.5" --image full --json
@@ -164,6 +164,13 @@ blender-cli exec -c "len(bpy.data.objects)" --json
 # {"ok":true,"value":"1","ms":0.6380220002029091,
 #  "perception":{…,"changed":{"view":"front","objects":[],"region":null,"fraction":0.0,"silhouette_delta":0.0}}}
 ```
+
+All of that assumes the machine can render. The greeting and `session status`
+report `device` as `vulkan`, `metal` or `null`, and a session with no device
+pushes no pictures, no perception and no objective at all, while `observe`,
+`fit` and `agent.perceive()` answer `NoDevice` rather than pretending. Read
+`device` once from the greeting: it decides whether looking is available for
+the rest of the conversation, and no feedback setting changes it.
 
 Pictures come back in four kinds. `delta` is the changed region cropped out of
 the budget view and `overlay` is the same region before and after (before red,
