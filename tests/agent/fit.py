@@ -248,11 +248,14 @@ def main():
             assert fitted["method"] == "coordinate", fitted
             assert fitted["objective"] == {"targets": ["top"], "metric": "iou",
                                            "weights": [1.0]}, fitted
-            assert fitted["best"]["score"] >= 0.99, fitted
+            assert fitted["curve"][-1][1] >= 0.99, fitted
+            # The search's own reading stays in the curve; `done` carries no
+            # score, because it would be taken at `budget.size` and the agent
+            # is measured at the objective size by the event that follows.
+            assert "score" not in fitted["best"], fitted
             assert fitted["best"]["snapshot"].startswith("sha256:"), fitted
             curve = fitted["curve"]
             assert [row[1] for row in curve] == sorted(row[1] for row in curve), curve
-            assert curve[-1][1] == fitted["best"]["score"], curve
             assert Path(fitted["error_map"]["image"]).is_file(), fitted
             assert fitted["error_map"]["size"] == [512, 512], fitted
             assert fitted["error_map"]["target"] == "top", fitted
@@ -402,13 +405,13 @@ agent.register_provider(Peek())
             print("patience stop:", json.dumps(
                 {key: patient[key] for key in ("evals", "stopped", "best")}), flush=True)
             assert patient["stopped"] == "patience" and patient["evals"] < 60, patient
-            assert patient["best"]["score"] >= 0.99, patient
+            assert patient["curve"][-1][1] >= 0.99, patient
             spent = short_fit(evals=60, patience=10 ** 6)[-1]
             print("budget stop:", json.dumps(
                 {key: spent[key] for key in ("evals", "stopped")}), flush=True)
             assert spent["stopped"] == "budget" and spent["evals"] == 60, spent
             assert patient["evals"] < spent["evals"], (patient, spent)
-            assert spent["best"]["score"] - patient["best"]["score"] < 0.01, (patient, spent)
+            assert spent["curve"][-1][1] - patient["curve"][-1][1] < 0.01, (patient, spent)
 
             # The derived patience grows with the search. Five parameters put it
             # at 25, so a 20-evaluation budget cannot reach it and the search
@@ -478,7 +481,7 @@ agent.register_provider(Peek())
                     budget={"evals": 12, "seconds": 600, "size": 128}))
             print("random fit:", json.dumps(runs[0]["best"]), flush=True)
             assert runs[0]["best"]["params"] == runs[1]["best"]["params"], runs
-            assert runs[0]["best"]["score"] == runs[1]["best"]["score"], runs
+            assert runs[0]["curve"][-1][1] == runs[1]["curve"][-1][1], runs
             assert runs[0]["curve"] == runs[1]["curve"], runs
             assert runs[0]["evals"] == runs[1]["evals"] == 12, runs
 
@@ -492,7 +495,7 @@ agent.register_provider(Peek())
                 budget={"evals": 24, "seconds": 900, "size": 256})
             print("program fit:", json.dumps(programmed["best"]), flush=True)
             assert set(programmed["best"]["params"]) == {"sx", "sy"}, programmed
-            assert programmed["best"]["score"] > first["targets"]["top"]["iou"], programmed
+            assert programmed["curve"][-1][1] > first["targets"]["top"]["iou"], programmed
             written = channel.done(op="program", action="get")["params"]
             assert written["sx"] == programmed["best"]["params"]["sx"], written
             assert written["sy"] == programmed["best"]["params"]["sy"], written
@@ -520,7 +523,7 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
                 budget={"evals": 40, "seconds": 900, "size": 128})
             print("nelder-mead fit:", json.dumps(simplex["best"]), flush=True)
             assert simplex["method"] == "nelder-mead" and simplex["evals"] <= 40, simplex
-            assert simplex["best"]["score"] >= 0.97, simplex
+            assert simplex["curve"][-1][1] >= 0.97, simplex
             assert abs(simplex["best"]["params"][X] - TRUTH[0]) < 0.1, simplex
             assert abs(simplex["best"]["params"][Y] - TRUTH[1]) < 0.1, simplex
 
@@ -535,15 +538,15 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
                     op="fit", params=[{"path": X, "min": 0.4, "max": 1.9}],
                     objective=objective, budget={"evals": 1, "size": 128})
 
-            alone = one_eval(target="top", metric="iou")["best"]["score"]
-            other = one_eval(target="face", metric="iou")["best"]["score"]
+            alone = one_eval(target="top", metric="iou")["curve"][-1][1]
+            other = one_eval(target="face", metric="iou")["curve"][-1][1]
             mixed = one_eval(targets=["top", "face"], metric="iou", weights=[0.7, 0.3])
             print("weighted objective:", json.dumps(
-                {"top": alone, "face": other, "weighted": mixed["best"]["score"]}), flush=True)
+                {"top": alone, "face": other, "weighted": mixed["curve"][-1][1]}), flush=True)
             assert mixed["objective"] == {"targets": ["top", "face"], "metric": "iou",
                                           "weights": [0.7, 0.3]}, mixed
             assert alone != other, (alone, other)
-            assert abs(mixed["best"]["score"] - (0.7 * alone + 0.3 * other)) < 1e-9, mixed
+            assert abs(mixed["curve"][-1][1] - (0.7 * alone + 0.3 * other)) < 1e-9, mixed
             channel.done(op="target", action="clear", name="face")
 
             # A code objective is scored by agent code and returns no error map.
@@ -555,8 +558,8 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
                 budget={"evals": 6, "seconds": 900, "size": 128})
             print("code objective:", json.dumps(coded["best"]), flush=True)
             assert "code" in coded["objective"] and "error_map" not in coded, coded
-            assert 0 < coded["best"]["score"] <= 1 and coded["evals"] == 6, coded
-            assert coded["best"]["score"] > alone, (coded, alone)
+            assert 0 < coded["curve"][-1][1] <= 1 and coded["evals"] == 6, coded
+            assert coded["curve"][-1][1] > alone, (coded, alone)
 
             # A step that raises costs its evaluation and is counted, and the
             # search keeps going instead of failing the request.
@@ -568,7 +571,7 @@ json.dumps(agent.fit([{"name": "sx", "min": 0.4, "max": 1.9}],
             print("failed evaluations:", json.dumps(
                 {key: broken[key] for key in ("evals", "failed", "best")}), flush=True)
             assert broken["failed"] >= 1 and broken["evals"] == 8, broken
-            assert broken["best"]["score"] > 0 and broken["applied"], broken
+            assert broken["curve"][-1][1] > 0 and broken["applied"], broken
             assert broken["best"]["params"]["sx"] <= 1.2, broken
             assert channel.done(op="program", action="get")["params"]["sx"] <= 1.2
 

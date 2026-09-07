@@ -413,7 +413,7 @@ def fit(params, objective=None, budget=None, method="coordinate", session=None, 
             "fit ran no evaluation: the budget was exhausted before the first one")
     best = assign(progress["point"])
     result = {"method": method, "objective": goal.record(),
-              "best": {"params": best, "score": progress["best"]},
+              "best": {"params": best},
               "evals": progress["evals"], "failed": progress["failed"],
               "curve": progress["curve"], "applied": True, "stopped": stopped}
     if session is not None:

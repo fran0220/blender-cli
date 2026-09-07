@@ -798,7 +798,7 @@ with `Cancelled`.
 ```
 {"ok": true, "ms": …, "method": "coordinate",
  "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]},
- "best": {"params": {"handle_x": 0.41}, "score": 0.994, "snapshot": "sha256:…"},
+ "best": {"params": {"handle_x": 0.41}, "snapshot": "sha256:…"},
  "evals": 37, "failed": 0, "curve": [[1, 0.81], [4, 0.93], [19, 0.994]],
  "applied": true, "stopped": "patience",
  "error_map": {"target": "front", "view": "front", "image": "…png",
@@ -806,7 +806,12 @@ with `Cancelled`.
 ```
 
 `curve` records only the evaluations that improved the best value, so it is
-the search's trajectory rather than its transcript. `error_map` is the first
+the search's trajectory rather than its transcript, and `curve[-1]` is the
+best the search saw. That reading is the search's own, taken at
+`budget.size`; it is not the score the session reports. The `objective` event
+that follows the `fit` is, at the fixed objective size, and it is the number
+the agent is measured against — so `done` carries the parameters and the
+snapshot and leaves the scoring to the channel that does the scoring. `error_map` is the first
 objective target's silhouette error at `budget.size` — missing red, extra
 blue, agreement white — with `region` naming its worst 4×4 cell; it is
 absent for a `code` objective. The best parameters are applied to the live

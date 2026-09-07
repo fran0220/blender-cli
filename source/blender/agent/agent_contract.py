@@ -165,7 +165,10 @@ REQUESTS = {
                     "ref": "reference.png", "view": "front"},
     },
     "fit": {
-        "doc": "Search parameters against the registered targets inside the process.",
+        "doc": "Search parameters against the registered targets inside the process. "
+               "`done` carries the best parameters and their snapshot; `curve` is the "
+               "search's own reading, taken at `budget.size`, and the `objective` event "
+               "that follows is the session's score at the objective size.",
         "mutates": True,
         "cancels": "done",
         "fields": {
