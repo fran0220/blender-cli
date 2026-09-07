@@ -414,28 +414,32 @@ macOS's case-insensitive filesystem required selecting the platform's actual
 stdlib layout rather than probing both `Lib` and `lib/python3.*`. Archives use
 tar's shared `--use-compress-program` option, not GNU-only `-I` semantics.
 
-## Measured — Windows x64 (unvalidated package)
+## Measured — Windows x64 (software Vulkan)
 
-GitHub `windows-2022`, Release, [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155)
-at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4).
-Build/install and archive creation succeed. The original package smoke session
-crashes on its first mutation when feedback attempts rendering without a usable
-Vulkan ICD; the trimmed runtime checks are not reached. These are measured
-logical bytes, **not validated release sizes**, and precede the corrected
-Cycles add-on layout. `diagnostics-windows_x64-full/release.json` contains the
-complete per-path record. No Windows render evidence is claimed.
+GitHub `windows-2022`, Release, lavapipe 25.0.7,
+[run 34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262)
+at [5aac050c718](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca).
+All eight installed CTests and all eight trimmed scripts pass without CTest
+skips. Package smoke passes Cycles registration after factory reset and
+byte-identical original/trimmed observation (SHA-256
+`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`).
+HKLM discovery succeeds through the bundled loader; sessions report
+`device: "vulkan"`. This validates the DLL/manifest trim with software Vulkan,
+not Windows 11 GPU hardware. These logical-byte measurements are valid for
+this revision; the final both-platform run on 6a276a08 is pending in PLAN.
+`diagnostics-windows_x64-full/release.json` contains the complete per-path record.
 
 | Measurement | Bytes |
 |---|---:|
-| Installed tree | 769,620,906 |
-| Trimmed tree | 290,673,358 |
-| Removed, net | 478,947,548 |
-| ZIP archive | 104,135,330 |
+| Installed tree | 770,030,373 |
+| Trimmed tree | 290,678,527 |
+| Removed, net | 479,351,846 |
+| ZIP archive | 104,141,664 |
 
 | Retained component | Bytes |
 |---|---:|
-| `5.3` | 111,133,593 |
-| `blender.exe` | 92,628,480 |
+| `5.3` | 111,136,202 |
+| `blender.exe` | 92,631,040 |
 | `blender.shared` | 75,068,555 |
 | `blender-cli.exe` | 267,776 |
 

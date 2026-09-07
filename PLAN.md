@@ -329,9 +329,9 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 
 | Item | Status |
 |---|---|
-| macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4): build passes, 6/8 CTests pass, feedback and fit fail path assertions (below); W's final docs pending, so a final dispatch follows |
-| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — K-requested retry [34083367870](https://github.com/fran0220/blender-cli/actions/runs/34083367870) at [8016542f1ec](https://github.com/fran0220/blender-cli/commit/8016542f1ec324557a3790376ea69181d0b97345): build passes; ICD preflight fails, installed CTests not run; trimmed describe/program pass, protocol/cli/session fail, observe/feedback/fit skip77 (below) |
-| Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; Windows installed 769,620,906 B, trimmed 290,673,358 B, ZIP 104,135,330 B. Both package smoke checks fail, so these are not validated release sizes |
+| macOS arm64 full run of all agent tests on the final surface | doing — final [run 34114563805](https://github.com/fran0220/blender-cli/actions/runs/34114563805) at [6a276a08](https://github.com/fran0220/blender-cli/commit/6a276a08c0d3e42d586f5391a86adfdf67744bc4) dispatched with all owner fixes |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | software-Vulkan 8/8 installed and 8/8 trimmed pass at [5aac050c](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca), [run 34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262); final 6a276a08 run above pending; Windows 11 hardware unverified |
+| Re-measured package sizes on both product platforms | doing — Windows 34101160262 validated: installed 770,030,373 B, trimmed 290,678,527 B, ZIP 104,141,664 B. macOS 34078946155 provisional: installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B (failed package smoke). Final both-platform measurements pending |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
 is replaced with all eight scripts. Installed CTests and package verification
@@ -340,7 +340,7 @@ timeouts remain unchanged (fit: 3600 s). YAML parsing and every workflow shell
 body's `bash -n` pass. Native completion and validated package measurements are pending;
 X monitors Actions every 20 minutes and routes product defects to their owners.
 
-First native results (2026-09-07, run above): macOS protocol 72.28 s, describe
+First native results (2026-09-07, [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155)): macOS protocol 72.28 s, describe
 40.04 s, cli 81.50 s, session 172.71 s, program 46.97 s, observe 50.60 s all
 pass with no skips. Metal observation repeats hash `514eabae…` byte-for-byte.
 Feedback fails at `tests/agent/feedback.py:129` (2.05 s), fit at
@@ -395,15 +395,33 @@ X resumed on coordinator instruction: Windows-only [run 34100128906](https://git
 at [95169391](https://github.com/fran0220/blender-cli/commit/95169391efb8799e4b51ff64463a04605dd3ebed)
 validates native-path/HKLM ICD discovery with loader debug output, and the
 runtime greeting's `device` verdict. K's startup cleanup and W's no-device CLI
-expectation fix are not prerequisites for this diagnostic run. Its results are
-pending; a final both-platform run follows the coordinator's separate all-landed
-signal and must cover macOS path fixes/Cycles plus all eight Windows tests.
+expectation fix are not prerequisites for this diagnostic run. Results are
+recorded below; the final both-platform run follows the coordinator's all-landed
+signal and covers macOS path fixes/Cycles plus all eight Windows tests.
 
 K-requested Windows retry [34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262)
 at [5aac050c718](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca)
 adds failed-startup PID/endpoint cleanup and W's device-aware CLI assertions.
-It runs alongside the earlier ICD diagnostic; results, particularly `repl`
-crash recovery after startup cleanup, are pending.
+It passes all eight installed CTests with no CTest skips: protocol 222.08 s,
+describe 118.31 s, cli 84.85 s, session 1108.22 s, program 135.47 s,
+observe 334.13 s, feedback 150.58 s, fit 1309.31 s. All eight trimmed scripts
+exit zero. Session reaches the complete startup and `repl` crash-recovery
+assertions; program recovery and CLI status report `device: "vulkan"`.
+Loader debug explicitly says elevated processes ignore `VK_DRIVER_FILES`,
+locates the lavapipe JSON in HKLM and loads `.\vulkan_lvp.dll`. Package Cycles
+and before/after byte equality pass (SHA-256 `9d5aaaa2…`). Size: installed
+770,030,373 B, trimmed 290,678,527 B, ZIP 104,141,664 B, valid for this revision.
+No-device subcases using an environment override cannot remove the registry
+ICD on an elevated runner; this successful run is software-device evidence.
+
+Earlier diagnostic 34100128906 also proves working ICD/rendering, but protocol
+times out at 240.02 s and session at `session.py:125` times out its 30 s
+`agent.compare('missing.png', 'front')` call. Describe 191.22 s, cli 122.74 s,
+program 220.11 s, observe 541.37 s, feedback 242.85 s, fit 2063.50 s pass.
+Trimmed scripts pass except the same session call timeout. This runner is
+slower, and the timeout risk is reported to K/coordinator, not hidden by a skip.
+The final both-platform run 34114563805 on 6a276a08 started immediately after
+these runs completed, as requested; its results and final sizes are pending.
 
 ## Ordering
 
