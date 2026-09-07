@@ -48,7 +48,7 @@ def load(ref):
     if not np.isfinite(rgba).all():
         raise ValueError("Reference contains non-finite pixels")
     # Recognize the documented single-tile observe frame, not arbitrary image borders.
-    if w == h and w in (516, 772, 1028):
+    if w == h and w in (260, 516, 772, 1028):
         border = np.concatenate((rgba[:2].reshape(-1, 4), rgba[-2:].reshape(-1, 4),
                                  rgba[:, :2].reshape(-1, 4), rgba[:, -2:].reshape(-1, 4)))
         if np.all(bytes_rgb(border[:, :3]) == 32) and np.all(border[:, 3] == 1):

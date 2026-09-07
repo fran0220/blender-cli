@@ -1613,7 +1613,7 @@ Alpha is resampled with premultiplied **display** RGB to avoid transparent-color
 bleeding, then unpremultiplied for segmentation. Reference image datablocks and
 render data are disposed under the observation recalc/callback preservation boundary.
 
-A square 516/772/1028 image whose entire two-pixel opaque outer border is
+A square 260/516/772/1028 image whose entire two-pixel opaque outer border is
 RGB(32,32,32) is recognized as a single observe tile and cropped by two pixels.
 No other border is removed; multi-view/pass sheets should be cropped by the
 caller. This makes observe→compare self-consistency independent of sheet chrome.
