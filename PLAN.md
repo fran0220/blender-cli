@@ -334,9 +334,65 @@ all agent CTests pass. No import/export verb or wire change.
 
 | Item | Status |
 |---|---|
-| Protocol round trips, cross-cwd program replay, imported-object edits/fit and trimmed package IO | doing — test scaffold written; supervised Linux setup/configure/install running in `build/orb`; no runtime evidence yet |
-| Tested usage recipe and format-preservation table | todo — commands and output follow binary verification |
+| Protocol round trips, cross-cwd program replay, imported-object edits/fit and trimmed package IO | done on Linux — `agent_io` 232.07 s; all eight paths pass installed/trimmed with Vulkan and forced `device: null`; 13 operator polls and both add-on preferences survive factory reset |
+| Tested usage recipe and format-preservation table | done — `usage.md` contains the actual default-normal GLB exchange (24 vertices / 12 triangles), recorded import, explicit selection export, new-process dimensions `(3.0, 2.0, 2.0)`, format table, loss tolerances and path/axis/unit/add-on/selection gotchas |
 | Product-platform IO evidence | unverified — Linux development evidence does not prove macOS/Windows IO |
+
+Linux orb evidence (2026-09-07, xPack GCC 14.3.0, software Vulkan/lavapipe):
+`.agents/setup`, agent-profile configure and `cmake --build build/orb --target
+install` exit 0, warnings visible. Full `ctest --test-dir build/orb -R agent
+--output-on-failure`: **100% tests passed, 0 tests failed out of 9**,
+1651.23 s. Individual seconds: protocol 37.90, describe 29.38, CLI 70.65,
+session 470.71, program 54.84, IO 232.07, observe 111.29, feedback 86.96,
+fit 557.40. The fetched comparison fix and platform-report changes were merged
+without conflict; the installed Python was refreshed before the fit test ran.
+
+`tests/agent/package.py` runs `io.py` against the output of the existing
+packaging script, so it adds no second package-layout implementation. Installed
+and trimmed sessions pass all 13 import/export polls after
+`read_factory_settings(use_empty=True)`, including native `wm.fbx_import`
+and the retained FBX add-on. Render equality SHA-256:
+`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
+Forced `VK_DRIVER_FILES=/tmp/no-driver.json` runs pass both the installed IO
+test and package smoke/trimmed IO with `device: null`: no pushed feedback,
+`fit` returns `NoDevice`, but geometry, exports, program replay and errors are
+all checked, exit 0 rather than skipping the non-render subject.
+
+Each row builds its source file with a separate one-shot binary, imports it
+through `repl`, checks counts/bounds/materials/UV mapping, copies only the
+program directory to another cwd, and verifies fresh `session open` recovery
+plus `program run` against the live digest. A transform emits `diff` and
+`perception`, and nine RNA-fit evaluations against the imported model's own
+reference improve IoU to >0.98. Another real transform is then exported and
+read by another one-shot process. The same digests hold in installed/trimmed
+and device/no-device runs:
+
+| Path | Vertices / faces | Trimmed Vulkan wall (s) | Imported / fresh replay digest (sha256) |
+|---|---|---|---|
+| OBJ | 8 / 6 | 27.20 | `2a779d2da11239a7fc78a8779e44c0e8e0fd8fc8b423d3c89b17df277ee9c863` |
+| FBX native | 8 / 6 | 28.03 | `5f64a0496657e2ded2f4d498760d9ce7ae0ca99014d9188ece1c73a39db5c894` |
+| FBX add-on | 8 / 6 | 26.79 | `7cee89f413d7d2b212b61cecdf2e3f529d4bfd1067ea6377fae92413c4a93853` |
+| STL | 8 / 12 | 27.69 | `b217afa8815dc90686d541197c13760f05d0ee8424beed5e8a326365911b4eda` |
+| PLY | 8 / 6 | 27.46 | `8ed5a8fdc4cb25c2dd2e7357b97c0913cabe4a7dac09af38f3ab596a579f3748` |
+| glTF | 8 / 12 | 28.39 | `ba98fe338dde7f5f452a2b859d2656e0fae717ba1adfe9a691f4bc0e18e8e4b8` |
+| GLB | 8 / 12 | 28.82 | `ba98fe338dde7f5f452a2b859d2656e0fae717ba1adfe9a691f4bc0e18e8e4b8` |
+| blend | 8 / 6 | 27.41 | `01c2ddad92473fc1c1afff21e5965c7330b3d453b00fe33bdd21de2a2563bde8` |
+
+Defects/decisions: no missing importer, factory-reset add-on failure, package
+dependency loss, import crash or digest mismatch was found. USD/Alembic
+returned `AttributeError` with only “could not be found” and unrelated
+STL/PLY/OBJ/FBX nearest identifiers. `agent_rna.py` now uses live
+`bpy.app.build_options` to supply “support is not built in” in the existing
+`rna.description`, with empty nearest and no spurious fix. The original
+type/message/line remain unchanged, as the design requires; no wire shape,
+operator wrapper or upstream file changed. The real agent recipe in
+`usage.md` demonstrates the diagnostic now answers why the format failed
+in that same response rather than requiring a build-options/describe probe.
+Absolute external paths remain conservatively `reproducible: false`; the
+test proves actual replay while the immutable input exists, not portability
+after that file is removed. Normal/UV seams and triangulation are format
+semantics, documented rather than treated as defects. Rigs, animation,
+texture-file round trips and native macOS/Windows IO remain unverified.
 
 ### X — product platforms
 
