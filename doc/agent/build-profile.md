@@ -421,7 +421,10 @@ byte-identical original/trimmed observation (SHA-256
 HKLM discovery succeeds through the bundled loader; sessions report
 `device: "vulkan"`. This validates the DLL/manifest trim with software Vulkan,
 not Windows 11 GPU hardware. These logical-byte measurements are valid for
-this revision; the final both-platform run on 6a276a08 is pending in PLAN.
+this revision. The later 6a276a08 run passes rendering/package smoke but fails
+protocol/session timeouts: installed 770,039,611 B, trimmed 290,678,958 B and
+ZIP 104,141,853 B remain provisional because its complete package gate fails.
+The corrected Windows-only retry is recorded in PLAN.
 `diagnostics-windows_x64-full/release.json` contains the complete per-path record.
 
 | Measurement | Bytes |

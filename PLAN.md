@@ -508,7 +508,20 @@ factory-reset smoke and original/trimmed byte equality pass (SHA-256
 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`).
 Validated macOS bytes: installed 742,747,303, trimmed 346,212,598,
 tar.zst 72,837,002. F/T's canonical-path fixes and X's Cycles layout fix are
-verified on macOS. Windows is still running; no restart for later fixes.
+verified on macOS.
+
+The Windows leg completed with the two known timeout causes: protocol reaches
+its 240.00 s CTest budget; session fails at `session.py:125` when missing-reference
+comparison exceeds the 30 s subprocess budget. Describe 190.58 s, cli 121.47 s,
+program 221.48 s, observe 540.94 s, feedback 241.66 s and fit 2085.22 s pass.
+Trimmed scripts pass 7/8 (only the same session timeout fails). Package smoke
+and byte equality pass, but the full package gate fails; measured bytes
+770,039,611 installed / 290,678,958 trimmed / 104,141,853 ZIP remain provisional.
+Per coordinator's conditional authorization, Windows-only
+[run 34128930729](https://github.com/fran0220/blender-cli/actions/runs/34128930729)
+was dispatched at [26b6c839](https://github.com/fran0220/blender-cli/commit/26b6c839a49264d77186e9a864b039aa8a887e2e).
+It includes K's measured-platform harness budgets and T's reference-load-before-render
+fix; this retry supplies the final Windows number. macOS evidence stands unchanged.
 
 ## Ordering
 
