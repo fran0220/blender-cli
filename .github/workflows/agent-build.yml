@@ -92,6 +92,7 @@ jobs:
           cmake --build build/ci --target bf_agent blender-cli --parallel ${{ runner.os == 'macOS' && 3 || 4 }}
           echo 'GATE_TARGETS_OK: bf_agent blender-cli'
       - name: Full build and install
+        id: install
         if: inputs.full || runner.os == 'Linux'
         run: |
           cmake --build build/ci --parallel ${{ runner.os == 'macOS' && 3 || 4 }}
@@ -99,9 +100,12 @@ jobs:
           echo BUILD_EXIT=0
       - name: Protocol tests
         if: inputs.full || runner.os == 'Linux'
+        timeout-minutes: 120
         run: ctest --test-dir build/ci -R agent --output-on-failure
       - name: Trim, archive and verify installed package
-        if: inputs.full || runner.os == 'Linux'
+        id: package
+        if: '!cancelled() && steps.install.outcome == ''success'''
+        timeout-minutes: 120
         run: |
           platform='${{ matrix.platform }}'
           platform="${platform/_/-}"
@@ -120,15 +124,22 @@ jobs:
           elif [[ "$status" != 0 ]]; then
             exit "$status"
           fi
-          for test in protocol session observe compare; do
+          failed=0
+          for test in protocol describe cli session program observe feedback fit; do
             set +e
             python3 "tests/agent/$test.py" "$trimmed"
             status=$?
             set -e
-            if [[ "$status" != 0 && "$status" != 77 ]]; then exit "$status"; fi
+            echo "PACKAGE_TEST: $test exit=$status"
+            if [[ "$status" = 77 ]]; then
+              echo "::warning::Package $test skipped: not rendering evidence."
+            elif [[ "$status" != 0 ]]; then
+              failed=1
+            fi
           done
+          exit "$failed"
       - uses: actions/upload-artifact@v4
-        if: inputs.full || runner.os == 'Linux'
+        if: '!cancelled() && steps.package.outcome == ''success'''
         with:
           name: package-${{ matrix.platform }}
           compression-level: 0
@@ -153,3 +164,4 @@ jobs:
             build/ci/CMakeCache.txt
             build/ci/Testing/Temporary/LastTest.log
             build/ci/Testing/Temporary/LastTestsFailed.log
+            build/release.json

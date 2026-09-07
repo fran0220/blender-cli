@@ -110,9 +110,11 @@ unreachable; no claimed percentage saving justifies additional upstream drift.
 and refuses an existing output. It writes a sibling JSON with logical bytes,
 per-component sizes, every removal (including absent paths), retained module
 relocations, version parsed from the actual CLI, and compressed archive size.
-`python3 tests/agent/package.py <original-cli> <trimmed-cli>` exercises all six
-verbs, Cycles registration and byte-identical observation. Run all four existing
-protocol scripts against the new tree as well before distributing it.
+`python3 tests/agent/package.py <original-cli> <trimmed-cli>` exercises session,
+exec, inspect, describe, observation and in-code comparison, Cycles registration
+and byte-identical observation. Run all eight current protocol scripts against
+the new tree as well before distributing it: protocol, describe, cli, session,
+program, observe, feedback and fit.
 
 macOS uses a plain directory with `bin/` and `Resources/`, preserving upstream
 `@loader_path/../Resources/lib` and application resource lookup; a top-level
@@ -135,6 +137,11 @@ profile with a 360-minute job budget. Each platform caches pinned libraries and 
 The manual full workflow builds, installs, tests and
 archives both product targets by default; dispatch can select one native
 platform for a focused retry without repeating another multi-hour build.
+The job budget is 360 minutes, with 120 minutes each for installed CTests and
+packaging plus trimmed-tree tests. CTest retains each test's declared timeout
+(up to 3600 seconds for fit). Packaging still runs after an installed-test
+failure so both layouts can be diagnosed; its size JSON is retained with the
+diagnostics even on failure. Archives are uploaded only after package checks pass.
 Native device absence returns CTest skip code 77 with an explicit
 Metal/Vulkan reason; render errors are never converted to skips. A skipped
 render is not product-platform rendering evidence; execution status lives in PLAN.
