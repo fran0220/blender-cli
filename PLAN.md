@@ -26,7 +26,7 @@ edit them only where their row says so.
 | Observation renderer: EEVEE offscreen, fixed presets/lighting/color management, framing from converted geometry, `framing` in the response, GN instances, Vulkan descriptor-pool rollover so a session renders without bound | `agent_render.cc`, `agent_observe.py`, `vk_descriptor_pools.cc/.hh` (`/* blender-cli */`, exception in `upstream.md`) | done on Linux — pool rollover at 250 sets fixes ~1,810 extra maps/render (35 completed then crash at 65,530-map limit): 300 helper renders in 1,863.62 s (200 at 1,276.37 s) and 300 CLI renders in 1,449.46 s, warm maps bounded 1,301–1,543 and RSS ~1.08–1.20 GiB. OpenGL survives 50 renders in 403.29 s (~868 maps); four CTests including 120-render regression pass, deterministic hash `84ab1492…` retained; timings include concurrent stress; native product GPUs unverified |
 | Metrics: IoU, Chamfer, SSIM, histogram distance; `--mask auto` classic-CV segmentation; `fit=bbox` reference normalisation with occupancy 1/1.1 | `agent_compare.py` | done — retained as the objective's computation; the `compare` verb is removed by the CLI workstream |
 | RNA: `describe` for `bpy.*` and `agent.*`, corrective error records (`nearest`, `data.` hop, property/operator schemas) | `agent_rna.py` | done — extended by the describe workstream |
-| Packaging: trimmed install, `tar.zst`, size tables | `packaging/package.py`, `tests/agent/package.py`, `doc/agent/build-profile.md` | done on Linux and macOS — Windows package unverified; re-measured by the platform workstream after all features land |
+| Packaging: trimmed install, `tar.zst`, size tables | `packaging/package.py`, `tests/agent/package.py`, `doc/agent/build-profile.md` | historical Linux/macOS evidence only — X is running the eight-test final surface and re-measuring both product packages; Windows remains unverified |
 
 ## Workstreams
 
@@ -322,16 +322,23 @@ run's orb at `.amp/in/artifacts/run2/`. One item filed, with the ruling:
 Done when: all agent tests pass on macOS arm64 and Windows x64 from the
 manual workflows, package sizes are re-measured after the feature work, and
 `build-profile.md` records them. Not scheduled until every workstream above
-is `done` on Linux.
+is `done` on Linux. Linux work is complete; native verification is now running.
 
 Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 `packaging/package.py`, `tests/agent/package.py`.
 
 | Item | Status |
 |---|---|
-| macOS arm64 full run of all agent tests on the final surface | todo |
-| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | unverified — no native Windows run has passed the runtime tests |
-| Re-measured package sizes on both product platforms | todo |
+| macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4), includes F's final silhouette fix; W's final docs pending, so a final dispatch follows |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — same run/revision as macOS; no native Windows run has passed the current runtime tests |
+| Re-measured package sizes on both product platforms | doing — same run; size JSON retained in diagnostics even if tests fail; historical size tables are not final-surface evidence |
+
+The workflow's stale four-script package loop (including deleted `compare.py`)
+is replaced with all eight scripts. Installed CTests and package verification
+each have a 120-minute step budget inside the 360-minute job; CTest's individual
+timeouts remain unchanged (fit: 3600 s). YAML parsing and every workflow shell
+body's `bash -n` pass. Native execution and package measurements are pending;
+X monitors Actions every 20 minutes and routes product defects to their owners.
 
 ## Ordering
 
