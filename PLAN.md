@@ -330,7 +330,7 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 | Item | Status |
 |---|---|
 | macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4): build passes, 6/8 CTests pass, feedback and fit fail path assertions (below); W's final docs pending, so a final dispatch follows |
-| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | unverified — same run/revision as macOS: build passes, five tests fail and three legitimately skip for no Vulkan ICD; no Windows runtime test passes (details below) |
+| Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — K-requested retry [34083367870](https://github.com/fran0220/blender-cli/actions/runs/34083367870) at [8016542f1ec](https://github.com/fran0220/blender-cli/commit/8016542f1ec324557a3790376ea69181d0b97345), includes K's device probe/ASCII envelope fixes, W's ASCII help, X's lavapipe ICD and package fixes; previous run had five failures/three no-ICD skips |
 | Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; Windows installed 769,620,906 B, trimmed 290,673,358 B, ZIP 104,135,330 B. Both package smoke checks fail, so these are not validated release sizes |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
