@@ -615,3 +615,17 @@ K lands and finishes after F/T/P/D. L runs on the first build where W is
 - Software Vulkan (lavapipe) on a hosted Windows runner is evidence for the
   Vulkan code path, not for a Windows 11 GPU; real-device rows stay
   `unverified` until run on one.
+- A test compares paths, never their spelling: `Path(...).resolve()` equality
+  on both sides, no `startswith("/")`, no suffix match, no unresolved
+  temporary root. Both native test defects so far (macOS `/private/var`
+  aliasing, Windows separators) were assertions about the shape a path has on
+  the machine the author could run on; the code under test was right both
+  times. Every subprocess that reads the binary's output decodes UTF-8
+  explicitly.
+- A ctest `TIMEOUT` is a harness budget, at least twice the slowest measured
+  evidence platform, with the measurements recorded beside the rule in
+  `tests/agent/CMakeLists.txt`; a partial run is a lower bound, not a
+  measurement. Fail cheap before doing work: a request that will refuse
+  validates what is local and cheap before it renders.
+- The CI trimmed-package loop derives its script list from the CMake test
+  registrations; the test surface has one home.
