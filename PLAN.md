@@ -554,6 +554,16 @@ fit 298.35. Package smoke and the same original/trimmed byte equality pass.
 Validated nine-test macOS sizes at 0f526b4f: installed 744,885,109 B,
 trimmed 346,213,975 B, tar.zst 72,827,125 B. Windows is still running.
 
+Windows 34147274931 completes nine installed CTests without skips: protocol
+296.22 s, describe 163.25 s, cli 116.84 s, session 1454.37 s, program 197.92 s,
+IO 1270.16 s, observe 476.53 s, feedback 221.25 s, fit 1915.99 s.
+Package smoke/byte equality and the first eight trimmed scripts pass, but the
+aggregate package step kills the still-running fit at 120 minutes. There is no
+fit assertion failure. X raises the package step to 180 minutes; the 360-minute
+job still covers build, installed tests and this step. Another dispatch awaits
+coordinator authorization. Windows installed 772,171,059 B, trimmed 290,680,354 B,
+ZIP 104,142,401 B remain provisional until the complete package gate passes.
+
 ## Ordering
 
 ```diagram

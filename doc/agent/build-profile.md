@@ -139,9 +139,12 @@ profile with a 360-minute job budget. Each platform caches pinned libraries and 
 The manual full workflow builds, installs, tests and
 archives both product targets by default; dispatch can select one native
 platform for a focused retry without repeating another multi-hour build.
-The job budget is 360 minutes, with 120 minutes each for installed CTests and
-packaging plus trimmed-tree tests. CTest retains each test's declared timeout
-(up to 3600 seconds for fit). Packaging still runs after an installed-test
+The job budget is 360 minutes, with 120 minutes for installed CTests and
+180 minutes for packaging plus trimmed-tree tests. Nine scripts plus IO smoke
+exceeded the old 120-minute aggregate package budget on Windows lavapipe;
+the cutoff was during fit after the first eight trimmed scripts passed.
+CTest retains each test's declared timeout (up to 4800 seconds for fit).
+Packaging still runs after an installed-test
 failure so both layouts can be diagnosed; its size JSON is retained with the
 diagnostics even on failure. Archives are uploaded only after package checks pass.
 Native device absence returns CTest skip code 77 with an explicit

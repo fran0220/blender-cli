@@ -138,7 +138,9 @@ jobs:
       - name: Trim, archive and verify installed package
         id: package
         if: '!cancelled() && steps.install.outcome == ''success'''
-        timeout-minutes: 120
+        # Nine scripts plus IO package smoke exceed 120 minutes on lavapipe:
+        # run 34147274931 reached the final script before the aggregate cutoff.
+        timeout-minutes: 180
         run: |
           platform='${{ matrix.platform }}'
           platform="${platform/_/-}"
