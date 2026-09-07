@@ -57,7 +57,7 @@ if __name__ == "__main__":
             raise
         gpu = False
     with tempfile.TemporaryDirectory(prefix="agent package ") as directory:
-        root = Path(directory)
+        root = Path(directory).resolve()
         first, second = root / "original.png", root / "trimmed.png"
         smoke(original, root, first, gpu=gpu)
         smoke(trimmed, root, second, first, gpu=gpu)
