@@ -17,7 +17,7 @@ from gpu import require_device
 def smoke(executable, root, image, reference=None, gpu=True):
     def call(*args):
         process = subprocess.run([str(executable), *map(str, args), "--json"], cwd=root,
-                                 capture_output=True, text=True, timeout=180)
+                                 capture_output=True, text=True, encoding="utf-8", timeout=180)
         assert process.returncode == 0, (args, process.stdout, process.stderr)
         result = json.loads(process.stdout)
         assert result.get("ok", True), result
