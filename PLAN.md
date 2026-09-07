@@ -391,6 +391,12 @@ AF_UNIX/20 round trips before failing the reopen after missing-file startup
 Observe/feedback/fit skip77. Measured Windows bytes: installed 759,137,531,
 trimmed 290,677,679, ZIP 104,141,306; still not validated rendering/package evidence.
 
+X checkpoint, 2026-09-07 06:15 UTC: no native run is active. More than an hour
+has elapsed awaiting K's startup-cleanup fix/retry request and the coordinator's
+final-dispatch confirmation. X reports blocked, not done; scheduled checks stop
+until an owner reply resumes the work. The registry-based ICD setup, final
+eight-test runs, macOS Cycles verification and validated final sizes remain pending.
+
 ## Ordering
 
 ```diagram
