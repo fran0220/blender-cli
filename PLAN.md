@@ -329,16 +329,30 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 
 | Item | Status |
 |---|---|
-| macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4), includes F's final silhouette fix; W's final docs pending, so a final dispatch follows |
+| macOS arm64 full run of all agent tests on the final surface | doing — [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155) at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4): build passes, 6/8 CTests pass, feedback and fit fail path assertions (below); W's final docs pending, so a final dispatch follows |
 | Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | doing, still unverified — same run/revision as macOS; no native Windows run has passed the current runtime tests |
-| Re-measured package sizes on both product platforms | doing — same run; size JSON retained in diagnostics even if tests fail; historical size tables are not final-surface evidence |
+| Re-measured package sizes on both product platforms | doing — same run: macOS installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B; package smoke fails Cycles registration, so these are not validated release sizes; Windows pending |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
 is replaced with all eight scripts. Installed CTests and package verification
 each have a 120-minute step budget inside the 360-minute job; CTest's individual
 timeouts remain unchanged (fit: 3600 s). YAML parsing and every workflow shell
-body's `bash -n` pass. Native execution and package measurements are pending;
+body's `bash -n` pass. Native completion and validated package measurements are pending;
 X monitors Actions every 20 minutes and routes product defects to their owners.
+
+First native results (2026-09-07, run above): macOS protocol 72.28 s, describe
+40.04 s, cli 81.50 s, session 172.71 s, program 46.97 s, observe 50.60 s all
+pass with no skips. Metal observation repeats hash `514eabae…` byte-for-byte.
+Feedback fails at `tests/agent/feedback.py:129` (2.05 s), fit at
+`tests/agent/fit.py:179` (13.53 s): returned paths resolve `/var` to
+`/private/var`, but the tests compare against an unresolved temporary root.
+F and T were asked to resolve their roots without weakening the location checks.
+X's package smoke catches `CYCLES` missing from the trimmed session's render
+engine enum. Upstream `addon_utils.reset_all()` enumerates add-on directories,
+not general modules: preference-driven Cycles and pose_library must stay in
+`addons_core`. The package layout and explicit factory-reset smoke assertion
+are corrected, native verification pending. Trimmed suite did not run because
+smoke failed. Windows remains in build at this checkpoint.
 
 ## Ordering
 

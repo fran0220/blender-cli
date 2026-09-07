@@ -29,6 +29,7 @@ def smoke(executable, root, image, reference=None, gpu=True):
     call("session", "open")
     try:
         call("exec", "-c", "import bpy, agent, agent_runtime, agent_observe, agent_compare, agent_rna; "
+             "bpy.ops.wm.read_factory_settings(); "
              "bpy.data.objects['Cube'].scale.x = 0.6; "
              "bpy.context.scene.render.engine = 'CYCLES'; "
              "bpy.context.scene.render.engine = 'BLENDER_EEVEE'")

@@ -48,12 +48,14 @@ Tier 1 — CMake options, zero source changes (see the profile):
 
 Tier 2 — packaging, zero source changes:
 
-- `scripts/addons_core`: exactly `io_scene_gltf2`, `io_scene_fbx`, `rigify`.
-  **Required retention:** `cycles`, `bl_pkg`, `pose_library`, `io_anim_bvh`,
-  `io_curve_svg`, `io_mesh_uv_layout` move unchanged to `scripts/modules`.
-  Factory startup imports these modules; deleting them pollutes one-shot JSON
-  with import errors and removes Cycles engine registration. Relocated bytes
-  are not claimed as savings. Other optional add-ons are deleted.
+- `scripts/addons_core`: `io_scene_gltf2`, `io_scene_fbx`, `rigify`, `cycles`
+  and `pose_library`. Preference-driven add-ons must remain discoverable by
+  upstream `addon_utils.reset_all()` after factory resets; being importable
+  from `scripts/modules` alone is insufficient. Hidden core modules `bl_pkg`,
+  `io_anim_bvh`, `io_curve_svg`, `io_mesh_uv_layout` move unchanged to
+  `scripts/modules`; upstream enables them persistently. Deleting required
+  modules pollutes one-shot JSON with import errors. Relocated bytes are not
+  claimed as savings. Other optional add-ons are deleted.
 - Python standard library: drop `test`, `idlelib`, `tkinter`, `ensurepip`,
   `lib2to3`, `turtledemo`. Linux already lacks all except `ensurepip`; CPython
   3.13 removed lib2to3, and upstream install excludes the other five except
@@ -333,6 +335,14 @@ Zero-byte symlink aliases are omitted; each actual library is counted once.
 | libblender_cpu_check, libbf_intern_meshopt_bridge | 16 KiB each | keep |
 
 ## Measured — macOS arm64
+
+The table below is historical, before the final eight-test surface. The first
+post-feature measurement, [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155)
+at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4),
+reports installed 742,344,970 bytes, trimmed 346,209,478 bytes and tar.zst
+72,821,523 bytes. This package is **not validated**: its Cycles registration
+fails after session recovery/reset. A corrected layout must be re-measured;
+the historical component tables are not attributed to this run.
 
 GitHub `macos-15` arm64, AppleClang 17.0.0, Release, actual Metal device:
 [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411).

@@ -124,16 +124,16 @@ def package(install, output, platform, archive):
             shutil.rmtree(path)
 
     addons = version_dir / "scripts" / "addons_core"
-    # These are imported unconditionally by upstream's factory startup, or
-    # register the retained Cycles engine. Preserve their original module names
-    # and code in the standard module search path, not the optional add-on tree.
+    # Hidden core modules are enabled persistently by upstream factory startup.
+    # Preference-driven add-ons must stay discoverable by addon_utils.reset_all
+    # after a factory reset, not merely importable from scripts/modules.
     report["relocated"] = []
-    for name in ("bl_pkg", "io_anim_bvh", "io_curve_svg", "io_mesh_uv_layout", "cycles", "pose_library"):
+    for name in ("bl_pkg", "io_anim_bvh", "io_curve_svg", "io_mesh_uv_layout"):
         path = addons / name
         destination = version_dir / "scripts" / "modules" / name
         report["relocated"].append({"module": name, "bytes": size(path)})
         shutil.move(str(path), destination)
-    keep = {"io_scene_gltf2", "io_scene_fbx", "rigify"}
+    keep = {"io_scene_gltf2", "io_scene_fbx", "rigify", "cycles", "pose_library"}
     for path in sorted(addons.iterdir()):
         if path.name not in keep:
             remove(path)
