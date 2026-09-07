@@ -10,7 +10,8 @@ import tempfile
 import bpy
 import numpy as np
 
-from agent_observe import (OCCUPANCY, VIEWS, aim, bytes_rgb, isolated_data, names, png,
+from agent_observe import (BORDER, LADDER, OCCUPANCY, SIZES, VIEWS, aim, bytes_rgb,
+                           isolated_data, names, png,
                            render_passes, render_scene, resize, srgb)
 
 METRICS = ("iou", "chamfer", "ssim", "hist")
@@ -48,7 +49,7 @@ def load(ref):
     if not np.isfinite(rgba).all():
         raise ValueError("Reference contains non-finite pixels")
     # Recognize the documented single-tile observe frame, not arbitrary image borders.
-    if w == h and w in (260, 516, 772, 1028):
+    if w == h and w in {size + 2 * BORDER for size in SIZES}:
         border = np.concatenate((rgba[:2].reshape(-1, 4), rgba[-2:].reshape(-1, 4),
                                  rgba[:, :2].reshape(-1, 4), rgba[:, -2:].reshape(-1, 4)))
         if np.all(bytes_rgb(border[:, :3]) == 32) and np.all(border[:, 3] == 1):
@@ -252,8 +253,8 @@ def compare(ref, view, metrics=("iou",), mask="auto", size=512, frame=None, debu
     metrics = names(metrics, METRICS)
     if view not in VIEWS:
         raise ValueError(f"Unknown view: {view}")
-    if size not in (512, 768, 1024):
-        raise ValueError("size must be 512, 768 or 1024")
+    if size not in SIZES:
+        raise ValueError(f"size must be {LADDER}")
     if mask not in ("auto", "none"):
         raise ValueError("mask must be auto or none")
     if fit not in ("bbox", "none"):

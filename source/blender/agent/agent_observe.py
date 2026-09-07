@@ -18,11 +18,17 @@ import numpy as np
 from mathutils import Vector
 
 import agent
+from agent_contract import REQUESTS
 
 
 VIEWS = ("front", "back", "left", "right", "top", "bottom", "persp", "camera", "side")
 PASSES = ("color", "wire", "silhouette", "normal", "depth")
 BORDER = 2
+# The resolution ladder has one home: the contract the channel is validated
+# against and `describe` serves. Reading it here rather than restating it means
+# a size cannot exist that `observe` renders and the metric does not accept.
+SIZES = tuple(REQUESTS["observe"]["fields"]["size"]["enum"])
+LADDER = ", ".join(str(size) for size in SIZES[:-1]) + f" or {SIZES[-1]}"
 OCCUPANCY = 1 / 1.1
 # The silhouette is the metric's input, not a picture. It renders at this count
 # everywhere — observation, comparison, the budget view and the objective — so one
@@ -344,8 +350,8 @@ def observe(views=("front", "persp"), passes=("color",), size=512, ref=None,
     views, passes = names(views, VIEWS), names(passes, PASSES)
     # 256 is the objective's scoring size: a silhouette taken there is the pixels a
     # target will be compared against, rather than a resampling of a different raster.
-    if size not in (256, 512, 768, 1024):
-        raise ValueError("size must be 256, 512, 768 or 1024")
+    if size not in SIZES:
+        raise ValueError(f"size must be {LADDER}")
     if layout not in ("sheet", "separate"):
         raise ValueError("layout must be sheet or separate")
     if overlay and not ref:

@@ -715,11 +715,36 @@ json.dumps(float(np.count_nonzero(recovered & silhouette)
     assert compare("alpha.png", mask="none")["iou"] >= 0.98
     for extension in ("jpg", "webp"):
         assert compare("colored." + extension)["iou"] >= 0.95, extension
-    for size in (768, 1024):
+    for size in (256, 768, 1024):
         resized = channel.value(
             f"import json; json.dumps(agent.compare('self.png', 'front', size={size},"
             " mask='none', fit='none', frame='Cube'))")
         assert set(resized) == {"view", "iou", "reference"} and resized["iou"] >= 0.98, resized
+
+    # The ladder has one home, so every size on it must round-trip: `observe`
+    # renders the tile, the loader recognises its border and crops it, and the
+    # metric accepts the size. A size that only some of the three know about is
+    # what this shares a definition to prevent.
+    ladder = channel.value("""
+import json
+from pathlib import Path
+from agent_observe import BORDER, SIZES
+from agent_compare import load
+from agent_observe import isolated_data
+rows = {}
+for size in SIZES:
+    path = agent.observe(views=('front',), passes=('silhouette',), size=size)['image']
+    with isolated_data():
+        rgba, has_alpha = load(path)
+    # `load` strips the two-pixel border of a recognised tile, so a recognised
+    # tile comes back at `size` and an unrecognised one at size + 2 * BORDER.
+    rows[str(size)] = [size + 2 * BORDER, list(rgba.shape[:2])]
+json.dumps(rows)
+""")
+    print("ladder round-trip:", json.dumps(ladder), flush=True)
+    assert ladder, ladder
+    for size, (tile, cropped) in ladder.items():
+        assert cropped == [int(size), int(size)], (size, tile, cropped)
 
     # Comparison reads the scene; it writes no file and changes no data.
     files = {str(path) for path in root.rglob("*.png")}
