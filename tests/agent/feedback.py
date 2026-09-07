@@ -56,7 +56,9 @@ def main():
     executable = str(Path(sys.argv[1]).resolve())
     require_device(executable)
     with tempfile.TemporaryDirectory(prefix="agent feedback ") as directory:
-        root = Path(directory)
+        # The session reports the paths it actually writes, so compare against the
+        # resolved directory: macOS hands out /var/folders/… for /private/var/folders/….
+        root = Path(directory).resolve()
 
         def call(*args, ok=True):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=root,
@@ -270,11 +272,15 @@ def main():
             # it will compare against: it scores itself exactly, by construction.
             exact = call("observe", "--views", "front", "--passes", "silhouette",
                          "--size", 256, "--layout", "separate")["image"]
-            same = call("target", "set", "exact", "--ref", exact, "--mask", "none",
-                        "--metrics", "iou,chamfer")["objective"]["targets"]["exact"]
-            assert same["iou"] == 1.0 and same["chamfer"] == 0.0, same
-            print("budget-size silhouette scores itself:", json.dumps(same), flush=True)
-            call("target", "clear", "exact")
+            for policy in ("none", "auto"):
+                # Under the default policy too: a 256 tile is an observe tile, so its
+                # border is cropped rather than estimated as part of the background.
+                same = call("target", "set", "exact", "--ref", exact, "--mask", policy,
+                            "--metrics", "iou,chamfer")["objective"]["targets"]["exact"]
+                assert same["iou"] == 1.0 and same["chamfer"] == 0.0, (policy, same)
+                print(f"objective-size silhouette scores itself, mask {policy}:",
+                      json.dumps(same), flush=True)
+                call("target", "clear", "exact")
 
             registered = call("target", "set", "front", "--ref", reference)
             # A 512 px silhouette is a different rasterisation of the same geometry, so
