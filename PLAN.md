@@ -399,6 +399,12 @@ expectation fix are not prerequisites for this diagnostic run. Its results are
 pending; a final both-platform run follows the coordinator's separate all-landed
 signal and must cover macOS path fixes/Cycles plus all eight Windows tests.
 
+K-requested Windows retry [34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262)
+at [5aac050c718](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca)
+adds failed-startup PID/endpoint cleanup and W's device-aware CLI assertions.
+It runs alongside the earlier ICD diagnostic; results, particularly `repl`
+crash recovery after startup cleanup, are pending.
+
 ## Ordering
 
 ```diagram
