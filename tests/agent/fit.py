@@ -150,7 +150,10 @@ def main():
     executable = str(Path(sys.argv[1]).resolve())
     require_device(executable)
     with tempfile.TemporaryDirectory(prefix="agent fit ") as directory:
-        root = Path(directory)
+        # The process reports paths it has resolved. On macOS the temporary
+        # directory arrives under the /var symlink and comes back as
+        # /private/var, so resolve once here and keep comparing exact paths.
+        root = Path(directory).resolve()
 
         def call(*args):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=root,
