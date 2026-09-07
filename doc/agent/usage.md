@@ -252,11 +252,11 @@ numeric part to the process. Start with a reference image bound to a view:
 ```sh
 blender-cli target set front --ref reference.png --view front --mask none --metrics iou,chamfer --json
 # {"ok":true,"name":"front","view":"front","mask":"none","fit":"bbox","metrics":["iou","chamfer"],
-#  "ref":"/tmp/p2/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
+#  "ref":"/tmp/p3/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
 #  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
 #  "objective":{"targets":{"front":{"iou":0.7111992708947622,"chamfer":9.531271046920601,"delta":null,
 #    "worst":{"region":[128,64,192,128],"iou":0.6128274009402284,"missing":0.0,"extra":1.0}}},
-#   "best":{"front":{"iou":0.7111992708947622,"snapshot":"sha256:35b2e2ce…","step":1}}}}
+#   "best":{"front":{"iou":0.7111992708947622,"snapshot":"sha256:f787acc6…","step":1}}}}
 ```
 
 Registering already scores: `iou` 0.71, and the worst 4×4 cell has
@@ -295,11 +295,13 @@ channel it reports as it goes:
 {"id": 1, "event": "progress", "eval": 7, "of": 40, "best": 0.9661864157600706, "params": {"height": 3.03125}}
 {"id": 1, "event": "progress", "eval": 9, "of": 40, "best": 0.9665591082428865, "params": {"height": 2.984375}}
 {"id": 1, "event": "progress", "eval": 17, "of": 40, "best": 0.9671457905544147, "params": {"height": 2.9814453125}}
-{"id": 1, "event": "done", "ok": true, "method": "coordinate", "evals": 22, "failed": 0, "stopped": "patience", "applied": true,
- "best": {"params": {"height": 2.9814453125}, "score": 0.9671457905544147, "snapshot": "sha256:b3e770f4…"},
+{"id": 1, "event": "done", "ok": true, "ms": 16865.63041699992, "method": "coordinate",
+ "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]},
+ "best": {"params": {"height": 2.9814453125}, "snapshot": "sha256:8c14f0c4…"},
+ "evals": 22, "failed": 0,
  "curve": [[1, 0.720560152768937], [2, 0.9477653631284916], [6, 0.9652351738241309], [7, 0.9661864157600706], [9, 0.9665591082428865], [17, 0.9671457905544147]],
- "error_map": {"target": "front", "view": "front", "image": "…/.blender-cli/fit/39df6ff3….png", "size": [128, 128], "region": [64, 64, 96, 96]},
- "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]}, "ms": 18606.213983999623}
+ "applied": true, "stopped": "patience",
+ "error_map": {"view": "front", "target": "front", "image": "…/.blender-cli/fit/39df6ff3….png", "size": [128, 128], "region": [64, 64, 96, 96]}}
 ```
 
 Twenty-two evaluations of a budget of forty, six `progress` events, and the
@@ -308,19 +310,20 @@ answer is a number the agent never had to guess: the model was built with
 2.9814453125. The best parameters are applied to the live scene and written
 into the program's `P` block, so `program get` now reports
 `{"height": 2.9814453125, "radius": 0.4}` and the program still reproduces the
-scene. Scored where the objective scores, that model is at `iou`
-0.9976686470632473.
+scene.
 
-Three fields say what the search did with the money. `stopped` is why it ended
-— `budget`, `seconds`, `cancel` or `patience`; this one converged, so it
-stopped at 22 rather than spending all 40. `curve` records only the evaluations
-that improved the best value, so it is the trajectory and not the transcript,
-and a flat tail means the budget was enough. `error_map` is a picture of what
-is still wrong, at the 4×4 cell contributing most of it.
+`curve` is the search's own reading, taken at its `budget.size` — 128 by
+default, cheaper than the objective's 256 — and the `objective` pushed after
+`fit` is the session's score. For this search that is `iou`
+0.9976686470632473, and it is the number to compare with every other score in
+the session.
 
-A search evaluates at its own `budget.size` — 128 by default, cheaper than the
-objective's 256 — so `best.score` is the search's own reading and the next
-pushed `objective` is the one to compare with the rest of the session.
+Two more fields say what the search did with the money. `stopped` is why it
+ended — `budget`, `seconds`, `cancel` or `patience`; this one converged, so it
+stopped at 22 rather than spending all 40. `error_map` is a picture of what is
+still wrong, at the 4×4 cell contributing most of it. And `curve` records only
+the evaluations that improved, so it is the trajectory rather than the
+transcript, and a flat tail means the budget was enough.
 
 `patience` is the convergence rule: the search gives up after that many
 evaluations without a real improvement. It has no fixed default, because the
@@ -341,14 +344,14 @@ says so immediately:
 
 ```sh
 blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
-# {"ok":true,"ms":539.8677059965848,…,"objective":{"targets":{"front":{"iou":0.8289790865854453,"chamfer":4.684057971014493,
+# {"ok":true,"ms":633.5521260007226,…,"objective":{"targets":{"front":{"iou":0.8289790865854453,"chamfer":4.684057971014493,
 #   "delta":{"iou":-0.16868956047780204,"chamfer":4.6259848484848485},
 #   "worst":{"region":[128,64,192,128],"iou":0.7152,"missing":0.05196629213483146,"extra":0.9480337078651685}}},
-#  "best":{"front":{"iou":0.9976686470632473,"snapshot":"sha256:b3e770f4…","step":2}}}}
+#  "best":{"front":{"iou":0.9976686470632473,"snapshot":"sha256:8c14f0c4…","step":2}}}}
 ```
 
 That cost 0.17 of `iou`, and `best` still names the snapshot that scored
-0.9977, so returning to it is `session rollback 'sha256:b3e770f4…'` — the
+0.9977, so returning to it is `session rollback 'sha256:8c14f0c4…'` — the
 process did the bookkeeping.
 
 `--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
