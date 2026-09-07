@@ -309,7 +309,12 @@ len(mesh.vertices)
             assert vertices() == 8
         finally:
             call("session", "close")
-        call("session", "open", "--file", root / "absent.blend", ok=False)
+        # A session that fails to open leaves nothing behind, so the next open
+        # is not told that a still-dying process is alive and unresponsive.
+        failed_open = call("session", "open", "--file", root / "absent.blend", ok=False)
+        assert failed_open["error"]["type"] in ("SessionError", "FileNotFoundError"), failed_open
+        assert not (root / ".blender-cli" / "session.pid").exists(), "a failed open kept its pid"
+        assert not Path(endpoint).exists(), "a failed open kept its endpoint"
         # A native call cannot be preempted; close still has a bounded forced-exit path.
         call("session", "open")
         quiet()

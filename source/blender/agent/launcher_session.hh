@@ -388,8 +388,13 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
         catch (const std::exception &) {
           /* Accepting the endpoint is not being open: the loop binds its
            * socket before it has a scene, so a session that cannot greet
-           * failed to start. */
+           * failed to start. It leaves nothing behind: the pid file it never
+           * earned would make the next open report a live session that is
+           * merely still dying, which is what a slower teardown produces. */
           socket_close(fd);
+          terminate_process(pid);
+          std::filesystem::remove(path);
+          std::filesystem::remove(pidfile);
           throw std::runtime_error("Session " + std::to_string(pid) +
                                    " exited while opening; see .blender-cli/session.log");
         }
