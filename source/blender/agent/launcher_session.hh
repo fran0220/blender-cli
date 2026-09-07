@@ -141,7 +141,9 @@ inline std::vector<nlohmann::json> read_events(LineReader &reader)
 /* Everything `repl` writes to stdout is one line of the same protocol. */
 inline void bridge_write(const nlohmann::json &event)
 {
-  puts(event.dump().c_str());
+  /* ASCII, like every event the session produces: a JSON line must not depend
+   * on the reader guessing the platform's code page. */
+  puts(event.dump(-1, ' ', true).c_str());
   fflush(stdout);
 }
 
@@ -253,7 +255,7 @@ template<typename Spawn> int session_client(const std::vector<std::string> &args
     return -1;
   }
   auto print = [&](const nlohmann::json &result) {
-    puts(result.dump(compact ? -1 : 2).c_str());
+    puts(result.dump(compact ? -1 : 2, ' ', true).c_str());
     return result.is_object() && result.value("ok", true) == false ? 1 : 0;
   };
   auto failure = [&](const std::string &type, const std::string &message) {

@@ -71,7 +71,7 @@ def main():
 
         def call(*args, ok=True, cwd=root, timeout=30):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=cwd,
-                                     capture_output=True, text=True, timeout=timeout)
+                                     capture_output=True, text=True, encoding="utf-8", timeout=timeout)
             assert process.returncode == (0 if ok else 1), (args, process.stdout, process.stderr)
             result = json.loads(process.stdout)
             assert result.get("ok", True) == ok, result
@@ -120,7 +120,8 @@ def main():
             # A statement that changes no datablock advances neither step nor snapshot.
             assert execute("x")["diff"]["step"] == 0, "namespace-only work is not a scene change"
             assert execute("agent is __import__('agent')")["value"] == "True"
-            assert execute(repr("模型" * 300))["value"] == repr("模型" * 300)
+            wide = execute(repr("模型" * 300))["value"]
+            assert wide == repr("模型" * 300), (len(wide), wide[:80], wide[-40:])
             assert "error" in execute("agent.compare('missing.png', 'front')", ok=False)
             baseline = call("session", "snapshot", "--label", "before")
             assert vertices() == 8
@@ -210,7 +211,7 @@ len(mesh.vertices)
 
             # `repl` is the same protocol on stdio: it bridges to this session.
             bridged = subprocess.run(
-                [executable, "repl"], cwd=root, capture_output=True, text=True, timeout=60,
+                [executable, "repl"], cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=60,
                 input=json.dumps({"id": 9200, "op": "exec",
                                   "code": "bridged = 'yes'\nbridged"}) + "\n")
             assert bridged.returncode == 0, bridged
@@ -229,7 +230,8 @@ len(mesh.vertices)
             channel = root / "channel"
             channel.mkdir()
             pipe = subprocess.Popen([executable, "repl"], cwd=channel, text=True, bufsize=1,
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+                                    encoding="utf-8", stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE)
             try:
                 def send(request):
                     pipe.stdin.write(json.dumps(request) + "\n")

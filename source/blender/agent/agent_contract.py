@@ -19,7 +19,7 @@ that change `Main`), `exactly_one_of`, and `cancels`.
 `"error"`: the request ends with `error` of type `Cancelled`, having restored
 the state it started from. `"done"` means the op keeps what it produced and
 ends successfully, saying in its own result that a cancel is why it stopped,
-which is what a paid-for search does — discarding its result would be the
+which is what a paid-for search does -- discarding its result would be the
 opposite of the point.
 """
 
@@ -91,7 +91,7 @@ DEFS = {
             "patience": {"type": "integer", "minimum": 1,
                          "doc": "Stop after this many evaluations without an improvement "
                                 "greater than `tolerance`. Absent: derived from the number "
-                                "of parameters, `max(16, k × parameters)`; see design.md fit."},
+                                "of parameters, `max(16, k * parameters)`; see design.md fit."},
             "tolerance": {"type": "number", "minimum": 0, "default": 1e-3,
                           "doc": "Score improvement below which an evaluation counts as none."},
             "size": {"type": "integer", "minimum": 1, "default": 128,
@@ -268,7 +268,12 @@ EVENTS = {
                        "and has no request id, so the recovery verdict is never asked for.",
                 "fields": {"session": {"type": "string"}, "file": {"type": "string"},
                            "dirty": {"type": "boolean"}, "step": {"type": "integer"},
-                           "snapshot": {"type": "string"}, "feedback": {"ref": "feedback_policy"},
+                           "snapshot": {"type": "string"},
+                           "device": {"type": "string", "enum": ["vulkan", "metal"],
+                                      "doc": "The GPU backend this machine has, or null. "
+                                             "Null means no picture: renders raise NoDevice "
+                                             "and the render-bearing providers stay silent."},
+                           "feedback": {"ref": "feedback_policy"},
                            "targets": {"type": "array", "items": {"type": "string"}},
                            "recovered_from": {"type": "string",
                                               "enum": ["autosave", "program"],

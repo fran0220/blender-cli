@@ -33,6 +33,7 @@
 #include "AGENT_command.hh"
 #include "agent_cli.hh"
 #include "agent_context.hh"
+#include "agent_device.hh"
 #include "agent_events.hh"
 #include "agent_session.hh"
 
@@ -164,6 +165,10 @@ class AgentCommand : public CommandHandler {
     PyObject *fields = recalc_fields();
     PyDict_SetItemString(native, "id_state", snapshot);
     PyDict_SetItemString(native, "fields", fields);
+    PyObject *backend = device() ? PyUnicode_FromString(device().name.c_str()) :
+                                   Py_NewRef(Py_None);
+    PyDict_SetItemString(native, "device", backend);
+    Py_DECREF(backend);
     Py_DECREF(snapshot);
     Py_DECREF(fields);
     Py_DECREF(capsule);
@@ -210,7 +215,7 @@ class AgentCommand : public CommandHandler {
     if (!parsed.error.empty()) {
       nlohmann::json envelope = {{"ok", false},
                                  {"error", {{"type", "ValueError"}, {"message", parsed.error}}}};
-      fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2).c_str());
+      fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2, ' ', true).c_str());
       return 1;
     }
     parsed.request["id"] = 1;
@@ -229,7 +234,7 @@ class AgentCommand : public CommandHandler {
     }
     Py_DECREF(answer);
     const auto envelope = fold(sink.events);
-    fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2).c_str());
+    fprintf(out, "%s\n", envelope.dump(parsed.compact ? -1 : 2, ' ', true).c_str());
     return envelope_status(envelope);
   }
 };
