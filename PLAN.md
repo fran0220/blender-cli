@@ -391,11 +391,13 @@ AF_UNIX/20 round trips before failing the reopen after missing-file startup
 Observe/feedback/fit skip77. Measured Windows bytes: installed 759,137,531,
 trimmed 290,677,679, ZIP 104,141,306; still not validated rendering/package evidence.
 
-X checkpoint, 2026-09-07 06:15 UTC: no native run is active. More than an hour
-has elapsed awaiting K's startup-cleanup fix/retry request and the coordinator's
-final-dispatch confirmation. X reports blocked, not done; scheduled checks stop
-until an owner reply resumes the work. The registry-based ICD setup, final
-eight-test runs, macOS Cycles verification and validated final sizes remain pending.
+X resumed on coordinator instruction: Windows-only [run 34100128906](https://github.com/fran0220/blender-cli/actions/runs/34100128906)
+at [95169391](https://github.com/fran0220/blender-cli/commit/95169391efb8799e4b51ff64463a04605dd3ebed)
+validates native-path/HKLM ICD discovery with loader debug output, and the
+runtime greeting's `device` verdict. K's startup cleanup and W's no-device CLI
+expectation fix are not prerequisites for this diagnostic run. Its results are
+pending; a final both-platform run follows the coordinator's separate all-landed
+signal and must cover macOS path fixes/Cycles plus all eight Windows tests.
 
 ## Ordering
 
