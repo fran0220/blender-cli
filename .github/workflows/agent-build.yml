@@ -158,9 +158,14 @@ jobs:
             exit "$status"
           fi
           failed=0
-          for test in protocol describe cli session program observe feedback fit; do
+          # CMake owns the suite: derive scripts from its test registrations so
+          # a newly registered test cannot disappear from trimmed verification.
+          tests=$(sed -n 's@.*"${CMAKE_CURRENT_SOURCE_DIR}/\([^"]*\.py\)".*@\1@p' tests/agent/CMakeLists.txt)
+          test -n "$tests"
+          for script in $tests; do
+            test="${script%.py}"
             set +e
-            python3 "tests/agent/$test.py" "$trimmed"
+            python3 "tests/agent/$script" "$trimmed"
             status=$?
             set -e
             echo "PACKAGE_TEST: $test exit=$status"
