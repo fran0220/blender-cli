@@ -275,7 +275,9 @@ class Perception:
         STATE.pending = None
 
     def after(self, request, session, emit):
-        if not session.request_feedback["perception"]:
+        # Without a device every action would report the same failure. The greeting's
+        # `device: null` says it once; repeating it per action is tokens, not news.
+        if session.device is None or not session.request_feedback["perception"]:
             return
         pending = sample(session)
         session.last_perception = pending["perception"]
@@ -293,7 +295,7 @@ class Image:
 
     def after(self, request, session, emit):
         policy = session.request_feedback["image"]
-        if policy["mode"] == "off":
+        if session.device is None or policy["mode"] == "off":
             return
         try:
             pending = sample(session)

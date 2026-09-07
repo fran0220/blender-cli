@@ -7,6 +7,7 @@
 import ast
 import base64
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -60,9 +61,10 @@ def main():
         # resolved directory: macOS hands out /var/folders/… for /private/var/folders/….
         root = Path(directory).resolve()
 
-        def call(*args, ok=True):
+        def call(*args, ok=True, env=None):
             process = subprocess.run([executable, *map(str, args), "--json"], cwd=root,
-                                     capture_output=True, text=True, timeout=900)
+                                     capture_output=True, text=True, timeout=900,
+                                     env=None if env is None else {**os.environ, **env})
             assert process.returncode == (0 if ok else 1), (args, process.returncode,
                                                             process.stdout, process.stderr)
             envelope = json.loads(process.stdout)
@@ -102,6 +104,36 @@ def main():
             x0, y0, x1, y1 = event["region"]
             assert [width, height] == [x1 - x0, y1 - y0], event
             return data
+
+        # A process with no GPU device says so once, in the greeting and `session
+        # status`, and then stays quiet: the providers push nothing render-bearing
+        # rather than repeating the same failure on every action. Run before the
+        # session opens, so this is a real one-shot rather than a connection to it.
+        blind = call("exec", "-c", "bpy.ops.mesh.primitive_cube_add()",
+                     env={"VK_DRIVER_FILES": str(root / "absent.json")})
+        if "perception" in blind:
+            print("a device survived VK_DRIVER_FILES; skipping the device-less case",
+                  flush=True)
+        else:
+            assert blind["diff"]["added"], blind
+            assert "images" not in blind, blind
+            assert "provider perception" not in blind.get("stderr", ""), blind
+            print("no device: the action answers, and feedback says nothing", flush=True)
+
+        # A process with no GPU device says so once, in the greeting and `session
+        # status`, and then stays quiet: the providers push nothing render-bearing
+        # rather than repeating the same failure on every action. Run before the
+        # session opens, so this is a real one-shot rather than a connection to it.
+        blind = call("exec", "-c", "bpy.ops.mesh.primitive_cube_add()",
+                     env={"VK_DRIVER_FILES": str(root / "absent.json")})
+        if "perception" in blind:
+            print("a device survived VK_DRIVER_FILES; skipping the device-less case",
+                  flush=True)
+        else:
+            assert blind["diff"]["added"], blind
+            assert "images" not in blind, blind
+            assert "provider perception" not in blind.get("stderr", ""), blind
+            print("no device: the action answers, and feedback says nothing", flush=True)
 
         call("session", "open")
         try:
