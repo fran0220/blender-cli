@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_render.hh"
+#include "agent_device.hh"
 #include "agent_session.hh"
 
 #include <vector>
@@ -67,8 +68,24 @@ PyObject *preserve_recalc(bContext *C)
   return capsule;
 }
 
+/* Raised instead of initialising a GPU that is not there. Blender's offscreen
+ * init would fall back to a platform GL context and, with no ICD, take the
+ * process down inside that fallback. */
+static PyObject *no_device()
+{
+  PyObject *module = PyImport_ImportModule("agent_runtime");
+  PyObject *type = module ? PyObject_GetAttrString(module, "NoDevice") : nullptr;
+  PyErr_Format(type ? type : PyExc_RuntimeError, "no GPU device: %s", device().reason.c_str());
+  Py_XDECREF(type);
+  Py_XDECREF(module);
+  return nullptr;
+}
+
 PyObject *render(bContext *C, PyObject *scene_name)
 {
+  if (!device()) {
+    return no_device();
+  }
   const char *name = PyUnicode_AsUTF8(scene_name);
   if (!name) {
     return nullptr;

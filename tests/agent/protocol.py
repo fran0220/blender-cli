@@ -10,6 +10,7 @@ from that stream and nothing else.
 """
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -23,7 +24,7 @@ def main():
 
         def raw(*args):
             return subprocess.run([executable, *map(str, args)], cwd=root,
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, encoding="utf-8", timeout=60)
 
         def call(*args, ok=True):
             process = raw(*args, "--json")
@@ -45,7 +46,7 @@ def main():
             channel.mkdir()
             process = subprocess.run([executable, "repl", *args], cwd=channel, timeout=120,
                                      input="".join(json.dumps(line) + "\n" for line in lines),
-                                     capture_output=True, text=True)
+                                     capture_output=True, text=True, encoding="utf-8")
             assert process.returncode == 0, (process.stdout, process.stderr)
             events = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
             # A conversation opens with the session it opened, before it is read from.
@@ -216,6 +217,30 @@ collection.objects.link(obj)
         assert rejected[0]["event"] == "error" and rejected[0]["type"] == "ProtocolError", rejected
         assert "Unknown field for exec: 'observe'" in rejected[0]["message"], rejected
         assert "Unknown op" in rejected[1]["message"], rejected
+
+        # A machine with no GPU driver still executes, edits and describes: only
+        # the pictures are gone. Taking the Vulkan driver away is how a hosted
+        # Windows runner arrives, where the GL fallback used to end the process.
+        blind = dict(os.environ, VK_DRIVER_FILES=str(root / "no-such-driver.json"))
+        blind_channel = root / "blind"
+        blind_channel.mkdir()
+        process = subprocess.run(
+            [executable, "repl", "--standalone"], cwd=blind_channel, env=blind,
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+            input="".join(json.dumps(line) + "\n" for line in (
+                {"id": 20, "op": "exec", "code": "bpy.ops.mesh.primitive_cone_add()"},
+                {"id": 21, "op": "observe", "views": ["front"]},
+                {"id": 22, "op": "inspect"})))
+        assert process.returncode == 0, process
+        blinded = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+        if blinded[0]["device"] is None:
+            edit, = [e for e in blinded if e["id"] == 20 and e["event"] == "done"]
+            assert edit["ok"] is True, "an edit needs no device"
+            seen, = [e for e in blinded if e["id"] == 21]
+            assert seen["event"] == "error" and seen["type"] == "NoDevice", seen
+            assert "no GPU device: " in seen["message"], seen
+            read, = [e for e in blinded if e["id"] == 22]
+            assert read["event"] == "done" and read["objects"], "reading needs no device"
 
         # A failed request leaves no partial edit behind.
         rolled = repl({"id": 10, "op": "session", "action": "feedback",

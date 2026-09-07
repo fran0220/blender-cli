@@ -60,6 +60,13 @@ the dispatch or the event assembly:
   Session.targets          Target storage, owned by workstream T.
   Session.recovered_from   "autosave", "program" or None; reported by
                            `session status` and by `session open`.
+  Session.device           None, "vulkan" or "metal": whether this machine can
+                           render at all, probed once before anything touches
+                           the GPU. A provider that renders returns nothing
+                           when it is None -- the greeting's `device: null` is
+                           the one notice, not a log line per action -- and
+                           `observe`, `fit` and `agent.perceive()` raise
+                           `NoDevice`.
   Session.opened_file      The `.blend` this session was opened with, or None.
                            A session opened with an explicit file starts from
                            that file: nothing may replay over it.
@@ -107,6 +114,18 @@ class Cancelled(Exception):
 
 class NotImplementedRequest(Exception):
     agent_type = "NotImplemented"
+
+
+class NoDevice(RuntimeError):
+    """Raised instead of initialising a GPU that is not there.
+
+    Blender's offscreen initialisation falls back to a platform GL context when
+    its backend is unavailable, and with no driver installed that fallback ends
+    the process. A session without a device still executes, edits, records and
+    describes; only the pictures are gone, and `session.device` says so once.
+    """
+
+    agent_type = "NoDevice"
 
 
 def check_fields(where, spec, value):
@@ -519,8 +538,9 @@ def session_op(request, session, emit):
         return {"feedback": session.feedback}
     return {"session": str(os.getpid()), "file": bpy.data.filepath,
             "dirty": bool(bpy.data.is_dirty), "step": session.step,
-            "snapshot": session.current, "feedback": session.feedback,
-            "targets": sorted(session.targets), "recovered_from": session.recovered_from}
+            "snapshot": session.current, "device": session.device,
+            "feedback": session.feedback, "targets": sorted(session.targets),
+            "recovered_from": session.recovered_from}
 
 
 def unimplemented(op):
@@ -594,6 +614,8 @@ class Session:
         self.last_perception = None
         self.last_objective = None
         self.recovered_from = None
+        # None, "vulkan" or "metal", probed once before anything touches the GPU.
+        self.device = native.get("device")
         self.opened_file = config.get("file") or None
         self.snapshot_taken = False
         self.closing = False

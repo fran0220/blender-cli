@@ -5,6 +5,7 @@
 #include "agent_session.hh"
 #include "AGENT_command.hh"
 #include "agent_context.hh"
+#include "agent_device.hh"
 #include "agent_transport.hh"
 
 #include <filesystem>
@@ -402,6 +403,11 @@ int session_serve(bContext *C,
    * path when it writes one; a session that never crashes says nothing. */
   crashlog_path = (directory / ("session-" + std::to_string(getpid()) + ".crash.txt")).string();
   crashlog_callback = session_crashlog;
+  /* Answered before anything can ask the GPU for a context. */
+  fprintf(stderr,
+          "Agent device: %s\n",
+          device() ? device().name.c_str() : ("none, " + device().reason).c_str());
+  fflush(stderr);
 
   Channel *channel = nullptr;
   int status = 0;
