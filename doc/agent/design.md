@@ -39,7 +39,8 @@ Four cuts follow from that, in order of how much loop they remove:
 ## Channel protocol
 
 One session speaks one protocol on every transport. Requests and events are
-JSON objects, one per line, UTF-8, newline-terminated. Transports:
+JSON objects, one per line, UTF-8, newline-terminated; everything the process
+writes escapes non-ASCII, so no reader ever chooses an encoding. Transports:
 
 - the session socket (`.blender-cli/session.sock`, AF_UNIX);
 - `blender-cli repl`: a stdio bridge to the session socket (opening the

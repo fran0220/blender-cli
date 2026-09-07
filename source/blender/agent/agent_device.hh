@@ -15,7 +15,7 @@
 #  include <dlfcn.h>
 #endif
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && defined(WITH_VULKAN_BACKEND)
 #  include <vulkan/vulkan_core.h>
 #endif
 
@@ -41,17 +41,18 @@ struct Device {
   }
 };
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && defined(WITH_VULKAN_BACKEND)
 inline Device device_probe_vulkan()
 {
+  /* Each platform's own idiom: a Windows FARPROC and a POSIX void * both cast
+   * straight to the function type, without a portable-looking intermediate
+   * that neither language nor compiler actually blesses. */
 #  ifdef _WIN32
   HMODULE loader = LoadLibraryA("vulkan-1.dll");
-  auto symbol = [&](const char *name) {
-    return loader ? reinterpret_cast<void *>(GetProcAddress(loader, name)) : nullptr;
-  };
+  auto symbol = [&](const char *name) { return GetProcAddress(loader, name); };
 #  else
   void *loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
-  auto symbol = [&](const char *name) { return loader ? dlsym(loader, name) : nullptr; };
+  auto symbol = [&](const char *name) { return dlsym(loader, name); };
 #  endif
   if (!loader) {
     return {"", "the Vulkan loader is not installed"};
@@ -94,8 +95,10 @@ inline const Device &device()
 #ifdef __APPLE__
     /* Metal is part of the OS on every machine this build targets. */
     return Device{"metal", ""};
-#else
+#elif defined(WITH_VULKAN_BACKEND)
     return device_probe_vulkan();
+#else
+    return Device{"", "this build has no GPU backend"};
 #endif
   }();
   return probed;

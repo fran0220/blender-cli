@@ -29,6 +29,14 @@ set_source_files_properties(${agent_cli_table} PROPERTIES GENERATED TRUE)
 set(INC . ${CMAKE_CURRENT_BINARY_DIR} ../python ../makesrna ../blenloader
   ../editors/include ../windowmanager ../render)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
+if(WITH_VULKAN_BACKEND)
+  # The device probe asks the loader directly, so it needs the Vulkan types
+  # and the option that says this build has a Vulkan backend at all. Declared
+  # here rather than inherited: an include that arrives transitively on one
+  # platform is not a dependency, it is a coincidence.
+  list(APPEND INC_SYS ${VULKAN_INCLUDE_DIRS})
+  add_definitions(-DWITH_VULKAN_BACKEND)
+endif()
 set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
   agent_cli.hh ${agent_cli_table} agent_events.hh agent_socket.hh agent_transport.hh
   agent_context.cc agent_context.hh agent_render.cc agent_render.hh)
