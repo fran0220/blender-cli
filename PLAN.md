@@ -329,9 +329,9 @@ Owns: `.github/workflows/agent-*.yml`, `doc/agent/build-profile.md`,
 
 | Item | Status |
 |---|---|
-| macOS arm64 full run of all agent tests on the final surface | doing — final [run 34114563805](https://github.com/fran0220/blender-cli/actions/runs/34114563805) at [6a276a08](https://github.com/fran0220/blender-cli/commit/6a276a08c0d3e42d586f5391a86adfdf67744bc4) dispatched with all owner fixes |
+| macOS arm64 full run of all agent tests on the final surface | done — final [run 34114563805](https://github.com/fran0220/blender-cli/actions/runs/34114563805) at [6a276a08](https://github.com/fran0220/blender-cli/commit/6a276a08c0d3e42d586f5391a86adfdf67744bc4): 8/8 installed, 8/8 trimmed, Metal, package smoke and byte equality pass |
 | Windows x64 full run, including AF_UNIX/process-exit, handle inheritance, Vulkan loader probe and DLL/manifest trim | software-Vulkan 8/8 installed and 8/8 trimmed pass at [5aac050c](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca), [run 34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262); final 6a276a08 run above pending; Windows 11 hardware unverified |
-| Re-measured package sizes on both product platforms | doing — Windows 34101160262 validated: installed 770,030,373 B, trimmed 290,678,527 B, ZIP 104,141,664 B. macOS 34078946155 provisional: installed 742,344,970 B, trimmed 346,209,478 B, tar.zst 72,821,523 B (failed package smoke). Final both-platform measurements pending |
+| Re-measured package sizes on both product platforms | macOS 34114563805 validated: installed 742,747,303 B, trimmed 346,212,598 B, tar.zst 72,837,002 B. Windows 34101160262 validated: installed 770,030,373 B, trimmed 290,678,527 B, ZIP 104,141,664 B; final Windows measurement pending |
 
 The workflow's stale four-script package loop (including deleted `compare.py`)
 is replaced with all eight scripts. Installed CTests and package verification
@@ -422,6 +422,16 @@ Trimmed scripts pass except the same session call timeout. This runner is
 slower, and the timeout risk is reported to K/coordinator, not hidden by a skip.
 The final both-platform run 34114563805 on 6a276a08 started immediately after
 these runs completed, as requested; its results and final sizes are pending.
+
+Its macOS job is now successful: protocol 69.23 s, describe 33.33 s,
+cli 67.62 s, session 194.29 s, program 65.23 s, observe 70.43 s,
+feedback 29.68 s, fit 367.60 s; all eight installed CTests pass without skips.
+All eight trimmed scripts exit zero, with `device: metal`. Package Cycles
+factory-reset smoke and original/trimmed byte equality pass (SHA-256
+`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`).
+Validated macOS bytes: installed 742,747,303, trimmed 346,212,598,
+tar.zst 72,837,002. F/T's canonical-path fixes and X's Cycles layout fix are
+verified on macOS. Windows is still running; no restart for later fixes.
 
 ## Ordering
 
