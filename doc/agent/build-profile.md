@@ -163,9 +163,8 @@ The existing device probe must succeed through Blender's bundled Vulkan loader
 before CTest starts. The ICD stays outside both install and release trees:
 it is not distributed or counted in package sizes. These runs establish
 **Windows software-Vulkan evidence only**, not Windows 11 physical-GPU evidence.
-Final-surface Windows hardware and macOS Metal-device validation remain
-unverified until the final revision runs on those devices; earlier macOS Metal
-results remain evidence only for their explicitly recorded revisions.
+Windows 11 hardware validation remains unverified. The final-surface macOS
+Metal run below validates its explicitly recorded revision.
 
 ## Measured — Linux x86_64 (dev)
 
@@ -355,31 +354,27 @@ Zero-byte symlink aliases are omitted; each actual library is counted once.
 
 ## Measured — macOS arm64
 
-The table below is historical, before the final eight-test surface. The first
-post-feature measurement, [run 34078946155](https://github.com/fran0220/blender-cli/actions/runs/34078946155)
-at [bcc9d77e23f](https://github.com/fran0220/blender-cli/commit/bcc9d77e23f0ae9af638015705205aa30bcbc7a4),
-reports installed 742,344,970 bytes, trimmed 346,209,478 bytes and tar.zst
-72,821,523 bytes. This package is **not validated**: its Cycles registration
-fails after session recovery/reset. A corrected layout must be re-measured;
-the historical component tables are not attributed to this run.
-
 GitHub `macos-15` arm64, AppleClang 17.0.0, Release, actual Metal device:
-[run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411).
-The full install passes all four CTests (162.84s, no skips), the trimmed tree
-passes all four scripts, and six-verb observation equality passes with SHA-256
+[run 34114563805](https://github.com/fran0220/blender-cli/actions/runs/34114563805)
+at [6a276a08](https://github.com/fran0220/blender-cli/commit/6a276a08c0d3e42d586f5391a86adfdf67744bc4).
+The full install passes all eight CTests with no skips, the trimmed tree
+passes all eight scripts, and package smoke passes Cycles registration after
+factory reset. Original/trimmed observation equality passes with SHA-256
 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
 The uploaded package contains `release.json` with the per-path measurements.
 All figures here are logical bytes, not rounded `du` allocation.
 
 | Measurement | Bytes |
 |---|---:|
-| Warm installed tree | 742,072,465 |
-| Trimmed plain-directory tree | 345,877,197 |
-| Removed, net | 396,195,268 (53.4%) |
-| `blender-cli-5.3.0-alpha-agent.1-macos-arm64.tar.zst`, level 19 | 72,735,889 |
+| Warm installed tree | 742,747,303 |
+| Trimmed plain-directory tree | 346,212,598 |
+| Removed, net | 396,534,705 (53.4%) |
+| `blender-cli-5.3.0-alpha-agent.1-macos-arm64.tar.zst`, level 19 | 72,837,002 |
 
 The untrimmed macOS archive was not compressed; no compressed before/after
-percentage is inferred. Component rows below are nested subtotals, not additive.
+percentage is inferred. The detailed component/removed-payload attribution below
+is historical from [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411),
+not re-attributed to the final run. Component rows are nested subtotals, not additive.
 
 | Component | Before | After |
 |---|---:|---:|
