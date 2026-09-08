@@ -59,9 +59,12 @@ No `.app`, installer, signing, or notarization is provided. On a trusted downloa
 remove macOS quarantine with `xattr -dr com.apple.quarantine <extracted-directory>`
 before first use; unsigned artifacts are not Gatekeeper-approved releases.
 
-Native full-build CI uploads archives, not GitHub Releases. Rendering tests that
-report a missing Metal/Vulkan device are **skipped**, not evidence that rendering
-works on that platform. See the run's diagnostics and package measurement JSON.
+Native builds and validation run on Amp-connected macOS and Windows runners,
+not GitHub Actions. Packages omit standalone test binaries but retain runtime
+libraries, Python, add-ons and assets. No online download service is published
+yet. Rendering tests that report a missing Metal/Vulkan device are **skipped**,
+not evidence that rendering works on that platform. See [PLAN.md](PLAN.md) and
+the package measurement JSON for actual validation and size evidence.
 <!-- /blender-cli -->
 
 Blender

@@ -69,6 +69,9 @@ def package(install, output, platform, archive):
 
     # No feature-based pruning: libraries, their manifests and Python bindings,
     # add-ons, assets, fonts and the complete OCIO tree remain upstream-exact.
+    # Standalone installed test executables are validation tools, not resources.
+    # Do not recursively strip Python or add-on directories named tests.
+    remove(output / "tests", "standalone test binaries, not runtime resources")
     # These executables only generate build inputs; Blender never runs them.
     binaries = output / "bin" if platform == "macos-arm64" else output
     for name in ("datatoc", "makesdna", "makesrna", "shader_tool", "zstd_compress"):

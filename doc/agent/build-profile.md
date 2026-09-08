@@ -86,9 +86,11 @@ refuses existing or nested destinations. It retains:
 - Redistribution notices and licenses.
 
 The only removals are build-time generators (`datatoc`, `makesdna`, `makesrna`,
-`shader_tool`, `zstd_compress`), root-level Windows PDB debug symbols and
-regenerable `__pycache__` directories. These do not implement scene capabilities.
-Do not introduce additional SDK/test stripping without dependency evidence.
+`shader_tool`, `zstd_compress`), the standalone install-root `tests/` executables,
+root-level Windows PDB debug symbols and regenerable `__pycache__` directories.
+These do not implement scene capabilities. Python/add-on test directories and
+SDK resources are not recursively stripped. Validation retains the original
+install and runs the agent protocol scripts against the packaged executable.
 
 macOS keeps the established plain directory layout: `bin/`, `Resources/` and
 a top-level `blender-cli` symlink, preserving upstream loader/resource paths.
@@ -98,6 +100,31 @@ Artifacts are unsigned/not notarized; product validation must use their actual
 installed/extracted layout on the target platform.
 
 ## Validation and measurement
+
+Product validation runs on Amp-connected Apple Silicon macOS and Windows 11
+runners, never GitHub Actions. Use a dedicated checkout and one persistent build
+directory per machine, preserving unrelated projects. Fetch `origin/main` and
+initialize the exact pinned platform library submodule and LFS assets. Record
+the source revision, library revision, OS, compiler and actual GPU in `PLAN.md`.
+Use the complete profile with `WITH_GTESTS=ON`; do not disable capabilities to
+obtain a green build. Missing devices remain unverified, not hardware passes.
+
+On macOS use native arm64 Xcode tools, CMake and zstd (Make or Ninja). On Windows
+provide VS 2022 MSVC 14.44, upstream-pinned CUDA 12.8 and HIP 7.1 compilers,
+OptiX 9 headers and standalone Intel ocloc. Pinned `lib/windows_x64` supplies
+DPC++, HIPRT and Level Zero, but not ocloc. Its Level Zero directory is
+`level-zero`: pass `LEVEL_ZERO_INCLUDE_DIR` pointing to its `include` and
+`LEVEL_ZERO_LIBRARY` to `lib/ze_loader.lib`. Preserve ocloc's companion IGC DLLs
+and licenses. Obtain approval before privileged SDK installation on a runner.
+Verify generated CUDA/OptiX/HIP/HIPRT/oneAPI kernel targets and compiled device
+definitions, not merely ON cache values. Compiler provisioning is not a reason
+to install or replace GPU drivers.
+
+Configure, build and install warnings-visible, run all CMake-registered agent
+tests, then create the package, run its integrity smoke below and repeat all
+registered protocol scripts against the packaged binary. Measure archive size
+and check extraction on that same platform. Keep diagnostics on the runner;
+building and testing do not publish packages or upload them to object storage.
 
 ```sh
 cmake -S . -B build/orb -C build_files/cmake/config/blender_agent.cmake

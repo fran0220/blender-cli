@@ -11,6 +11,31 @@ name: `blender-cli`. Development evidence is produced in Linux orbs; macOS
 and Windows verification is deferred until every workstream below is `done`
 on Linux (owner: the platform workstream, last).
 
+## Native runner validation and distribution (2026-09-08)
+
+GitHub Actions workflows removed at the user's direction. Native acceptance is
+doing on Amp runners, not hosted CI; no cloud production or object-storage
+publication is authorized by these validation runs.
+
+- macOS owner: runner thread `T-01a07f7b-2847-75cf-88ea-da020bd89420`, dedicated
+  `/Volumes/app/blender-cli`; M4 Pro, 24 GB, native arm64 macOS 27.0, Xcode clang
+  17. Pinned libraries initialized; full Release + WITH_GTESTS configure passes
+  in 15.70 s with all production dependencies. Persistent `build/macos-arm64`
+  build/install underway; completed build/tests remain unverified.
+- Windows owner: runner thread `T-01a07f7b-8053-7768-becb-73bbfce2f823`, dedicated
+  `C:\Users\win\src\blender-cli`, separate from origingame; Windows 11 Pro,
+  RTX 5060, 64 GB. Build/library storage will use D: due to C: space constraints.
+  VS2022 Build Tools 17.14.36 located: MSVC 19.44.35228 and bundled Ninja.
+  CUDA 12.8/HIP 7.1 absent; privileged compiler-only installation awaits user
+  approval (no drivers or reboot). Pinned libraries/user-local SDK preparation
+  continues. Build/tests unverified. Neither runner owns parent packaging/docs edits.
+- Parent packaging: excludes only standalone install-root test executables,
+  preserving Python/add-on tests and all runtime resources. Linux package smoke
+  passes: 5,622 runtime files byte-identical and observation SHA256 unchanged
+  (`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`).
+  Removed test executables total 389,611,312 bytes. This is targeted verification
+  of packaging, not a new full-suite or product-platform acceptance claim.
+
 ## Complete production and native commands (2026-09-08)
 
 User-authorized replacement of the Python-first modelling-only scope. The

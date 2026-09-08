@@ -133,6 +133,8 @@ len(required)
 
 if __name__ == "__main__":
     original, trimmed = (Path(arg).resolve() for arg in sys.argv[1:])
+    package_root = trimmed.parent.parent if trimmed.parent.name == "bin" else trimmed.parent
+    assert not (package_root / "tests").exists(), "Standalone test binaries leaked into package"
     with tempfile.TemporaryDirectory(prefix="agent package ") as directory:
         root = Path(directory).resolve()
         first, second = root / "original.png", root / "trimmed.png"
