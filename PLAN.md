@@ -20,12 +20,12 @@ tests and product-platform runs pass; old results below are historical only.
 
 | Workstream | Exclusive ownership | Acceptance | Status |
 |---|---|---|---|
-| Native core | `agent_commands.cc/.hh`, `agent_context.cc`, agent `CMakeLists.txt`, `tests/agent/commands.py` | Native object/RNA/operator/scene commands, no generated Python; real CLI tests | doing |
-| Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | doing |
-| Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | doing |
-| Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | doing |
-| Production documentation | `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` | One current native/JSON design and complete-production recipes, no stale Python-program contract | doing |
-| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | doing |
+| Native core | `agent_commands.cc/.hh`, `agent_context.cc`, agent `CMakeLists.txt`, `tests/agent/commands.py` | Native object/RNA/operator/scene commands, no generated Python; real CLI tests | done on Linux; platforms unverified |
+| Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | done on Linux; platforms unverified |
+| Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | done on Linux; platforms unverified |
+| Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | done on Linux; platforms unverified |
+| Production documentation | `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` | One current native/JSON design and complete-production recipes, no stale Python-program contract | done |
+| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | done on Linux; platforms unverified |
 
 Core exports `blender::agent::command_execute(bContext *, const json &)` and
 `command_api(bContext *)` (Python callable accepting/returning JSON strings).
@@ -36,18 +36,28 @@ rig/pose/animation/simulation/render there. Implementations must read upstream
 APIs and compile against this base, not invent an ABI. Integration owns pushes.
 
 Linux configure/build/install passes with xPack GCC 14.3 and the full upstream
-release feature profile in `build/orb`. Integrated native commands, batch,
-protocol, describe, CLI, observe and feedback tests have passed individually.
-The production test has exercised actual rig deformation, animation, animated
-USD interchange, rigid/cloth/softbody, synchronous ocean and fluid caches, and
-Cycles PNG/sequence outputs. Full-suite acceptance remains pending: testing found
-and is verifying fixes for memfile-consumed request flags, replayed durable
-checkpoints, and upstream image/video media-type selection. Initial JSON program
-tests passed before the additional checkpoint regression. A regression run
-overlapped relinking and is invalid evidence; subsequent runs use a stable install.
-Packaged tests and product-platform runs are not yet verified. Windows CI SDK
-provisioning is implemented and syntax-checked, not executed; its Server 2022
-host is not official Windows 11 HIP hardware evidence. No acceptance is claimed.
+release feature profile in `build/orb`. Final stable-install command:
+`ctest --test-dir build/orb -R agent_ --output-on-failure -j 2`:
+**12/12 passed, 0 skipped, 2038.93 s**. Repeated all 12 CMake-registered real CLI
+scripts against `build/production-package/blender-cli`: **12/12 exit 0**.
+Production passes 121 requests, including measured rig deformation, visual
+animation bake, animated USD interchange, rigid/cloth/softbody/ocean/fluid
+caches, Cycles PNG and sequence outputs, H264 video encode/decode, and EEVEE
+sample/output checks. Program tests cover model-only recovery, explicit-file
+baselines, forced replay, failed-source rejection, refs, memfile eviction and
+durable checkpoint replay without duplicate labels. All 13 IO combinations pass.
+
+Packaging smoke: `RUNTIME_BYTE_IDENTICAL 5622 files`; observation bytes identical
+with SHA256 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
+The archive passes `zstd -t`, extraction, and an extracted-binary capability
+check. Measurements are in `doc/agent/build-profile.md`. Earlier failed runs
+and the run overlapping relinking are superseded, not counted as passing.
+
+Product-platform acceptance is **unverified**. Windows CI SDK provisioning is
+implemented and syntax-checked, not executed; its Server 2022 host is not
+official Windows 11 HIP hardware evidence. Parent requested authorization to
+dispatch macOS/Windows full build/test/package workflows; none was dispatched.
+No claim of product-platform or release acceptance is made.
 
 ### Native production loop evidence (Linux, 2026-09-08)
 
