@@ -49,6 +49,25 @@ Packaged tests and product-platform runs are not yet verified. Windows CI SDK
 provisioning is implemented and syntax-checked, not executed; its Server 2022
 host is not official Windows 11 HIP hardware evidence. No acceptance is claimed.
 
+### Native production loop evidence (Linux, 2026-09-08)
+
+Ran one persistent real-binary channel, using only native requests and a JSON
+program (no `exec`). A 14-step program created a six-part humanoid, five bones,
+automatic weights and one parameterized arm pose. Rendered a reference pose at
+0.8 radians, reset the pose to zero, registered its silhouette, then asked `fit`
+to search 0–1.2 radians. One fit request performed 15 evaluations in 14.96 s,
+with zero failed evaluations; the resulting angle was 0.8109375. Pushed objective
+IoU at 256 px improved from 0.599092 to 0.984047. Inspected before/after renders:
+the original T-pose becomes a visibly raised arm, not merely changed shading.
+The 10-request transcript includes reference setup, three review renders and
+shutdown; creation's 14 steps share one request/feedback boundary and numeric
+search shares one request instead of 15 external evaluation round trips.
+Reference and transcript: current implementation thread's
+`.amp/in/artifacts/production-loop/{reference.png,transcript.jsonl,model.json}`;
+review images are `before.png` and `after.png` in the same directory. This is
+native rig-loop evidence, not a claim of artistic-quality character production
+or native macOS/Windows GPU validation.
+
 ## Historical foundations
 
 These subsystems are kept as the implementation base of the request set.

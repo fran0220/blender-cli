@@ -1527,6 +1527,12 @@ only after both serialization and index replacement succeed. A failed write
 leaves the prior index intact; an unindexed file may remain for manual cleanup.
 This is process-crash durability, not a guarantee against power/storage loss.
 
+During program replay, explicit `agent.snapshot` calls return usable transient
+snapshots without persisting their labels again. Rebuilding scene state must not
+duplicate the original durable checkpoint history. Request change flags survive
+snapshot encoding and rollback, so an in-request checkpoint cannot hide a data
+mutation from feedback and program recording.
+
 Opening a session in the same directory imports these entries into history
 with `durable: true`, before its new `open` event. Labelling again appends an
 event; the newest occurrence of a label wins, while older IDs remain reachable.

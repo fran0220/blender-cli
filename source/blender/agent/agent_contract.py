@@ -63,7 +63,7 @@ DEFS = {
         "doc": "One searched parameter: a program parameter or an RNA path.",
         "exactly_one_of": ["name", "path"],
         "fields": {
-            "name": {"type": "string", "doc": "Program parameter name in the P block."},
+            "name": {"type": "string", "doc": "Program parameter name in model.json params."},
             "path": {"type": "string", "doc": "RNA path assigned directly instead."},
             "min": {"type": "number", "required": True, "doc": "Lower bound."},
             "max": {"type": "number", "required": True, "doc": "Upper bound."},

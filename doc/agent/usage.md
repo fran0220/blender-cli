@@ -208,8 +208,9 @@ intended grading or effects. Merely creating an unconnected node changes no
 output. The active camera can likewise be assigned through a native pointer,
 e.g. `data set 'scenes["Scene"].camera' --value '{"path":"objects[\"Camera\"]"}'`.
 
-FFmpeg video formats and sound mixing remain production capabilities. Configure
-`scenes["Scene"].render.ffmpeg` through native data and discover
+FFmpeg video formats and sound mixing remain production capabilities. First set
+`scenes["Scene"].render.image_settings.media_type` to `"VIDEO"` to initialize
+video defaults, then configure `scenes["Scene"].render.ffmpeg` through native data and discover
 `sound.mixdown` for audio-file delivery. USD/Alembic, native OBJ/PLY/STL/FBX
 import, Grease Pencil SVG/PDF and the normal image codecs are retained, not
 reported as intentionally missing. `capabilities` reports the actual build;

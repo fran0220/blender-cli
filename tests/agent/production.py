@@ -236,6 +236,8 @@ bpy.data.images.remove(image)
 """)
         request("render", action="animation", start=1, end=2, path=str(root / "anim-"),
                 engine="CYCLES", format="PNG", width=32, height=32, samples=1)
+        # Initialize video defaults before selecting the desired container/codec.
+        data('scenes["Scene"].render.image_settings.media_type', "VIDEO")
         data('scenes["Scene"].render.ffmpeg.format', "MPEG4")
         data('scenes["Scene"].render.ffmpeg.codec', "H264")
         request("render", action="animation", start=1, end=2, path=str(root / "clip.mp4"),

@@ -106,6 +106,7 @@ for reset in range(2):
     for transform in ('Standard', 'AgX', 'Filmic', 'Raw'):
         bpy.context.scene.view_settings.view_transform = transform
     for format in ('CINEON', 'JPEG2000', 'OPEN_EXR', 'FFMPEG'):
+        bpy.context.scene.render.image_settings.media_type = 'VIDEO' if format == 'FFMPEG' else 'IMAGE'
         bpy.context.scene.render.image_settings.file_format = format
 len(required)
 """)
