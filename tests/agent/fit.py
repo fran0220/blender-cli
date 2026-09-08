@@ -364,20 +364,28 @@ agent.register_provider(Peek())
 
             # The other two progress policies: `all` is a rate-limited
             # heartbeat, `off` sends nothing at all.
-            def short_fit(**budget):
+            def short_fit(objective=None, **budget):
                 channel.request(op="exec", code=RESET)
                 return channel.request(
                     op="fit", params=[{"path": X, "min": 0.4, "max": 1.9},
                                       {"path": Y, "min": 0.4, "max": 1.9}],
-                    objective={"target": "top", "metric": "iou"},
+                    objective=objective or {"target": "top", "metric": "iou"},
                     budget={"seconds": 900, "size": 128, **budget})
 
             channel.done(op="session", action="feedback", feedback={"progress": "all"})
-            beats = only(short_fit(evals=8), "progress")
+            # Eight real renders can finish before two heartbeat intervals on
+            # Metal. A delayed code objective spans the intervals regardless of
+            # GPU speed, while still evaluating faster than the rate limit so
+            # an unthrottled event per evaluation cannot pass this test.
+            beats = only(short_fit(evals=8, objective={
+                "code": "(__import__('time').sleep(0.2), "
+                        "agent.compare('ref.png', 'camera', metrics=('iou',), "
+                        "mask='none', fit='none', size=256)['iou'])[1]"}), "progress")
             times = [event["at"] for event in beats]
             gaps = [second - first for first, second in zip(times, times[1:])]
+            assert len(beats) > 1, beats
             print(f"progress all: events={len(beats)} min gap={min(gaps):.3f}s", flush=True)
-            assert len(beats) > 1 and min(gaps) >= 0.5, beats
+            assert min(gaps) >= 0.5, beats
             channel.done(op="session", action="feedback", feedback={"progress": "off"})
             assert not only(short_fit(evals=6), "progress")
             channel.done(op="session", action="feedback", feedback={"progress": "improvements"})

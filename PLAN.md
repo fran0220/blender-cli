@@ -21,7 +21,16 @@ publication is authorized by these validation runs.
   `/Volumes/app/blender-cli`; M4 Pro, 24 GB, native arm64 macOS 27.0, Xcode clang
   17. Pinned libraries initialized; full Release + WITH_GTESTS configure passes
   in 15.70 s with all production dependencies. Persistent `build/macos-arm64`
-  build/install underway; completed build/tests remain unverified.
+  build/install passes in 769.22 s. Installed suite: 11 initial passes, then
+  `agent_fit` passes in 48.04 s after fixing its fast-GPU heartbeat test
+  assumption (four heartbeats, minimum gap 0.886 s). No runtime change.
+  Packaged suite: all 12 pass in 506.44 s; fit 48.35 s, four heartbeats,
+  minimum gap 0.520 s. Package smoke: 5,475 byte-identical resources and the
+  same observation SHA256 as Linux. Native `gpu.init` identifies Metal / Apple
+  M4 Pro; explicit packaged Cycles Metal GPU render passes in 127.48 s including
+  kernel compilation, CPU disabled. Archive integrity, extraction and extracted
+  version check pass. No whole-test skips; two Vulkan-only device-loss injection
+  subcases in feedback are inapplicable on Metal and not claimed verified.
 - Windows owner: runner thread `T-01a07f7b-8053-7768-becb-73bbfce2f823`, dedicated
   `C:\Users\win\src\blender-cli`, separate from origingame; Windows 11 Pro,
   RTX 5060, 64 GB. Build/library storage will use D: due to C: space constraints.
@@ -78,11 +87,11 @@ The archive passes `zstd -t`, extraction, and an extracted-binary capability
 check. Measurements are in `doc/agent/build-profile.md`. Earlier failed runs
 and the run overlapping relinking are superseded, not counted as passing.
 
-Product-platform acceptance is **unverified**. Windows CI SDK provisioning is
-implemented and syntax-checked, not executed; its Server 2022 host is not
-official Windows 11 HIP hardware evidence. Parent requested authorization to
-dispatch macOS/Windows full build/test/package workflows; none was dispatched.
-No claim of product-platform or release acceptance is made.
+Product-platform status is recorded in the native runner section above:
+macOS native installed/package tests and Metal rendering pass; Windows full
+acceptance remains blocked by SDK installation authorization. GitHub Actions
+has been removed; no workflow dispatch or package publication is planned by
+these validation runs. No Windows or published-release acceptance is claimed.
 
 ### Native production loop evidence (Linux, 2026-09-08)
 
