@@ -9,6 +9,12 @@ and not a smaller Blender. It is Blender with its GUI entry replaced by a
 request loop built so that the only slow step in the agent's
 perceive → decide → act → observe cycle is the agent's own decision.
 
+The product covers the complete 3D production workflow: assets, characters,
+animation, simulation, lighting, rendering, compositing and interchange.
+Headless means no interactive GUI, not a reduced production feature set.
+Native structured production commands are the primary interface. Python is an
+explicit extension language, never generated behind a native command.
+
 The design is derived from two facts about the agent: each of its decisions
 costs seconds and tokens, and everything it can compute it should not have to
 decide. Every rule below follows from **maximise information per round trip,
@@ -50,22 +56,23 @@ upstream forward as `doc/agent/upstream.md` describes.
   agent never has to decide to look; looking is a property of the answer.
   Budgets bound the cost of each channel; they are set per session, not per
   request.
-- **Python is the interface language.** The agent drives Blender by writing
-  `bpy` code. There is no DSL, no typed tool catalog and no operator wrapper
-  layer standing between the agent and `bpy`. What the fork adds around
-  Python is self-description (`describe`, from RNA), errors that carry the
-  nearest valid identifier and an executable correction, a persistent
-  namespace, structured results and the `agent` helper module.
+- **Commands are the primary interface.** Typed production commands execute
+  on the main thread through native RNA, operators and Blender kernels. The
+  command registry owns validation, help and schema. Generic native data and
+  operator access cover capabilities without a dedicated production command.
+  `exec` is an explicitly Python extension, not an implementation strategy
+  for native commands; upstream `bpy` remains unchanged.
 - **The scene is a program.** The source of truth for a session is
-  `model.py`, a re-executable Python program the agent reads and edits.
-  Executing a statement that changes data records it as a step of the
+  `model.json`, a re-executable structured command program the agent reads and edits.
+  Executing a command that changes data records it as a step of the
   program; editing the program re-executes it from the longest cached prefix.
   History is the program's version tree, persisted on disk under
   `.blender-cli/`; rollback is checking out a version. Memfile snapshots are
   the evaluation cache that makes re-execution cheap, never the record.
-- **The surface is the request set in `doc/agent/design.md`**, and only that
-  set until `PLAN.md` says otherwise: `session`, `exec`, `program`,
-  `target`, `fit`, `inspect`, `observe`, `describe`, `cancel`. CLI verbs are
+- **The surface is the request set in `doc/agent/design.md`**. It includes
+  native production commands, batch execution and capability discovery beside
+  `session`, `exec`, `program`, `target`, `fit`, `inspect`, `observe`,
+  `describe`, `cancel`. CLI verbs are
   one-request projections of the same set plus `repl`, which is the channel
   itself on stdio; nothing exists in the CLI that does not exist on the
   channel. Comparison is not a request: a target is registered once and
@@ -159,9 +166,10 @@ upstream forward as `doc/agent/upstream.md` describes.
   agent command, add the `WITH_AGENT` option, add the subdirectory. Anything
   else is a design smell; solve it inside `source/blender/agent/` or record
   the exception in `doc/agent/upstream.md` in the same commit.
-- Do not add features the request set does not need. Do not add asset
-  tooling, pipeline commands or curated operator wrappers; the agent writes
-  code.
+- Production commands must cover real creation, animation, simulation and
+  delivery workflows. Reuse upstream native implementations, not generated
+  Python. Long-running production work must report cancellation and external
+  cache/output semantics honestly; scene undo cannot undo arbitrary files.
 - **Interfaces before parallel work.** A workstream in `PLAN.md` names the
   files it owns; two workstreams never own the same file. Anything one
   workstream needs from another is declared in `doc/agent/design.md` (a

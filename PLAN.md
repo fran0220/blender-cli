@@ -13,6 +13,29 @@ on Linux (owner: the platform workstream, last).
 
 ## Foundations that stay
 
+## Complete production and native commands (2026-09-08)
+
+User-authorized replacement of the Python-first modelling-only scope. The
+native wire and structured program interfaces are declared at the start of
+`doc/agent/design.md`. This work is not accepted until real-binary production
+tests and product-platform runs pass; old results below are historical only.
+
+| Workstream | Exclusive ownership | Acceptance | Status |
+|---|---|---|---|
+| Native core | `agent_commands.cc/.hh`, `agent_context.cc`, agent `CMakeLists.txt`, `tests/agent/commands.py` | Native object/RNA/operator/scene commands, no generated Python; real CLI tests | doing |
+| Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | doing |
+| Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | doing |
+| Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | doing |
+| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/docs/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | doing |
+
+Core exports `blender::agent::command_execute(bContext *, const json &)` and
+`command_api(bContext *)` (Python callable accepting/returning JSON strings).
+Its header also declares native `command_operator`, `command_select`,
+`command_resolve`, `command_get`, `command_set` helpers for production handlers.
+Production exports `production_execute(bContext *, const json &)`; core routes
+rig/pose/animation/simulation/render there. Implementations must read upstream
+APIs and compile against this base, not invent an ABI. Integration owns pushes.
+
 These subsystems are kept as the implementation base of the request set.
 They are complete on Linux and unchanged in intent; workstreams below may
 edit them only where their row says so.

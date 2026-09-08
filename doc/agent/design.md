@@ -8,6 +8,70 @@ the comparison metrics. Constraints are in `AGENTS.md`; status is in
 
 ## Why this shape
 
+The production interface is native structured commands, not generated Python.
+Python `exec` remains an explicit extension. All ordinary commands enter
+`agent._native["command"](json_text)` on the main thread. This C++ callable
+parses a request and returns JSON result text, or raises a structured error.
+The request registry remains `agent_contract.py`; CLI help, argument parsing
+and schema derive from it. C++ implementations own execution, not another
+copy of the protocol schema.
+
+Native production interface declarations:
+
+- `object`: `action=create|transform|delete|select`, `name`, `type`
+  (MESH|ARMATURE|EMPTY|CAMERA|LIGHT), `primitive` (cube|plane|uv_sphere|cylinder),
+  `location`, `rotation`, `scale` (three numbers; radians), `objects`
+  (selection names). Create returns actual `name`; explicit names must not
+  silently address another object after Blender disambiguates names.
+- `data`: `action=get|set|call`, `path` (RNA path from Main, e.g.
+  `objects["Body"].location`), `value` (JSON), `arguments` (JSON object for
+  native RNA functions). No Python evaluation. Collection reads return
+  names/identifiers, not an unbounded recursive scene dump.
+- `operator`: `action=call|describe|list`, `name` (upstream operator identifier),
+  `properties` (JSON object), `objects` (explicit selection), `active`, `mode`.
+  Calls use EXEC, never an interactive invoke. Python-defined operators are
+  rejected here; Python add-ons are explicitly executed with `exec`.
+- `scene`: `action=reset|frame|save|open`, `frame`, `path`; frame evaluates the
+  scene, save/open use native file operators.
+- `capabilities`: compiled production features and native/extension execution
+  availability, derived from the actual build, not desired profile values.
+- `rig`: `action=create|bone|bind`, `name` (armature), `bone`, `head`, `tail`,
+  `parent`, `objects`, `weights` (automatic|envelope|empty). Bone vectors are
+  armature-local coordinates; bind explicitly selects meshes and armature.
+- `pose`: `action=set`, `name`, `bone`, `location`, `rotation`, `scale`.
+- `animation`: `action=key|delete|bake`, `path` (RNA property path from Main),
+  `frame`, `index` (default -1), `start`, `end`, `step`, `objects`.
+- `simulation`: `action=add|bake|free`, `name`, `type`
+  (RIGID_BODY|CLOTH|SOFT_BODY|FLUID|OCEAN), `start`, `end`.
+- `render`: `action=frame|animation`, `start`, `end`, `path`, `engine`,
+  `format`, `width`, `height`, `samples`. This is production scene-camera
+  rendering, not deterministic observation lighting.
+- `batch`: `steps` (array of requests without ids), `record` (default true).
+  Nested batches/control requests are rejected. One request boundary and one
+  feedback cycle surround all steps; results preserve step order. A failed
+  step names its index and restores scene state, not external output files.
+
+Every mutating native request accepts `record` (default true) and `feedback`
+(image policy). Dedicated commands are complemented by generic native RNA
+functions/operators so production features do not wait for curated wrappers.
+Selection/mode-sensitive commands establish their context explicitly.
+
+The canonical program is `model.json`: an object with `base` (factory-empty
+or an absolute blend path), `params` (literal JSON object), and `steps` (request
+objects without ids). A JSON object `{"$param":"name"}` substitutes a program
+parameter; `{"$ref":"stepName.name"}` substitutes a prior named step's result
+field, with step names supplied through `as`. Python extension steps are
+explicit `{"op":"exec","code":"..."}` objects, never generated wrappers.
+Versions use `.json`; no old Python-program parser or migration alias remains.
+Program get/set/patch/history/rollback and prefix caching retain their roles;
+`text` carries serialized JSON. Native steps replay through the same command
+entry, without feedback/recording recursion. `exec` replay shares the explicit
+extension namespace and exposes `P` for parameters.
+
+Simulation caches and rendered/exported files are external effects: successful
+file writes are not undone by scene rollback. Cache status/invalidation and
+multi-frame acceptance must be tested independently of memfile recovery.
+
 An agent modelling from a reference image runs one loop: look at the scene,
 write `bpy` code, execute it, look at the result, compare with the
 reference, repeat. The agent's decision is the only step that must be slow
