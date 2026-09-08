@@ -29,10 +29,14 @@
 # alone exceeded the 1500 s guard inside the test there, while the same test
 # entire took 1275.53 s on the installed host. Neither number measures the
 # loop, so session moves to 3600 against a lower bound and the test now prints
-# the loop's elapsed time for the next run to measure. A test's own per-call
-# guards stay under this budget, so a hung call is named by the test rather
-# than the run being killed anonymously. Re-measure when the evidence platform
-# changes.
+# the loop's elapsed time for the next run to measure.
+#
+# That loop is 94% of the session test: 398.8 s of 425.29 s on Linux, at
+# 3323 ms a render. So session's budget is the loop's budget, and the loop's
+# own guard inside the test is the number to move first when this test needs
+# more room. A test's own per-call guards stay under this budget, so a hung
+# call is named by the test rather than the run being killed anonymously.
+# Re-measure when the evidence platform changes.
 
 # Follow the installed TEST_BLENDER_EXE layout, including the macOS app bundle.
 get_filename_component(agent_bin_dir "${TEST_BLENDER_EXE}" DIRECTORY)
