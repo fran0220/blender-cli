@@ -71,8 +71,7 @@ static PyObject *id_state(PyObject *self, PyObject *args)
     /* Memfile writes consume recalc_after_undo_push. Keep request activity by
      * session UID across explicit snapshots and Main replacement on rollback. */
     unsigned int &flags = state.accumulated_recalc[id->session_uid];
-    flags |= id->recalc_after_undo_push |
-             (id->recalc & ~state.initial_recalc[id->session_uid]);
+    flags |= id->recalc_after_undo_push | (id->recalc & ~state.initial_recalc[id->session_uid]);
     PyObject *key = PyLong_FromUnsignedLong(id->session_uid);
     PyObject *value = Py_BuildValue("(ssI)", type.c_str(), id->name + 2, flags);
     PyDict_SetItem(result, key, value);
