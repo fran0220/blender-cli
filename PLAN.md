@@ -14,8 +14,8 @@ on Linux (owner: the platform workstream, last).
 ## Native runner validation and distribution (2026-09-08)
 
 GitHub Actions workflows removed at the user's direction. Native acceptance is
-doing on Amp runners, not hosted CI; no cloud production or object-storage
-publication is authorized by these validation runs.
+done on the two Amp runner configurations below, not hosted CI; no cloud
+production or object-storage publication is authorized by these validation runs.
 
 - macOS owner: runner thread `T-01a07f7b-2847-75cf-88ea-da020bd89420`, dedicated
   `/Volumes/app/blender-cli`; M4 Pro, 24 GB, native arm64 macOS 27.0, Xcode clang
@@ -33,11 +33,22 @@ publication is authorized by these validation runs.
   subcases in feedback are inapplicable on Metal and not claimed verified.
 - Windows owner: runner thread `T-01a07f7b-8053-7768-becb-73bbfce2f823`, dedicated
   `C:\Users\win\src\blender-cli`, separate from origingame; Windows 11 Pro,
-  RTX 5060, 64 GB. Build/library storage will use D: due to C: space constraints.
+  RTX 5060, 64 GB. Build/library storage uses D: due to C: space constraints.
   VS2022 Build Tools 17.14.36 located: MSVC 19.44.35228 and bundled Ninja.
-  CUDA 12.8/HIP 7.1 absent; privileged compiler-only installation awaits user
-  approval (no drivers or reboot). Pinned libraries/user-local SDK preparation
-  continues. Build/tests unverified. Neither runner owns parent packaging/docs edits.
+  User-approved compiler-only CUDA 12.8 and HIP 7.1 installs pass; driver 576.88
+  unchanged, no reboot/system Vulkan changes. Source `e6d0f808cf4`, pinned libs
+  `60d6e96b917568278d400a4024c98da0fb777338`. All five GPU kernel targets and
+  device defines verified. Full warnings-visible build: 8,114 steps, exit 0,
+  4059.007 s; install exit 0, 44.84 s. Installed 12 CTests pass in 602.47 s;
+  final ZIP extracted binary passes all 12 CMake-derived scripts in 611.19 s.
+  CRC/extraction pass; smoke 58.57 s, 6,479 runtime files and observation bytes
+  identical. Actual RTX 5060 Vulkan observation and CPU-disabled CUDA/OptiX
+  renders pass (0.411 s / 1.470 s). No whole-test skips, but both suites skip
+  two device-less subcases in `agent_feedback` because VK_DRIVER_FILES fails
+  to hide the GPU. HIP/HIPRT/oneAPI compile passes; AMD/Intel hardware execution
+  remains unverified. Only runner-local MSVC UTF-8 dependency-output override
+  and explicit Level Zero discovery required; no source fixes/feature reductions.
+  Evidence retained in `build/windows-acceptance/evidence/` in the parent orb.
 - Parent packaging: excludes only standalone install-root test executables,
   preserving Python/add-on tests and all runtime resources. Linux package smoke
   passes: 5,622 runtime files byte-identical and observation SHA256 unchanged
@@ -54,12 +65,12 @@ tests and product-platform runs pass; old results below are historical only.
 
 | Workstream | Exclusive ownership | Acceptance | Status |
 |---|---|---|---|
-| Native core | `agent_commands.cc/.hh`, `agent_context.cc`, agent `CMakeLists.txt`, `tests/agent/commands.py` | Native object/RNA/operator/scene commands, no generated Python; real CLI tests | done on Linux; platforms unverified |
-| Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | done on Linux; platforms unverified |
-| Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | done on Linux; platforms unverified |
-| Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | done on Linux; platforms unverified |
+| Native core | `agent_commands.cc/.hh`, `agent_context.cc`, agent `CMakeLists.txt`, `tests/agent/commands.py` | Native object/RNA/operator/scene commands, no generated Python; real CLI tests | done; native evidence above |
+| Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | done; hardware limits above |
+| Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | done; native evidence above |
+| Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | done; hardware limits above |
 | Production documentation | `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` | One current native/JSON design and complete-production recipes, no stale Python-program contract | done |
-| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | done on Linux; platforms unverified |
+| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests | Batch, common recording, schema/CLI, integration/build/platform acceptance | done; subcase limits above |
 
 Core exports `blender::agent::command_execute(bContext *, const json &)` and
 `command_api(bContext *)` (Python callable accepting/returning JSON strings).
@@ -88,10 +99,10 @@ check. Measurements are in `doc/agent/build-profile.md`. Earlier failed runs
 and the run overlapping relinking are superseded, not counted as passing.
 
 Product-platform status is recorded in the native runner section above:
-macOS native installed/package tests and Metal rendering pass; Windows full
-acceptance remains blocked by SDK installation authorization. GitHub Actions
+macOS and Windows native installed/package tests and available hardware
+rendering pass, with the explicit subcase/hardware limitations above. GitHub Actions
 has been removed; no workflow dispatch or package publication is planned by
-these validation runs. No Windows or published-release acceptance is claimed.
+these validation runs. No published-release acceptance is claimed.
 
 ### Native production loop evidence (Linux, 2026-09-08)
 
