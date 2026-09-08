@@ -589,6 +589,14 @@ K is notified to align the inner and outer harness budgets without reducing
 render coverage. No further dispatch until coordinator routes it. Windows sizes
 772,171,059 B / 290,680,354 B / 104,142,403 B ZIP remain provisional.
 
+Coordinator-authorized Windows-only [run 34178882146](https://github.com/fran0220/blender-cli/actions/runs/34178882146)
+at [b9d43397](https://github.com/fran0220/blender-cli/commit/b9d433979e67f8658142db5a36adce2f439d3fbf)
+includes K's inner 3000 s / outer 3600 s session budgets and printed loop timing.
+It also removes the hidden Windows exclusion from crash-dump testing: a real
+null read now exercises SEH, dump/request correlation and session-log linkage.
+Earlier reports of no CTest skips do not imply that this excluded section ran;
+its Windows evidence is pending in this run. macOS evidence remains unchanged.
+
 ## Ordering
 
 ```diagram
