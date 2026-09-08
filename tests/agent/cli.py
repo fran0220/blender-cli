@@ -86,7 +86,7 @@ def main():
             for entry in verb["fields"]:
                 if entry["position"] >= 0 or entry["kind"] in ("Flag", "NoFlag"):
                     continue
-                sample = {"Json": "{}", "List": "front", "Int": "512", "Num": "1"}.get(
+                sample = {"Json": "{}", "Vector": "0,0,0", "List": "front", "Int": "512", "Num": "1"}.get(
                     entry["kind"], entry["value"].split("|")[0] if "|" in entry["value"] else "x")
                 action = requests[verb["name"]]["fields"].get("action", {}).get("enum")
                 args = [verb["name"], *(action[:1] if action else []), entry["flag"], sample,
@@ -172,15 +172,34 @@ def main():
             assert call("program", "record", "off")["record"] is False
             assert call("program", "record", "on")["record"] is True
             assert "requires on|off" in message("program", "record")
-            source = root / "model.py"
-            source.write_text('# blender-cli program\n# base: factory\nP = {"size": 1.0}\n'
-                              "\n# step 1\nbpy.ops.mesh.primitive_cube_add(size=P['size'])\n")
+            source = root / "model.json"
+            source.write_text(json.dumps({
+                "base": "factory-empty", "params": {"size": 1.0},
+                "steps": [{"op": "object", "action": "create", "name": "Cube"},
+                          {"op": "object", "action": "transform", "name": "Cube",
+                           "scale": [{"$param": "size"}, 1, 1]}],
+            }, indent=2), encoding="utf-8")
             version = call("program", "set", "--text", "@" + str(source))["version"]
-            assert call("program", "get")["text"] == source.read_text()
+            assert json.loads(call("program", "get")["text"]) == json.loads(source.read_text())
             call("program", "patch", "--old", '"size": 1.0', "--new", '"size": 2.0')
             assert '"size": 2.0' in call("program", "get")["text"]
             assert call("program", "rollback", version)["version"] == version
             assert '"size": 1.0' in call("program", "get")["text"]
+
+            # Direct production commands project typed JSON, not Python source.
+            created = call("object", "create", "Direct", "--primitive", "cube", "--location", "1,2,3")
+            assert created["name"] == "Direct", created
+            assert call("data", "get", 'objects["Direct"].location')["value"] == [1, 2, 3]
+            call("object", "transform", "Direct", "--scale", "[2,3,4]")
+            assert call("data", "get", 'objects["Direct"].scale')["value"] == [2, 3, 4]
+            assert "three numbers" in message("object", "transform", "Direct", "--scale", "1,2")
+            batch = call("batch", "--steps", json.dumps([
+                {"op": "object", "action": "create", "name": "BatchObject", "as": "made"},
+                {"op": "object", "action": "transform", "name": {"$ref": "made.name"},
+                 "location": [3, 2, 1]},
+            ]))
+            assert len(batch["results"]) == 2, batch
+            assert call("data", "get", 'objects["BatchObject"].location')["value"] == [3, 2, 1]
 
             # describe: the path is the verb's argument.
             assert call("describe", "bpy.types.Object.location")["array_length"] == 3

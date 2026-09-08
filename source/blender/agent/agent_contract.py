@@ -478,10 +478,12 @@ EVENTS = {
                          "message": {"type": "string",
                                      "doc": "Why no picture was produced, when a render "
                                             "failed rather than being under budget."}}},
-    "progress": {"doc": "Search progress: at most every 0.5 s under `all`, one per "
-                        "improvement under `improvements`.",
+    "progress": {"doc": "Search improvements or native production job progress; native "
+                        "heartbeats at most every 0.5 s plus completion, suppressed by off.",
                  "fields": {"eval": {"type": "integer"}, "of": {"type": "integer"},
-                            "best": {"type": "number"}, "params": {"type": "object"}}},
+                            "best": {"type": "number"}, "params": {"type": "object"},
+                            "phase": {"type": "string"},
+                            "fraction": {"type": "number", "minimum": 0, "maximum": 1}}},
     "done": {"doc": "Terminal success event, carrying the op-specific result fields.",
              "fields": {"ok": {"type": "boolean"}, "ms": {"type": "number"},
                         "cancelled": {"type": "boolean",

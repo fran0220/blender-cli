@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "agent_context.hh"
+#include "agent_commands.hh"
 #include "agent_render.hh"
 
 #include "MEM_guardedalloc.h"
@@ -150,6 +151,9 @@ PyObject *native_api(bContext *C)
     PyDict_SetItemString(result, method.ml_name, function);
     Py_DECREF(function);
   }
+  PyObject *command = command_api(C);
+  PyDict_SetItemString(result, "command", command);
+  Py_DECREF(command);
   Py_DECREF(capsule);
   return result;
 }

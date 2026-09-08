@@ -2,18 +2,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""The session's program: `model.py`, its parameter block, steps, versions and prefix cache.
-
-The program is the record of the scene. Every `exec` that changes data becomes a
-`# step N` block; the agent edits the text and the process re-executes it from the
-longest prefix whose memfile snapshot is still cached.
-"""
+"""The session's structured command program, durable versions and prefix cache."""
 
 import array
 import ast
 import hashlib
 import json
-import math
 import os
 import sys
 import time
@@ -21,10 +15,8 @@ import traceback
 
 import bpy
 
-MARKER = "# blender-cli program"
-BASE_PREFIX = "# base:"
-STEP_PREFIX = "# step "
 DEFAULT_BASE = "factory-empty"
+FACTORY_BASES = {DEFAULT_BASE, "factory-default"}
 
 # Modules whose results a re-run cannot reproduce.
 NONDETERMINISTIC = frozenset(
@@ -35,10 +27,9 @@ SEEDABLE = frozenset({"random", "numpy"})
 # Attribute paths that are nondeterministic wherever they appear.
 NONDETERMINISTIC_PATHS = frozenset(
     {"os.urandom", "os.environ", "os.getpid", "bpy.app.timers", "bpy.utils.time"})
-# Calls that read a file the program can only replay from its own directory.
+# External file reads are not captured by scene snapshots, even for relative paths.
 READERS = frozenset({"open", "bpy.ops.wm.open_mainfile", "bpy.ops.wm.append",
                      "bpy.ops.wm.link", "bpy.ops.wm.revert_mainfile"})
-PATH_KEYWORDS = ("filepath", "filename", "file", "directory", "path")
 # How to read a geometry attribute's values in bulk: property, array code, width.
 ATTRIBUTE_BUFFERS = {
     "FLOAT": ("value", "f", 1), "INT": ("value", "i", 1), "INT8": ("value", "i", 1),
@@ -76,108 +67,150 @@ class StepError(Exception):
         self.agent_fields = {"step": step}
 
 
-def _literal(value):
-    """Render a parameter value as Python source that `ast.literal_eval` reads back."""
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=True)
-    if value is None or isinstance(value, (bool, int)):
-        return repr(value)
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"Parameter values must be finite: {value!r}")
-        return repr(value)
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_literal(item) for item in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ", ".join(f"{_literal(str(key))}: {_literal(item)}"
-                               for key, item in value.items()) + "}"
-    raise ValueError(f"Parameter values must be literals: {value!r}")
-
-
 def _canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, allow_nan=False,
-                      separators=(",", ":"), default=list)
+                      separators=(",", ":"))
 
 
-def _blocks(text):
-    """Split program text into its header and its `# step N` blocks, in order."""
-    header, steps, current = [], [], None
-    for line in text.splitlines():
-        if line.startswith(STEP_PREFIX) and line[len(STEP_PREFIX):].strip().isdigit():
-            current = []
-            steps.append(current)
-        elif current is None:
-            header.append(line)
-        else:
-            current.append(line)
-    def trim(lines):
-        return "\n".join(lines).strip("\n").rstrip()
-    return trim(header), [trim(block) for block in steps]
+def _parse(text):
+    model = json.loads(text)
+    if not isinstance(model, dict) or set(model) != {"base", "params", "steps"}:
+        raise ValueError("program requires exactly base, params and steps")
+    base = model["base"]
+    if not isinstance(base, str) or (base not in FACTORY_BASES and not os.path.isabs(base)):
+        raise ValueError("program base must be factory-empty, factory-default or an absolute blend path")
+    if not isinstance(model["params"], dict) or not isinstance(model["steps"], list):
+        raise ValueError("program params must be an object and steps an array")
+    _canonical(model)  # Reject non-finite JSON numbers before modifying the program.
+    names = set()
+    for step in model["steps"]:
+        validate_step(step)
+        name = step.get("as")
+        if name is not None:
+            if not isinstance(name, str) or not name or "." in name or name in names:
+                raise ValueError("step as must be a unique nonempty name without dots")
+            names.add(name)
+    return model
 
 
-def _assignment(header, name="P"):
-    """Return the top-level literal assignment node for `name`, or None."""
-    found = None
-    for node in ast.parse(header).body:
-        if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == name for target in node.targets):
-            found = node
-        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-              and node.target.id == name and node.value is not None):
-            found = node
-    return found
+def validate_step(step):
+    from agent_contract import REQUESTS
+    if not isinstance(step, dict) or not isinstance(step.get("op"), str):
+        raise ValueError("program steps must be request objects with an op")
+    if "id" in step or step["op"] in {
+            "program", "session", "target", "fit", "cancel", "repl"}:
+        raise ValueError("program steps cannot contain ids or control requests")
+    if step["op"] not in REQUESTS:
+        raise ValueError(f"Unknown program op: {step['op']!r}")
+    if "as" in step and (not isinstance(step["as"], str) or not step["as"] or "." in step["as"]):
+        raise ValueError("step as must be a nonempty name without dots")
+    _validate_fields(step["op"], REQUESTS[step["op"]],
+                     {key: value for key, value in step.items() if key not in {"op", "as"}})
+    if step["op"] == "exec" and (not isinstance(step.get("code"), str) or "script" in step):
+        raise ValueError("explicit exec steps require inline code")
+    if step["op"] == "batch":
+        if not isinstance(step.get("steps"), list):
+            raise ValueError("batch steps must be an array")
+        names = set()
+        for child in step["steps"]:
+            validate_step(child)
+            if child["op"] == "batch":
+                raise ValueError("nested batches are not allowed")
+            name = child.get("as")
+            if name is not None:
+                if not isinstance(name, str) or not name or "." in name or name in names:
+                    raise ValueError("batch step names must be unique and contain no dots")
+                names.add(name)
 
 
-def _parameters(header):
-    node = _assignment(header)
-    if node is None:
-        return {}
-    try:
-        value = ast.literal_eval(node.value)
-    except ValueError:
-        raise ValueError("The program's P assignment must be a literal dict") from None
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        raise ValueError("The program's P assignment must be a dict with string keys")
-    return value
+def _validate_fields(where, spec, values):
+    fields = spec["fields"]
+    for key, value in values.items():
+        if key not in fields:
+            raise ValueError(f"Unknown field for {where}: {key!r}")
+        _validate_value(f"{where}.{key}", fields[key], value)
+    for key, field in fields.items():
+        if field.get("required") and key not in values:
+            raise ValueError(f"{where} requires {key}")
+    exclusive = spec.get("exactly_one_of")
+    if exclusive and sum(key in values for key in exclusive) != 1:
+        raise ValueError(f"{where} requires exactly one of {' or '.join(exclusive)}")
 
 
-def _without_parameters(header):
-    """The header with its `P = {...}` statement removed, so values enter keys only once."""
-    node = _assignment(header)
-    if node is None:
-        return header
-    lines = header.splitlines()
-    del lines[node.lineno - 1:node.end_lineno]
-    return "\n".join(lines).strip("\n")
+def _validate_value(where, spec, value):
+    """Use registry validation, deferring only literal substitution nodes."""
+    from agent_contract import DEFS
+    from agent_runtime import check_value
+    if isinstance(value, dict) and set(value) in ({"$param"}, {"$ref"}):
+        if not isinstance(next(iter(value.values())), str) or not next(iter(value.values())):
+            raise ValueError(f"{where} substitution must name a parameter or prior result")
+        return
+    if "ref" in spec:
+        spec = {"type": "object", **DEFS[spec["ref"]]}
+    check_value(where, {key: item for key, item in spec.items() if key not in {"items", "fields"}}, value)
+    if isinstance(value, list):
+        if len(value) < spec.get("minItems", 0) or len(value) > spec.get("maxItems", len(value)):
+            raise ValueError(f"{where} has an invalid array length")
+        for index, item in enumerate(value):
+            _validate_value(f"{where}[{index}]", spec.get("items", {}), item)
+    elif isinstance(value, dict) and "fields" in spec:
+        _validate_fields(where, spec, value)
 
 
-def _rewrite_parameters(header, params):
-    line = "P = " + _literal(params)
-    node = _assignment(header)
-    lines = header.splitlines()
-    if node is None:
-        return "\n".join([*lines, line]).strip("\n")
-    lines[node.lineno - 1:node.end_lineno] = [line]
-    return "\n".join(lines).strip("\n")
+def resolve_step(step, params, results):
+    """Leave batch children to the runtime's ordered, locally scoped execution."""
+    validate_step(step)
+    return {key: (value if step["op"] == "batch" and key == "steps"
+                  else resolve_values(value, params, results))
+            for key, value in step.items() if key != "as"}
 
 
-def _base_of(header):
-    for line in header.splitlines():
-        if line.startswith(BASE_PREFIX):
-            return line[len(BASE_PREFIX):].strip()
-    return DEFAULT_BASE
+def resolve_values(value, params, results):
+    """Resolve request values once; substituted user data is never interpreted again."""
+    if isinstance(value, list):
+        return [resolve_values(item, params, results) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if set(value) == {"$param"}:
+        if not isinstance(value["$param"], str):
+            raise ValueError("$param must name a parameter")
+        return json.loads(_canonical(params[value["$param"]]))
+    if set(value) == {"$ref"}:
+        if not isinstance(value["$ref"], str) or not value["$ref"]:
+            raise ValueError("$ref must name a previous result")
+        path = value["$ref"].split(".")
+        result = results[path[0]]
+        for part in path[1:]:
+            result = result[int(part)] if isinstance(result, list) else result[part]
+        return json.loads(_canonical(result))
+    return {key: resolve_values(item, params, results) for key, item in value.items()}
 
 
-def _base_code(base):
-    if base == "factory-empty":
-        return "bpy.ops.wm.read_factory_settings(use_empty=True)"
-    if base == "factory":
-        return "bpy.ops.wm.read_factory_settings()"
-    if base.startswith("file "):
-        path = base[len("file "):].strip()
-        return ("bpy.ops.wm.open_mainfile(filepath=%s, load_ui=False, use_scripts=False)"
-                % json.dumps(path, ensure_ascii=True))
-    raise ValueError(f"Unknown program base: {base!r}; use factory-empty, factory or file PATH")
+def _has_exec(value):
+    if isinstance(value, list):
+        return any(_has_exec(item) for item in value)
+    return isinstance(value, dict) and (value.get("op") == "exec" or
+                                      any(_has_exec(item) for item in value.values()))
+
+
+def _parameter_names(value):
+    if isinstance(value, list):
+        names = set()
+        for item in value:
+            used = _parameter_names(item)
+            if used is None:
+                return None
+            names |= used
+        return names
+    if not isinstance(value, dict):
+        return set()
+    if set(value) == {"$param"}:
+        return {value["$param"]} if isinstance(value["$param"], str) else None
+    names = _parameter_names(list(value.values()))
+    if value.get("op") == "exec":
+        used = dependencies(value["code"])
+        return None if used is None or names is None else names | used
+    return names
 
 
 def _dotted(node):
@@ -210,31 +243,14 @@ def dependencies(text):
     return names
 
 
-def _replayable_path(node):
-    """A file argument is replayable when it is a literal path inside the program directory."""
-    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-        return False
-    path = node.value
-    if not path or path.startswith("//") or os.path.isabs(path):
-        return False
-    return not os.path.normpath(path).startswith(os.pardir)
-
-
 def _reads_outside(call):
     name = _dotted(call.func)
     if name is None:
         return False
-    if not (name in READERS
+    return (name in READERS
             or (name.startswith("bpy.data.") and name.endswith(".load"))
             or name.startswith("bpy.ops.import_")
-            or (name.startswith("bpy.ops.") and name.endswith("_import"))):
-        return False
-    argument = call.args[0] if call.args else None
-    for keyword in call.keywords:
-        if keyword.arg in PATH_KEYWORDS:
-            argument = keyword.value
-            break
-    return argument is None or not _replayable_path(argument)
+            or (name.startswith("bpy.ops.") and name.endswith("_import")))
 
 
 def _seeded(text):
@@ -279,6 +295,26 @@ def reproducible(text, seeded=False):
             if root in SEEDABLE and not seeded:
                 return False
     return True
+
+
+def request_reproducible(step):
+    """External files/caches and generic calls cannot be certified by scene undo."""
+    op, action = step["op"], step.get("action")
+    if isinstance(action, dict):
+        return False
+    if op == "exec":
+        code = step["code"]
+        return reproducible(code, _seeded(code)) and not any(
+            isinstance(node, ast.Call) and (_dotted(node.func) == "open" or
+            (_dotted(node.func) or "").startswith(("bpy.ops.wm.", "bpy.ops.export_",
+                                                  "bpy.ops.ptcache.", "bpy.ops.fluid.",
+                                                  "bpy.ops.render.", "bpy.ops.cachefile.")))
+            for node in ast.walk(ast.parse(code)))
+    if op == "batch":
+        return all(request_reproducible(child) for child in step["steps"])
+    if op in {"operator", "render", "simulation"} or (op == "data" and action == "call"):
+        return False
+    return not (op == "scene" and action in {"open", "save"})
 
 
 def digest():
@@ -478,13 +514,15 @@ def digest():
 
 
 class Program:
-    """One session's `model.py`, its version tree and its per-step snapshot cache."""
+    """One session's model.json, version tree and per-step snapshot/result cache."""
 
     def __init__(self, session, directory):
         self.session = session
         self.directory = directory
         self.recording = True
         self.cache = {}          # prefix key -> memfile snapshot id
+        self.result_cache = {}   # prefix key -> JSON-only named results
+        self.results = {}
         self.produced = {}       # version -> memfile snapshot id of its last full run
         self.divergent = set()   # versions whose re-run produced a different snapshot
         self.load()
@@ -493,19 +531,19 @@ class Program:
 
     @property
     def path(self):
-        return os.path.join(self.directory, "model.py")
+        return os.path.join(self.directory, "model.json")
 
     @property
     def index_path(self):
         return os.path.join(self.directory, "index.json")
 
     def version_path(self, version):
-        return os.path.join(self.directory, "versions", version.split(":")[-1] + ".py")
+        return os.path.join(self.directory, "versions", version.split(":")[-1] + ".json")
 
     @property
     def modified(self):
-        """Unix time of the program's newest version, or 0 when it has none."""
-        return max((row["at"] for row in self.index["versions"]), default=0.0)
+        """Source time of the selected version, not an unrelated history branch."""
+        return self.index["versions"][-1]["at"] if self.index["versions"] else 0.0
 
     def load(self):
         os.makedirs(os.path.join(self.directory, "versions"), exist_ok=True)
@@ -514,13 +552,22 @@ class Program:
             with open(self.index_path, encoding="utf-8") as stream:
                 self.index = json.load(stream)
         self.current = self.index.get("current")
-        if os.path.isfile(self.path):
+        if self.session.opened_file:
+            # Explicit opens start a new baseline, even if the unrelated old source
+            # is broken. Old versions remain available for deliberate rollback.
+            self.model = {"base": os.path.abspath(self.session.opened_file), "params": {}, "steps": []}
+            self.commit("open file")
+        elif os.path.isfile(self.path):
+            source_time = os.stat(self.path).st_mtime_ns
             with open(self.path, encoding="utf-8") as stream:
-                self.header, self.steps = _blocks(stream.read())
+                self.model = _parse(stream.read())
+            version = "sha256:" + hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+            if self.current != version or not os.path.isfile(self.version_path(version)):
+                self.commit("load source", at=source_time / 1e9)
+                os.utime(self.path, ns=(source_time, source_time))
         else:
-            base = "file " + bpy.data.filepath if bpy.data.filepath else "factory"
-            self.header = f"{MARKER}\n{BASE_PREFIX} {base}\nP = {{}}"
-            self.steps = []
+            base = bpy.data.filepath or ("factory-default" if bpy.data.objects else DEFAULT_BASE)
+            self.model = {"base": base, "params": {}, "steps": []}
             self.write()
         self.bind()
 
@@ -535,17 +582,19 @@ class Program:
 
     @property
     def text(self):
-        blocks = [self.header.rstrip()]
-        blocks += [f"{STEP_PREFIX}{number}\n{code}" for number, code in enumerate(self.steps, 1)]
-        return "\n\n".join(block for block in blocks if block) + "\n"
+        return json.dumps(self.model, sort_keys=True, indent=2, allow_nan=False) + "\n"
+
+    @property
+    def steps(self):
+        return self.model["steps"]
 
     @property
     def params(self):
-        return _parameters(self.header)
+        return json.loads(_canonical(self.model["params"]))
 
     @property
     def base(self):
-        return _base_of(self.header)
+        return self.model["base"]
 
     @property
     def version(self):
@@ -556,15 +605,12 @@ class Program:
         self.session.namespace["P"] = dict(self.params)
 
     def step_records(self):
-        seeded = _seeded(self.header) or any(_seeded(code) for code in self.steps)
-        return [{"n": number, "code": code, "reproducible": reproducible(code, seeded)}
-                for number, code in enumerate(self.steps, 1)]
+        return [{"n": number, "request": step, "reproducible": request_reproducible(step)}
+                for number, step in enumerate(self.steps, 1)]
 
     @property
     def static_reproducible(self):
-        seeded = _seeded(self.header) or any(_seeded(code) for code in self.steps)
-        return reproducible(_without_parameters(self.header), seeded) and all(
-            reproducible(code, seeded) for code in self.steps)
+        return self.base in FACTORY_BASES and all(request_reproducible(step) for step in self.steps)
 
     @property
     def reproducible(self):
@@ -573,18 +619,12 @@ class Program:
     # ---- prefix cache ----------------------------------------------------
 
     def key(self, count):
-        """Content key of the state after `count` steps: the texts plus the parameters they read."""
-        texts = [_without_parameters(self.header), *self.steps[:count]]
-        names, everything = set(), False
-        for text in texts:
-            used = dependencies(text)
-            if used is None:
-                everything = True
-            else:
-                names |= used
+        """Earlier requests include every producer of a reference, transitively."""
+        steps = self.steps[:count]
+        names = _parameter_names(steps)
         params = self.params
-        read = params if everything else {name: params[name] for name in names if name in params}
-        payload = "\0".join([MARKER, self.base, *texts, _canonical(read)])
+        read = params if names is None else {name: params[name] for name in names if name in params}
+        payload = _canonical([self.base, steps, read])
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _restore(self, snapshot):
@@ -597,16 +637,19 @@ class Program:
                 raise
             # An evicted memfile invalidates every prefix that named it.
             self.cache = {key: value for key, value in self.cache.items() if value != snapshot}
+            self.result_cache = {key: value for key, value in self.result_cache.items()
+                                 if key in self.cache}
             return False
         return True
 
-    def _run_code(self, code, label):
-        if code.strip():
-            exec(compile(code, f"<program {label}>", "exec"), self.session.namespace)
+    def _cache(self, count):
+        key = self.key(count)
+        self.cache[key] = self.session.snapshot(None, "program")
+        self.result_cache[key] = json.loads(_canonical(self.results))
 
     # ---- operations ------------------------------------------------------
 
-    def run(self):
+    def run(self, from_step=None):
         """Re-execute from the longest cached prefix, caching the snapshot of each step.
 
         Raises `StepError` when a step fails. `Main` then returns to the pre-request
@@ -615,30 +658,44 @@ class Program:
         """
         if "snapshot" not in self.session.native:
             raise ValueError("Re-executing the program requires an open session")
+        if from_step is not None and (type(from_step) is not int or
+                                      not 1 <= from_step <= max(1, len(self.steps))):
+            raise ValueError("from_step must name a program step")
         entry, entry_index = self.session.current, getattr(self.session, "current_index", None)
         keys = [self.key(count) for count in range(len(self.steps) + 1)]
+        # Python globals can contain arbitrary live RNA references. Memfiles cannot
+        # restore those globals: replay from before the first extension step instead.
+        limit = next((i for i, step in enumerate(self.steps)
+                      if _has_exec(step) or not request_reproducible(step)), len(self.steps))
+        if from_step is not None:
+            limit = min(limit, from_step - 1)
+        if self.base not in FACTORY_BASES:
+            limit = -1  # A file's content may have changed without its path changing.
         begin = None
-        for count in range(len(self.steps), -1, -1):
+        for count in range(limit, -1, -1):
             snapshot = self.cache.get(keys[count])
-            if snapshot is not None and self._restore(snapshot):
+            if (snapshot is not None and keys[count] in self.result_cache
+                    and self._restore(snapshot)):
                 begin = count
                 break
         rebuilt = begin is None
         begin = 0 if rebuilt else begin
         ran = []
+        from agent_runtime import fresh_namespace
+        self.session.namespace = fresh_namespace()
+        self.results = {} if rebuilt else json.loads(_canonical(self.result_cache[keys[begin]]))
+        self.bind()
         try:
             if rebuilt:
-                self._step(_base_code(self.base), "base", 0)
-            # The header is the parameter block: re-run on every run, never touching Main.
-            self._step(_without_parameters(self.header), "header", 0)
-            self.bind()
-            if rebuilt:
-                self.cache[keys[0]] = self.session.snapshot(None, "program")
+                self._step({"op": "scene", "action": "reset", "empty": self.base == DEFAULT_BASE}
+                           if self.base in FACTORY_BASES else
+                           {"op": "scene", "action": "open", "path": self.base}, 0)
+                self._cache(0)
             for index in range(begin, len(self.steps)):
-                self._step(self.steps[index], f"step {index + 1}", index + 1)
-                self.cache[keys[index + 1]] = self.session.snapshot(None, "program")
+                self._step(self.steps[index], index + 1)
+                self._cache(index + 1)
                 ran.append(index + 1)
-        except StepError as error:
+        except BaseException as error:
             # The kernel restores the session's current snapshot on a failed request.
             # Point it back at the pre-request state so the failed edit never becomes
             # the live scene; the prefix cache keeps every step that did run, because
@@ -646,7 +703,11 @@ class Program:
             self.session.current = entry
             if entry_index is not None:
                 self.session.current_index = entry_index
-            error.agent_fields.update(version=self.current, cached_through=begin + len(ran))
+            self.session.namespace = fresh_namespace()
+            self.bind()
+            self.results = {}
+            if isinstance(error, StepError):
+                error.agent_fields.update(version=self.current, cached_through=begin + len(ran))
             raise
         content = digest()
         if rebuilt:
@@ -655,15 +716,18 @@ class Program:
                 "from_step": begin + 1, "cached": begin, "ran": ran,
                 "reproducible": self.reproducible}
 
-    def _step(self, code, label, number):
+    def _step(self, request, number):
         try:
-            self._run_code(code, label)
+            from agent_runtime import execute_step
+            result = execute_step(request, self.session, results=self.results)
+            if "as" in request:
+                self.results[request["as"]] = json.loads(_canonical(result))
         except Exception as error:
             # A step that re-runs the program reports the innermost step that failed.
             if _fatal(error) or isinstance(error, StepError):
                 raise
             frames = traceback.extract_tb(error.__traceback__)
-            inner = [frame for frame in frames if frame.filename.startswith("<program ")]
+            inner = [frame for frame in frames if frame.filename.startswith(("<program ", "<agent>"))]
             line = getattr(error, "lineno", None) or (inner[-1].lineno if inner else None)
             raise StepError(number, error, line) from error
 
@@ -674,7 +738,7 @@ class Program:
             self.divergent.add(self.current)
         self.produced[self.current] = content
 
-    def commit(self, message, label=None):
+    def commit(self, message, label=None, at=None):
         """Write the current text as a version and make it current."""
         text = self.text
         version = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -683,7 +747,8 @@ class Program:
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(text)
         self.index["versions"].append(
-            {"version": version, "parent": self.current, "label": label, "at": time.time(),
+            {"version": version, "parent": self.current, "label": label,
+             "at": time.time() if at is None else at,
              "steps": len(self.steps), "reproducible": self.static_reproducible,
              "message": message, "failed": False})
         self.index["current"] = self.current = version
@@ -700,10 +765,7 @@ class Program:
             raise
 
     def set_text(self, text, message="set", label=None):
-        ast.parse(text)
-        header, steps = _blocks(text)
-        _parameters(header)
-        self.header, self.steps = header, steps
+        self.model = _parse(text)
         self.commit(message, label)
         return self.committed_run()
 
@@ -723,7 +785,8 @@ class Program:
         if unknown:
             raise ValueError(f"Parameter names must be strings: {unknown!r}")
         params.update(values)
-        self.header = _rewrite_parameters(self.header, params)
+        _canonical(params)
+        self.model["params"] = params
         self.commit("set params", label)
         return self.committed_run()
 
@@ -731,7 +794,7 @@ class Program:
         version = self.resolve(reference)
         with open(self.version_path(version), encoding="utf-8") as stream:
             text = stream.read()
-        self.header, self.steps = _blocks(text)
+        self.model = _parse(text)
         self.commit("rollback", label)
         return self.committed_run()
 
@@ -756,16 +819,23 @@ class Program:
         self.write()
         return self.current
 
-    def record_exec(self, code, before, after):
-        """Append a successful `exec` as the next step, keeping its snapshot as that prefix."""
-        code = code.strip()
-        if not self.recording or not code:
+    def record_request(self, request, before, after):
+        """Record original requests, never Python wrappers or resolved batch commands."""
+        if not self.recording:
             return None
+        request = json.loads(_canonical({key: value for key, value in request.items()
+                                        if key not in {"id", "record", "feedback"}}))
+        validate_step(request)
         parent = self.key(len(self.steps))
-        self.steps.append(code)
-        version = self.commit("exec")
-        if before is not None and self.cache.get(parent) == before:
-            self.cache[self.key(len(self.steps))] = after
+        self.steps.append(request)
+        version = self.commit(request["op"])
+        # The recording hook has no handler result. Named steps must replay rather
+        # than fabricating a reference value from the scene or a stale prior result.
+        if ("as" not in request and before is not None and self.cache.get(parent) == before
+                and parent in self.result_cache):
+            key = self.key(len(self.steps))
+            self.cache[key] = after
+            self.result_cache[key] = json.loads(_canonical(self.result_cache[parent]))
         return version
 
 
@@ -813,18 +883,17 @@ def program_op(request, session, emit):
     elif action == "rollback":
         result = program.rollback(request["version"], label)
     else:
-        result = program.run()
+        result = program.run(from_step=request.get("from_step"))
     if result["ran"]:
         # The last step's snapshot is this request's snapshot; the diff needs no second one.
         session.snapshot_taken = True
     return result
 
 
-def record_hook(session, code, step):
-    """`register_record_hook`: an `exec` that changed data becomes the program's next step."""
+def record_hook(session, request, step):
+    """`register_record_hook`: record a successful mutating request verbatim."""
     program = attach(session)
-    event = session.history[session.current_index] if session.history else {}
-    program.record_exec(code, event.get("parent"), session.current)
+    program.record_request(request, session.previous_snapshot, session.current)
 
 
 def helper(session=None):
@@ -860,8 +929,10 @@ def load_autosave(session, path):
 
 
 def at_base(program):
-    """Whether the live scene is the state the program's `# base:` line names."""
-    return program.base == (f"file {bpy.data.filepath}" if bpy.data.filepath else "factory")
+    """Called during attach, before any request changes the initial scene."""
+    if bpy.data.filepath:
+        return program.base == bpy.data.filepath
+    return program.base == ("factory-default" if bpy.data.objects else DEFAULT_BASE)
 
 
 def recover(program, session):
@@ -877,11 +948,15 @@ def recover(program, session):
     """
     autosave = None if session.opened_file else previous_autosave(
         os.path.dirname(program.directory))
-    if program.steps and not session.opened_file and (
+    if program.current and not session.opened_file and (
             autosave is None or os.path.getmtime(autosave) < program.modified):
         try:
             program.run()
         except Exception as error:
+            if _fatal(error) or autosave is None:
+                # A failed canonical source is not an empty session. Without a
+                # recovery file, propagate the replay error and fail session open.
+                raise
             # A program that no longer runs falls back to the file, never to nothing.
             print(f"Agent program: replay failed, recovering the autosave instead: "
                   f"{type(error).__name__}: {error}", file=sys.stderr, flush=True)
@@ -892,18 +967,22 @@ def recover(program, session):
         load_autosave(session, autosave)
         # The program's text is still the record; its prefix cache starts empty,
         # because the scene now on screen is the file's, not any prefix of the program.
+        program.cache.clear()
+        program.result_cache.clear()
+        program.results.clear()
         session.recovered_from = "autosave"
         return
     if not program.steps and at_base(program):
         # An empty program starts in sync with the session, so the base prefix is cached.
         program.cache[program.key(0)] = session.current
+        program.result_cache[program.key(0)] = {}
 
 
 def register(session):
     """`PROVIDER_MODULES` entry point: install the `program` op, the recorder and the helper.
 
     A program belongs to a session. One-shot mode has no snapshot store, so it gets no
-    program: a bare `blender-cli exec` must not leave a `model.py` in the working
+    program: a bare `blender-cli exec` must not leave a `model.json` in the working
     directory for the next session to replay.
     """
     if "snapshot" not in session.native:

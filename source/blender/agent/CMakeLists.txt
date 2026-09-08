@@ -26,8 +26,8 @@ add_custom_command(
 )
 set_source_files_properties(${agent_cli_table} PROPERTIES GENERATED TRUE)
 
-set(INC . ${CMAKE_CURRENT_BINARY_DIR} ../python ../makesrna ../blenloader
-  ../editors/include ../windowmanager ../render)
+set(INC . ${CMAKE_CURRENT_BINARY_DIR} ../python ../makesrna ../blenloader ../animrig
+  ../editors/include ../windowmanager ../render ${CMAKE_BINARY_DIR}/source/blender/makesrna)
 set(INC_SYS ${PYTHON_INCLUDE_DIRS})
 if(WITH_VULKAN_BACKEND)
   # The device probe asks the loader directly, so it needs the Vulkan types
@@ -39,7 +39,8 @@ if(WITH_VULKAN_BACKEND)
 endif()
 set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
   agent_cli.hh ${agent_cli_table} agent_events.hh agent_socket.hh agent_transport.hh
-  agent_context.cc agent_context.hh agent_render.cc agent_render.hh)
+  agent_context.cc agent_context.hh agent_render.cc agent_render.hh
+  agent_commands.cc agent_commands.hh agent_production.cc agent_production.hh)
 set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
@@ -49,6 +50,22 @@ set(LIB
   PRIVATE bf::extern::json
 )
 blender_add_lib(bf_agent "${SRC}" "${INC}" "${INC_SYS}" "${LIB}")
+add_dependencies(bf_agent bf_rna)
+
+# Report resolved build options, not the requested cache profile. Keep private
+# prefixed booleans so disabled options are explicit and cannot inherit defines.
+foreach(feature WITH_CYCLES WITH_CYCLES_OSL WITH_BULLET WITH_MOD_FLUID
+    WITH_MOD_OCEANSIM WITH_OPENVDB WITH_ALEMBIC WITH_USD WITH_IO_FBX
+    WITH_IO_WAVEFRONT_OBJ WITH_IO_PLY WITH_IO_STL WITH_VULKAN_BACKEND
+    WITH_METAL_BACKEND WITH_AUDASPACE WITH_MATERIALX WITH_HYDRA WITH_LIBMV
+    WITH_FREESTYLE WITH_IO_GREASE_PENCIL WITH_HARU WITH_IMAGE_CINEON
+    WITH_IMAGE_OPENJPEG WITH_CODEC_FFMPEG WITH_CODEC_SNDFILE)
+  if(${feature})
+    target_compile_definitions(bf_agent PRIVATE AGENT_${feature}=1)
+  else()
+    target_compile_definitions(bf_agent PRIVATE AGENT_${feature}=0)
+  endif()
+endforeach()
 
 add_executable(blender-cli launcher.cc ${agent_cli_table})
 target_include_directories(blender-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

@@ -270,7 +270,7 @@ class DiffProvider:
         diff = id_diff(session.before, session.native["id_state"](False),
                        session.native["fields"])
         session.last_diff = diff
-        if any(diff.values()):
+        if any(diff.values()) or session.last_result.get("external_effects"):
             session.step += 1
             if not session.snapshot_taken and "snapshot" in session.native:
                 session.snapshot(None, request["op"])
@@ -400,7 +400,14 @@ def native_op(request, session, emit):
     cancelled = session.native.get("cancelled")
     if cancelled and cancelled():
         raise Cancelled("Execution cancelled")
-    result = json.loads(agent._native["command"](json.dumps(request, allow_nan=False)))
+    if "progress_policy" in session.native:
+        session.native["progress_policy"](session.request_feedback["progress"] != "off")
+    try:
+        result = json.loads(agent._native["command"](json.dumps(request, allow_nan=False)))
+    except BaseException as error:
+        if cancelled and cancelled():
+            raise Cancelled("Execution cancelled; external files are not rolled back") from error
+        raise
     if cancelled and cancelled():
         error = Cancelled("Execution cancelled; external files are not rolled back")
         if result.get("external_effects"):
@@ -411,15 +418,24 @@ def native_op(request, session, emit):
 
 def execute_step(request, session, emit=lambda event: None, *, results=None):
     """Execute a raw program/batch step, without another feedback or record boundary."""
-    from agent_program import attach, resolve_step
-    resolved = resolve_step(request, attach(session).params, results or {})
+    from agent_program import resolve_step
+    program = getattr(session, "program", None)
+    resolved = resolve_step(request, program.params if program else {}, results or {})
     resolved = {**resolved, "id": 0}
     validate(resolved)
     if resolved["op"] not in STEP_OPS:
         raise ProtocolError(f"{resolved['op']} cannot be a production step")
     if resolved["op"] == "batch":
         return batch_op(resolved, session, emit, results=results)
-    return HANDLERS[resolved["op"]](resolved, session, emit)
+    values = {}
+
+    def capture(event):
+        if event["event"] == "value":
+            values["value"] = event["value"]
+        emit(event)
+
+    answer = HANDLERS[resolved["op"]](resolved, session, capture)
+    return {**values, **answer}
 
 
 def batch_op(request, session, emit, *, results=None):
@@ -872,6 +888,7 @@ class Session:
                     for provider in PROVIDERS:
                         provider.before(request, self)
                 result = HANDLERS[request["op"]](request, self, emit)
+                self.last_result = result
                 if changes:
                     for provider in PROVIDERS:
                         try:

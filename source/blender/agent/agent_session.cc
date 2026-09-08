@@ -43,6 +43,33 @@ namespace blender::agent {
 void (*crashlog_callback)(const char **filepath, FILE *output) = nullptr;
 static std::string crashlog_path, crashlog_request, crashlog_python;
 static Channel *active_channel = nullptr;
+static EventSink *progress_sink = nullptr;
+static long long progress_identifier = 0;
+static bool progress_enabled = true;
+static std::chrono::steady_clock::time_point progress_at;
+
+void request_events(EventSink *sink, long long identifier)
+{
+  progress_sink = sink;
+  progress_identifier = identifier;
+  progress_enabled = true;
+  progress_at = {};
+}
+
+void request_progress(const char *phase, float fraction)
+{
+  const auto now = std::chrono::steady_clock::now();
+  if (progress_sink && progress_enabled &&
+      (fraction >= 1.0f || now - progress_at >= std::chrono::milliseconds(500)))
+  {
+    progress_sink->event(nlohmann::json({{"id", progress_identifier},
+                                         {"event", "progress"},
+                                         {"phase", phase},
+                                         {"fraction", fraction}})
+                             .dump(-1, ' ', true));
+    progress_at = now;
+  }
+}
 
 bool request_cancelled()
 {
@@ -345,6 +372,17 @@ static PyMethodDef methods[] = {
     {"restore_metadata", restore_metadata, METH_VARARGS, nullptr},
     {"persist", snapshot_persist, METH_O, nullptr},
     {"request_source", request_source, METH_O, nullptr},
+    {"progress_policy",
+     [](PyObject *, PyObject *arg) -> PyObject * {
+       const int enabled = PyObject_IsTrue(arg);
+       if (enabled < 0) {
+         return nullptr;
+       }
+       progress_enabled = enabled;
+       Py_RETURN_NONE;
+     },
+     METH_O,
+     nullptr},
 };
 
 /* One event line, written the moment Python produces it. */
@@ -478,9 +516,11 @@ int session_serve(bContext *C,
       fflush(stderr);
       sink.request = &request;
       active_channel = channel;
+      request_events(&sink, request.message["id"].get<long long>());
       PyObject *answer = PyObject_CallMethod(
           runtime, "serve", "s", request.message.dump().c_str());
       active_channel = nullptr;
+      request_events(nullptr, 0);
       if (answer) {
         Py_DECREF(answer);
       }

@@ -31,40 +31,27 @@ bpy.context.scene.camera = camera
 bpy.data.objects['Cube'].scale = ({0}, {1}, 1)
 """
 
-# The same scene as a program, so `fit` can search `P` instead of RNA paths.
-# A program starts from a factory-empty Main, so it builds rather than deletes.
-PROGRAM = """# blender-cli program
-P = {{"sx": {0}, "sy": {1}}}
-# step 1
-import bpy
-bpy.ops.mesh.primitive_cube_add(size=2)
-camera = bpy.data.objects.new('Fit camera', bpy.data.cameras.new('Fit camera'))
-camera.data.type = 'ORTHO'
-camera.data.ortho_scale = 4
-camera.location = (0, 0, 6)
-bpy.context.scene.collection.objects.link(camera)
-bpy.context.scene.camera = camera
-# step 2
-bpy.data.objects['Cube'].scale = (P["sx"], P["sy"], 1)
-"""
+# Parameters belong to the structured program; native transforms consume them.
+PROGRAM = json.dumps({
+    "base": "factory-empty", "params": {"sx": 1.0, "sy": 1.0},
+    "steps": [
+        {"op": "exec", "code": SCENE.format(1, 1)},
+        {"op": "object", "action": "transform", "name": "Cube",
+         "scale": [{"$param": "sx"}, {"$param": "sy"}, 1]},
+    ],
+})
 
-# A step that refuses part of the range, so a fit meets a failed evaluation.
-FAILING = """# blender-cli program
-P = {"sx": 1.0}
-# step 1
-import bpy
-bpy.ops.mesh.primitive_cube_add(size=2)
-camera = bpy.data.objects.new('Fit camera', bpy.data.cameras.new('Fit camera'))
-camera.data.type = 'ORTHO'
-camera.data.ortho_scale = 4
-camera.location = (0, 0, 6)
-bpy.context.scene.collection.objects.link(camera)
-bpy.context.scene.camera = camera
-# step 2
-if P["sx"] > 1.2:
-    raise ValueError("sx above 1.2 is not buildable")
-bpy.data.objects['Cube'].scale = (P["sx"], 1.45, 1)
-"""
+# An explicit extension can reject part of the search range; failed evaluations
+# must still consume their budget rather than silently abandoning the search.
+FAILING = json.dumps({
+    "base": "factory-empty", "params": {"sx": 1.0},
+    "steps": [
+        {"op": "exec", "code": SCENE.format(1, 1)},
+        {"op": "exec", "code": 'if P["sx"] > 1.2:\n'
+         '    raise ValueError("sx above 1.2 is not buildable")\n'
+         'bpy.data.objects["Cube"].scale = (P["sx"], 1.45, 1)'},
+    ],
+})
 
 TRUTH = (1.70, 1.45)
 START = (1.00, 1.00)
@@ -486,7 +473,7 @@ agent.register_provider(Peek())
             assert runs[0]["evals"] == runs[1]["evals"] == 12, runs
 
             # A program parameter is fitted by re-executing the steps that read it.
-            channel.done(op="program", action="set", text=PROGRAM.format(*START))
+            channel.done(op="program", action="set", text=PROGRAM)
             programmed = channel.done(
                 op="fit", method="coordinate",
                 params=[{"name": "sx", "min": 0.4, "max": 1.9},

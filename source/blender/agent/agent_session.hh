@@ -17,6 +17,9 @@ namespace agent {
 void crashlog_python_context(bool capture);
 /* Main-thread cooperative checkpoint for native production work. */
 bool request_cancelled();
+/* Native job progress uses the same event sink as the surrounding request. */
+void request_events(EventSink *sink, long long identifier);
+void request_progress(const char *phase, float fraction);
 
 /* The Python callable that writes one event the moment it is produced. */
 PyObject *event_emitter(EventSink &sink);

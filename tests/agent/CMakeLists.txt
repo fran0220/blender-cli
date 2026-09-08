@@ -107,3 +107,26 @@ add_blender_test_impl(agent_fit "" "${TEST_PYTHON_EXE}"
 set_tests_properties(agent_fit PROPERTIES TIMEOUT 4800)
 set_tests_properties(agent_session agent_observe agent_feedback agent_fit
   PROPERTIES SKIP_RETURN_CODE 77)
+
+add_blender_test_impl(agent_commands "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/commands.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+set_tests_properties(agent_commands PROPERTIES TIMEOUT 1200)
+
+add_blender_test_impl(agent_production "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/production.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+# Initial unmeasured full-production gate; measured timings must replace this
+# provisional budget. CPU render and simulation coverage is never a GPU skip.
+set_tests_properties(agent_production PROPERTIES TIMEOUT 2400)
+
+add_blender_test_impl(agent_batch "" "${TEST_PYTHON_EXE}"
+  ${TEST_PYTHON_EXE_EXTRA_ARGS}
+  "${CMAKE_CURRENT_SOURCE_DIR}/batch.py"
+  "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
+)
+set_tests_properties(agent_batch PROPERTIES TIMEOUT 1200)

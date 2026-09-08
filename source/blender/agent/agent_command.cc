@@ -227,8 +227,10 @@ class AgentCommand : public CommandHandler {
     PyObject *emitter = event_emitter(sink);
     PyDict_SetItemString(native, "emit", emitter);
     Py_DECREF(emitter);
+    request_events(&sink, 1);
     PyObject *answer = PyObject_CallMethod(
         module, "one_shot", "Os", native, config.dump().c_str());
+    request_events(nullptr, 0);
     if (!answer) {
       return 1;
     }
