@@ -23,8 +23,16 @@
 #
 # protocol takes the next step up rather than the floor: it is the only test
 # these budgets have ever killed, twice, and it grows with every one-shot verb
-# asserted, because each renders its own feedback. Re-measure when the evidence
-# platform changes.
+# asserted, because each renders its own feedback.
+#
+# Run 34164393096's packaging host is slower again: session's 120-render loop
+# alone exceeded the 1500 s guard inside the test there, while the same test
+# entire took 1275.53 s on the installed host. Neither number measures the
+# loop, so session moves to 3600 against a lower bound and the test now prints
+# the loop's elapsed time for the next run to measure. A test's own per-call
+# guards stay under this budget, so a hung call is named by the test rather
+# than the run being killed anonymously. Re-measure when the evidence platform
+# changes.
 
 # Follow the installed TEST_BLENDER_EXE layout, including the macOS app bundle.
 get_filename_component(agent_bin_dir "${TEST_BLENDER_EXE}" DIRECTORY)
@@ -54,7 +62,7 @@ add_blender_test_impl(agent_session "" "${TEST_PYTHON_EXE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/session.py"
   "${agent_bin_dir}/blender-cli${CMAKE_EXECUTABLE_SUFFIX}"
 )
-set_tests_properties(agent_session PROPERTIES TIMEOUT 3000)
+set_tests_properties(agent_session PROPERTIES TIMEOUT 3600)
 
 add_blender_test_impl(agent_program "" "${TEST_PYTHON_EXE}"
   ${TEST_PYTHON_EXE_EXTRA_ARGS}

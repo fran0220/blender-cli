@@ -499,6 +499,14 @@ len(mesh.vertices)
         call("session", "open")
         quiet()
         try:
+            # The longest single call in the suite, and the only one whose cost
+            # no log has ever carried. Its guard is layered under the ctest
+            # budget: high enough that only a hung render trips it, low enough
+            # that the failure names this call rather than the run being killed
+            # anonymously. 3000 is twice the 1500 the packaging host exceeded,
+            # which is a lower bound, not a measurement -- provisional until the
+            # elapsed time printed below is read from a native run.
+            started = time.perf_counter()
             result = execute("""
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add(size=1)
@@ -511,7 +519,10 @@ for render_index in range(120):
         images = observation.render_passes(scene, 128, near, far)
         assert images["color"].shape == (128, 128, 3)
 render_index + 1
-""", timeout=1500)
+""", timeout=3000)
+            renders = time.perf_counter() - started
+            print(f"120 offscreen renders at 128 px: {renders:.1f}s total, "
+                  f"{renders / 120 * 1000:.0f} ms each", flush=True)
             assert result["value"] == "120", result
             assert vertices() == 8
             assert execute("42")["value"] == "42"
