@@ -11,8 +11,6 @@ name: `blender-cli`. Development evidence is produced in Linux orbs; macOS
 and Windows verification is deferred until every workstream below is `done`
 on Linux (owner: the platform workstream, last).
 
-## Foundations that stay
-
 ## Complete production and native commands (2026-09-08)
 
 User-authorized replacement of the Python-first modelling-only scope. The
@@ -26,7 +24,8 @@ tests and product-platform runs pass; old results below are historical only.
 | Native production | `agent_production.cc/.hh`, `tests/agent/production.py` | Rig, pose, keyframes/baking, simulation, production render | doing |
 | Command program | `agent_program.py`, `tests/agent/program.py` | JSON command source, parameters/references, recording, replay, prefix cache, recovery | doing |
 | Full build | `blender_agent.cmake`, `packaging/package.py`, `doc/agent/build-profile.md`, `tests/agent/io.py`, `tests/agent/package.py` | Restore production capabilities and package dependencies; IO/build evidence | doing |
-| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/docs/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | doing |
+| Production documentation | `README.md`, `doc/agent/usage.md`, `doc/agent/design.md` | One current native/JSON design and complete-production recipes, no stale Python-program contract | doing |
+| Integration | `agent_contract.py`, `agent_runtime.py`, CLI generator/parser, all remaining tests/workflows | Batch, common recording, schema/CLI, integration/build/platform acceptance | doing |
 
 Core exports `blender::agent::command_execute(bContext *, const json &)` and
 `command_api(bContext *)` (Python callable accepting/returning JSON strings).
@@ -35,6 +34,13 @@ Its header also declares native `command_operator`, `command_select`,
 Production exports `production_execute(bContext *, const json &)`; core routes
 rig/pose/animation/simulation/render there. Implementations must read upstream
 APIs and compile against this base, not invent an ABI. Integration owns pushes.
+
+Linux configure passes with xPack GCC 14.3 and the full upstream release feature
+profile; full build is running in `build/orb`. Syntax checks and CLI table
+generation pass. Native execution, production tests, JSON recovery and all
+packaged/product-platform evidence remain pending; no acceptance is claimed.
+
+## Historical foundations
 
 These subsystems are kept as the implementation base of the request set.
 They are complete on Linux and unchanged in intent; workstreams below may

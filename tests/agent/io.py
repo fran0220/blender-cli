@@ -71,6 +71,15 @@ FORMATS = {
              ", export_format='GLTF_SEPARATE', export_normals=False", '', 8, 12, True, True),
     'glb': ('export_scene.gltf', 'import_scene.gltf',
             ", export_format='GLB', export_normals=False", '', 8, 12, True, True),
+    'usd': ('wm.usd_export', 'wm.usd_import', '', '', 8, 6, True, True),
+    'usda': ('wm.usd_export', 'wm.usd_import', '', '', 8, 6, True, True),
+    'usdc': ('wm.usd_export', 'wm.usd_import', '', '', 8, 6, True, True),
+    'usdz': ('wm.usd_export', 'wm.usd_import', '', '', 8, 6, True, True),
+    # Alembic carries geometry/UV animation, not shader graphs. Disable face
+    # sets explicitly so no placeholder material is mistaken for shader IO.
+    'abc': ('wm.alembic_export', 'wm.alembic_import',
+            ', start=1, end=1, face_sets=False, as_background_job=False',
+            ', as_background_job=False', 8, 6, False, True),
     'blend': ('wm.save_as_mainfile', 'wm.open_mainfile', ', check_existing=False', '', 8, 6, True, True),
 }
 
@@ -143,12 +152,20 @@ def main():
                 name = 'asset' if extension in ('stl', 'ply') else 'Model'
                 check(facts(live), expected, vertices, faces, materials, uv, name)
                 program = call('program', 'get', cwd=live)
-                assert program['steps'][-1]['code'].strip() == imported, program
+                text = program['text']
+                model = json.loads(text)
+                assert set(model) == {'base', 'params', 'steps'}, model
+                assert model['steps'][-1] == {'op': 'exec', 'code': imported}, model
+                artifact = live / '.blender-cli/program/model.json'
+                assert json.loads(artifact.read_text(encoding='utf-8')) == model
                 # External files are conservatively marked irreproducible even when
                 # present: absolute paths remove cwd dependence, not file dependence.
                 assert program['steps'][-1]['reproducible'] is False, program
                 digest = program['digest']
-                shutil.copytree(live / '.blender-cli/program', replay / '.blender-cli/program')
+                # Only the JSON program travels: no snapshots, version metadata
+                # or source-session state may be needed for fresh-process replay.
+                (replay / '.blender-cli/program').mkdir(parents=True)
+                shutil.copy2(artifact, replay / '.blender-cli/program/model.json')
                 reopened = call('session', 'open', cwd=replay)
                 try:
                     assert reopened['recovered_from'] == 'program', reopened
@@ -200,20 +217,6 @@ def main():
             finally:
                 call('session', 'close', cwd=live)
 
-        errors = root / 'errors'
-        errors.mkdir()
-        call('session', 'open', cwd=errors)
-        try:
-            for operator, label in (('usd_import', 'USD'), ('alembic_import', 'Alembic')):
-                events = stream(f'bpy.ops.wm.{operator}(filepath={str(errors / "absent")!r})', errors, ok=False)
-                error = events[-1]
-                assert error['type'] == 'AttributeError' and error['line'] == 1, error
-                assert error['message'] == f'Calling operator "bpy.ops.wm.{operator}" error, could not be found', error
-                assert label + ' support is not built in' in error['rna']['description'], error
-                assert error['rna']['nearest'] == [] and 'fix' not in error, error
-                assert call('exec', '-c', '42', cwd=errors)['value'] == '42'
-        finally:
-            call('session', 'close', cwd=errors)
     print('agent io: all assertions passed')
 
 

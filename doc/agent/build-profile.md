@@ -1,462 +1,139 @@
 # blender-cli build profile
 
-Owner of: what the agent build compiles in, what it trims, and how size is
-measured. The profile itself is
-`build_files/cmake/config/blender_agent.cmake`; this document explains it.
+Owner of what is compiled in, what packaging removes, and how size is measured.
+Execution status and platform validation belong in `PLAN.md`.
 
-## Where the size is
+## Complete production, no GUI execution
 
-Measure this profile, not a different Blender release or a `bpy` wheel. Those
-packages differ in version, dependencies and build flags, so their sizes cannot
-isolate the cost of the GUI. CMake options disable compilation but upstream's
-install rules still copy unused shared libraries and Python VFX bindings.
-Packaging must remove that payload separately. No product size forecast is used.
+`build_files/cmake/config/blender_agent.cmake` includes upstream's
+`blender_release.cmake`, then applies the agent-specific exceptions below.
+The scope is complete creation, characters, animation, simulation, lighting,
+rendering, compositing and delivery, not modelling with a few export formats.
+Native production requests are primary; upstream Python is an explicit
+extension. No production feature is removed merely because observation uses
+EEVEE or because a dedicated command has not been written yet.
 
-## What the agent needs
-
-The agent models by writing `bpy` code, observes through offscreen EEVEE,
-bakes through Cycles CPU, and exports glTF or FBX. That fixes the keep list:
-
-| Keep | Why |
+| Retained capability | Build/dependency rationale |
 |---|---|
-| Python 3.13 + numpy | the interface language |
-| EEVEE, GPU module, Vulkan (Windows) / Metal (macOS) | `observe` |
-| Cycles CPU, Embree | baking |
-| OpenVDB, `WITH_MOD_REMESH`, QuadriFlow | voxel remesh and retopology are high-frequency in code modelling |
-| GMP, Manifold | exact booleans |
-| OpenSubdiv | subdivision modifier |
-| Potrace | image → curves, directly useful when modelling from a picture |
-| OpenColorIO, OpenImageIO, PNG/JPEG/WebP | deterministic color-managed observation, texture IO |
-| glTF (Draco, meshoptimizer), FBX, OBJ | export to games |
-| Rigify | Phase 2 characters |
-| Freetype | text objects |
+| EEVEE and Cycles, Embree, OSL, path guiding, OpenImageDenoise | Production rendering and baking, not only deterministic observation. LLVM dependency selection follows upstream OSL/platform discovery; it is not forcibly disabled. |
+| Fluid/Mantaflow, ocean/FFTW, Bullet | Fluids, smoke, ocean and rigid-body simulation. Cloth and soft body remain upstream-native. |
+| Audaspace, FFmpeg, libsndfile, Rubber Band, OpenAL | Sequencer/video delivery, audio IO, mixing and time stretching. Platform audio devices use upstream release defaults. |
+| USD, Alembic, MaterialX, Hydra, Cycles Hydra delegate | Scene/cache interchange, material translation and render delegates. Keep accompanying Python bindings and plugin resources. |
+| glTF/Draco/meshoptimizer, FBX, OBJ, PLY, STL, BVH, SVG, blend | Native and upstream add-on interchange; retain add-on discovery across factory reset. |
+| libmv/Ceres, Freestyle, Grease Pencil IO, Haru, Potrace | Tracking, stylized lines, drawing, SVG/PDF export and tracing. |
+| Cineon, JPEG2000, OpenEXR, WebP and upstream image codecs | Production texture, film and image interchange, not only PNG previews. |
+| OpenVDB/NanoVDB, remesh, QuadriFlow, GMP, Manifold, OpenSubdiv, UV SLIM, IK solvers | Geometry, volumes, deformation, rigging and UV workflows. |
+| International text, all fonts and assets | Text objects and creation resources are production inputs, even without translated interactive UI. |
+| Python and complete installed standard library/bindings | Explicit extensions, bundled add-ons, tooling and native engine registration. No generated Python behind production commands. |
 
-## What is trimmed
+## All exclusions and platform decisions
 
-Tier 1 — CMake options, zero source changes (see the profile):
+The former feature-specific OFF list is removed in full. The remaining choices
+are narrowly about desktop interaction or upstream toolchain availability:
 
-| Off | Cost |
-|---|---|
-| `WITH_CYCLES_DEVICE_CUDA/OPTIX/HIP/HIPRT/ONEAPI/METAL` | Cycles is CPU only; observation is EEVEE |
-| `WITH_CYCLES_OSL`, `WITH_LLVM` | no OSL shaders |
-| `WITH_USD`, `WITH_HYDRA`, `WITH_MATERIALX`, `WITH_ALEMBIC` | no pipeline scene interchange |
-| `WITH_OPENIMAGEDENOISE`, `WITH_CYCLES_PATH_GUIDING` | no denoising of observation renders |
-| `WITH_CODEC_FFMPEG`, `WITH_CODEC_SNDFILE`, all audio backends, `WITH_AUDASPACE` | no video, no audio |
-| `WITH_INTERNATIONAL`, `WITH_XR_OPENXR`, `WITH_INPUT_NDOF`, `WITH_INPUT_IME` | no translated UI or interactive input devices |
-| `WITH_LIBMV`, `WITH_FREESTYLE`, `WITH_MOD_FLUID`, `WITH_MOD_OCEANSIM`, `WITH_BULLET`, `WITH_HARU`, `WITH_IO_GREASE_PENCIL`, `WITH_BLENDER_THUMBNAILER` | no tracking, simulation, line-art, PDF or desktop thumbnailing |
-| `WITH_IMAGE_CINEON`, `WITH_IMAGE_OPENJPEG` | no Cineon/JPEG2000 |
+- `WITH_BLENDER_THUMBNAILER=OFF`: desktop thumbnail integration is not a
+  production operation.
+- `WITH_INPUT_NDOF=OFF`, `WITH_INPUT_IME=OFF`, `WITH_XR_OPENXR=OFF`,
+  `WITH_GHOST_SDL=OFF`: no interactive devices, XR session or SDL window loop.
+  GUI source otherwise stays compiled where upstream needs it. The agent entry
+  never calls `WM_main`; CMake and packaging do not replace that runtime guard.
+- Linux development uses `WITH_HEADLESS=ON`. Apple Silicon macOS and Windows
+  explicitly use `WITH_HEADLESS=OFF` for Cocoa/Metal and Vulkan offscreen paths,
+  without making GUI execution reachable.
+- macOS uses upstream Metal Cycles support and CoreAudio. Windows x64 uses
+  upstream release GPU settings, including HIPRT, oneAPI and precompiled
+  CUDA/HIP/oneAPI kernels, plus WASAPI. Release builders must provide the
+  upstream SDK/toolchain dependencies; a disabled or missing target capability
+  is a validation gap, not grounds to silently narrow the product.
+- Linux uses upstream normal developer GPU defaults: CUDA and HIP runtime
+  support on, OptiX requested and subject to upstream SDK discovery, HIPRT and
+  oneAPI off, no ahead-of-time GPU binaries. This avoids imposing release-farm
+  CUDA/ROCm/oneAPI compiler SDKs on development. It is not evidence that the
+  release GPU kernels or devices work.
+- SDL audio and PipeWire follow upstream release defaults (off); they are
+  alternative device backends, not the audio processing implementation.
+  JACK/PulseAudio are requested on Linux and may be disabled by upstream when
+  system development libraries are absent. FFmpeg, libsndfile and Audaspace
+  remain required. Do not confuse unavailable playback hardware with missing
+  audio-file support.
+- Debug/test executables and experimental developer options otherwise follow
+  upstream defaults. There is no source-level editor-removal project here.
 
-Tier 2 — packaging, zero source changes:
+Read CMake's configure output and generated compile definitions, not only
+`CMakeCache.txt`: upstream can disable an unavailable dependency with a normal
+variable while leaving the requested cache option ON.
 
-- `scripts/addons_core`: `io_scene_gltf2`, `io_scene_fbx`, `rigify`, `cycles`
-  and `pose_library`. Preference-driven add-ons must remain discoverable by
-  upstream `addon_utils.reset_all()` after factory resets; being importable
-  from `scripts/modules` alone is insufficient. Hidden core modules `bl_pkg`,
-  `io_anim_bvh`, `io_curve_svg`, `io_mesh_uv_layout` move unchanged to
-  `scripts/modules`; upstream enables them persistently. Deleting required
-  modules pollutes one-shot JSON with import errors. Relocated bytes are not
-  claimed as savings. Other optional add-ons are deleted.
-- Python standard library: drop `test`, `idlelib`, `tkinter`, `ensurepip`,
-  `lib2to3`, `turtledemo`. Linux already lacks all except `ensurepip`; CPython
-  3.13 removed lib2to3, and upstream install excludes the other five except
-  ensurepip. Remove both copies of the static libpython archive and generated
-  bytecode. Keep the Python executable, NumPy, requests and zstandard; the
-  latter two are imported by upstream HTTP and blend-file metadata modules.
-- Remove Python VFX SDK bindings (USD, MaterialX, OSL, OpenVDB, OpenImageIO,
-  OpenColorIO) and Cython. These are not `bpy`, and retained add-ons/agent modules
-  do not import them. Keep Blender's actual IO/color/volume libraries.
-- Remove shared libraries belonging to the disabled USD, OSL, MaterialX,
-  tracking, HIPRT, OpenXR, SDL, denoising, video and audio subsystems, plus build
-  helpers and Windows PDBs. Windows installs these in `blender.shared`; the
-  copied side-by-side manifest removes entries for deleted DLLs while preserving
-  its assembly identity. The final Windows path is not yet validated (see PLAN).
-  Preserve all license notices. SYCL/UR stay: the pinned Embree build
-  causes actual dynamic dependencies even with all Cycles GPU devices off.
-- Datafiles: one Inter font face, with the required `DejaVuSansMono.woff2`
-  filename alias (symlink on Unix; same-face copy in Windows ZIP). BLF loads
-  both names during background startup. One `studio/basic.sl` remains; it is
-  **not** the observation rig, which creates SUN lights itself. Keep sculpt
-  brush assets for code modelling. Drop locale, disk icons, GUI theme presets
-  and macOS application icons.
-- Color management: extract upstream Standard/sRGB transforms verbatim.
-  **Required retention:** factory startup references AgX before the agent
-  command starts, so retain the actual AgX/sRGB transform and its single
-  `AgX_Base_sRGB.cube` LUT (2.6 MiB), not a misleading Standard alias. A strictly
-  Standard-only config emits an upstream warning into stdout and breaks the
-  protocol test. Keep the two referenced ICC profiles and an ACEScc built-in
-  for OCIO's required log roles. Remove Filmic and all other LUTs. Observation
-  remains Standard, with exact before/after byte equality tested.
-
-Tier 3 — no source-level editor removal. GUI code remains compiled and
-unreachable; no claimed percentage saving justifies additional upstream drift.
-
-## Decisions from measurement
-
-- **OpenVDB stays.** Its installed Linux library occupies 56 MiB. Voxel remesh
-  is part of the modelling keep list; remove the separate 4.9 MiB Python binding,
-  not the volume/remesh implementation used by `bpy`.
-- **Cycles CPU and Embree stay.** The ELF symbol-size sum for `ccl::` symbols is
-  8,163,977 bytes; this is attribution, not a counterfactual uninstall saving.
-  Embree occupies 27 MiB and requires approximately 21 MiB of SYCL/UR libraries
-  from the pinned package. EEVEE is not a replacement for Cycles object/texture
-  baking. Removing the Cycles Python registration made `engine='CYCLES'` fail
-  in a real exec; packaging now preserves it. The profile spells upstream's
-  actual `WITH_EMBREE` option, replacing the ineffective `WITH_CYCLES_EMBREE`.
-- No other engine switch changes: the measurements locate the removable mass
-  in copied SDK/library/development payloads, not in required modelling engines.
-
-## Packaging and CI
+## Packaging policy
 
 `python3 source/blender/agent/packaging/package.py <install> <new-tree>
---platform <macos-arm64|windows-x64|linux-x64> --archive` never edits its input
-and refuses an existing output. It writes a sibling JSON with logical bytes,
-per-component sizes, every removal (including absent paths), retained module
-relocations, version parsed from the actual CLI, and compressed archive size.
-`python3 tests/agent/package.py <original-cli> <trimmed-cli>` exercises session,
-exec, inspect, describe, observation and in-code comparison, Cycles registration
-and byte-identical observation. Run all nine current protocol scripts against
-the new tree as well before distributing it: protocol, describe, cli, session,
-program, io, observe, feedback and fit. The workflow derives this suite from
-CMake's test registrations. IO runs once in that loop; package smoke retains
-the distinct before/after operator-registration checks, not another IO script run.
+--platform <macos-arm64|windows-x64|linux-x64> --archive` copies its input and
+refuses existing or nested destinations. It retains:
 
-macOS uses a plain directory with `bin/` and `Resources/`, preserving upstream
-`@loader_path/../Resources/lib` and application resource lookup; a top-level
-`blender-cli` symlink gives a stable CLI path. No binary rewriting or `.app` is
-needed. Windows keeps the CLI at the root and upstream's `blender.shared` DLL
-directory and side-by-side assembly layout. Archives are unsigned and not
-notarized; quarantine instructions are in the root README.
+- Every installed runtime library and its aliases, USD/Hydra plugins, Windows
+  side-by-side manifest and DLL layout; no name-based library deletion.
+- Every installed Python binding, including USD, MaterialX, OpenVDB, OSL,
+  OpenImageIO and OpenColorIO, plus SDK archives and installed stdlib packages.
+  Python extensions can use these; lack of a current agent import is not proof
+  they are removable.
+- All add-ons in upstream locations, including Cycles, Hydra Storm, Rigify,
+  pose library, Node Wrangler and hidden core import/export modules. No
+  relocation or allow-list pruning.
+- Complete assets, sculpt brushes, fonts, studio lights, presets, icons and
+  locale resources. Small desktop data is kept rather than guessed expendable.
+- The exact upstream OCIO config, all view transforms (including Filmic and
+  AgX), LUTs and ICC profiles. Deterministic observation's Standard setting
+  does not constrain production color management.
+- Redistribution notices and licenses.
 
-Both workflows are **manual-only** (`workflow_dispatch`): the user stopped
-Actions-based iteration on 2026-09-05 in favor of faster Linux orb development.
-There are no push or tag build triggers. Historical platform evidence remains
-valid for its tested revision; Linux does not substitute for final Windows evidence.
+The only removals are build-time generators (`datatoc`, `makesdna`, `makesrna`,
+`shader_tool`, `zstd_compress`), root-level Windows PDB debug symbols and
+regenerable `__pycache__` directories. These do not implement scene capabilities.
+Do not introduce additional SDK/test stripping without dependency evidence.
 
-The manual gate compiles `bf_agent` and `blender-cli` on AppleClang/MSVC, including
-their unavoidable generated DNA/shader dependency closure (3,806/3,761 Ninja
-edges in the first native gates). It does not link Blender. Fatal warnings are
-target-local (`-Werror` or `/WX`), never global. Linux builds and tests the full
-profile with a 360-minute job budget. Each platform caches pinned libraries and a
-2 GiB sccache store, preferring complete build caches over newer gate-only caches.
-The manual full workflow builds, installs, tests and
-archives both product targets by default; dispatch can select one native
-platform for a focused retry without repeating another multi-hour build.
-Build/installed tests and packaging run in separate jobs, each with a 360-minute
-cap. Installed CTests get 240 minutes (102 measured); packaging and the derived
-trimmed suite get 300 minutes (~126 measured before removing duplicate IO).
-Both exceed twice the slowest measurement. The ~770 MB installed tree crosses
-the job boundary as one gzip-compressed tar artifact, preserving symlinks and
-file modes; artifact compression is disabled to avoid compressing it twice.
-The package runner independently installs the same pinned software Vulkan ICD.
-CTest retains each test's declared timeout (up to 4800 seconds for fit).
-Packaging still runs after an installed-test
-failure so both layouts can be diagnosed; its size JSON is retained with the
-diagnostics even on failure. Archives are uploaded only after package checks pass.
-Native device absence returns CTest skip code 77 with an explicit
-Metal/Vulkan reason; render errors are never converted to skips. A skipped
-render is not product-platform rendering evidence; execution status lives in PLAN.
+macOS keeps the established plain directory layout: `bin/`, `Resources/` and
+a top-level `blender-cli` symlink, preserving upstream loader/resource paths.
+Windows retains the root CLI and `blender.shared` assembly. Unix archives use
+tar+zstd; Windows uses ZIP. Packaging never rewrites binaries or DLL manifests.
+Artifacts are unsigned/not notarized; product validation must use their actual
+installed/extracted layout on the target platform.
 
-Windows full runs install a CI-only software Vulkan ICD from
-[mesa-dist-win 25.0.7](https://github.com/pal1000/mesa-dist-win/releases/tag/25.0.7),
-matching the Linux development Mesa version. The MSVC release archive is pinned
-by SHA-256 `e81be9e5990fabc5e528f544b1a2e2f37f70fe098822eb9c70555501f3621287`
-and cached by version and digest; every cache hit is checksum-verified. Only
-`x64/lvp_icd.x86_64.json` and `x64/vulkan_lvp.dll` are extracted. The software
-ICD is registered under `HKLM\SOFTWARE\Khronos\Vulkan\Drivers` on the disposable
-runner (native absolute manifest path, DWORD zero). Elevated Windows processes
-ignore loader driver environment overrides, so `VK_DRIVER_FILES` alone is not
-reliable here. Native backslashes also preserve relative DLL resolution from
-the manifest directory. No WGL driver is deployed.
-The existing device probe must succeed through Blender's bundled Vulkan loader
-before CTest starts. The ICD stays outside both install and release trees:
-it is not distributed or counted in package sizes. These runs establish
-**Windows software-Vulkan evidence only**, not Windows 11 physical-GPU evidence.
-Windows 11 hardware validation remains unverified. The final-surface macOS
-Metal run below validates its explicitly recorded revision.
+## Validation and measurement
 
-## Measured — Linux x86_64 (dev)
-
-Debian 12, xPack GCC 14.3.0, Release, pinned upstream libraries, Mesa 25.0.7
-software Vulkan; `build/orb` is the shared build directory. `du -h` below reports
-allocated MiB/KiB (rounded), unlike the packaging JSON's exact logical bytes.
-Python startup generates bytecode, so warm test trees are larger than a fresh
-install; those caches are removed from archives.
-
-The untrimmed install compressed with `tar -I 'zstd -19' -cf - -C build/orb/bin .
-| wc -c` is **238,794,063 bytes**. No macOS/Windows size is inferred from this.
-
-### Release-tree result
-
-| Measurement | Bytes |
-|---|---:|
-| Warm installed tree, logical file bytes | 1,009,451,951 |
-| Trimmed tree, logical file bytes | 480,087,757 |
-| Removed, net | 529,364,194 (52.4%) |
-| Original whole-install tar.zst, level 19 | 238,794,063 |
-| `blender-cli-5.3.0-alpha-agent.1-linux-x64.tar.zst`, level 19 | 115,150,673 |
-| Compressed saving | 123,643,390 (51.8%) |
-
-| Removed payload | Logical bytes saved |
-|---|---:|
-| Disabled shared libraries | 207,868,056 |
-| Python static archives (two libpython copies and NumPy C-API archives) | 168,489,886 |
-| VFX Python bindings and Cython | 96,209,795 |
-| Color-management config/LUT/ICC reduction | 17,416,968 |
-| Extra font faces | 15,029,212 |
-| Generated Python bytecode | 10,479,761 |
-| Build helpers, ensurepip, icons and GUI theme presets | 9,094,075 |
-| Extra studio lights | 4,035,581 |
-| Optional add-ons (excluding relocated required modules) | 740,860 |
-
-Relocated runtime modules account for 4,502,245 bytes before bytecode cleanup;
-they are retained, not counted in add-on savings. Every removed path and its
-presence/byte count is emitted in the packaging JSON. `test`, `idlelib`,
-`tkinter`, `lib2to3`, `turtledemo`, and locale are already absent on this Linux
-install; only `ensurepip` of the requested stdlib directories saves bytes
-(1,796,875). Startup loads the Inter face through two filenames without font
-warnings; `basic.sl` is the only retained external studio-light file.
-
-Linux verification after the profile spelling/fatal-warning and long-socket-path fixes:
-`BUILD_EXIT=0`; `ctest --test-dir build/orb -R agent --output-on-failure`:
-**100% tests passed, 0 tests failed out of 4**, 281.15 seconds. The four scripts
-also pass against the trimmed tree. A fresh extraction of the archive passes
-all six verbs, and its observation is byte-identical to the original install:
-SHA-256 `9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
-Separate real execs before/after trim successfully bake a 32×32 CPU EMIT map
-and voxel-remesh the cube to 488 vertices. No scene fixtures or mocks are used.
-
-### Installed components (`du -sh build/orb/bin/*`)
-
-| Component | Allocated size |
-|---|---:|
-| `5.3` | 448 MiB (437 MiB before Python startup caches) |
-| `blender` | 185 MiB |
-| `lib` | 336 MiB |
-| `makesrna` | 3.3 MiB |
-| `shader_tool` | 2.6 MiB |
-| `zstd_compress` | 516 KiB |
-| `license` | 412 KiB |
-| `makesdna` | 252 KiB |
-| `blender-cli` | 188 KiB |
-| `datatoc` | 28 KiB |
-| `blender.desktop`, `readme.html` | 8 KiB each |
-| `blender-launcher`, `blender-symbolic.svg`, `blender-system-info.sh`, `blender.svg` | 4 KiB each |
-
-### Python stdlib top 20
-
-Command: `du -sh build/orb/bin/5.3/python/lib/python3.*/* | sort -rh | head -20`.
-
-| Component | Allocated size |
-|---|---:|
-| site-packages | 140 MiB |
-| config-3.13-x86_64-linux-gnu | 81 MiB |
-| lib-dynload | 22 MiB |
-| __pycache__ | 2.1 MiB |
-| ensurepip | 1.8 MiB |
-| encodings | 1.8 MiB |
-| email | 704 KiB |
-| asyncio | 573 KiB |
-| pydoc_data | 544 KiB |
-| urllib | 364 KiB |
-| xml | 349 KiB |
-| multiprocessing | 336 KiB |
-| importlib | 312 KiB |
-| http | 300 KiB |
-| logging | 288 KiB |
-| unittest | 280 KiB |
-| _pyrepl | 240 KiB |
-| zipfile | 237 KiB |
-| _pydecimal.py | 224 KiB |
-| re | 220 KiB |
-
-The separate `python/lib/libpython3.13.a` duplicates the 84,181,888-byte archive
-inside `config-*`. Neither is a runtime dependency. The standalone Python
-executable is 40,029,432 bytes and remains. Within site-packages, the largest
-items are USD `pxr` 64 MiB, NumPy 29 MiB warm, Cython 12 MiB, MaterialX 7.4 MiB,
-pip 6.2 MiB, OpenVDB binding 4.9 MiB, PyOpenColorIO 4.4 MiB, setuptools 3.9 MiB,
-docutils 2.5 MiB and OpenImageIO 2.0 MiB. NumPy stays for the measured comparison
-implementation; build/SDK bindings go, small general Python tooling remains.
-
-### Add-ons and datafiles
-
-Commands: `du -sh build/orb/bin/5.3/scripts/addons_core/*` and
-`du -sh build/orb/bin/5.3/datafiles/*`.
-
-| Add-on | Allocated size | Action |
-|---|---:|---|
-| bl_pkg | 1.2 MiB | relocate required runtime |
-| cycles | 3.7 MiB warm | relocate required engine registration |
-| hydra_storm | 20 KiB | remove |
-| io_anim_bvh | 72 KiB | relocate required runtime |
-| io_curve_svg | 88 KiB | relocate required runtime |
-| io_mesh_uv_layout | 40 KiB | relocate required runtime |
-| io_scene_fbx | 584 KiB | keep |
-| io_scene_gltf2 | 1.9 MiB | keep |
-| node_wrangler | 273 KiB | remove |
-| pose_library | 136 KiB | relocate required runtime |
-| rigify | 1.9 MiB | keep |
-| ui_translate | 52 KiB | remove |
-| viewport_vr_preview | 340 KiB | remove |
-
-| Datafiles | Allocated size | Action |
-|---|---:|---|
-| assets | 12 MiB | keep sculpt brush assets |
-| colormanagement | 20 MiB | Standard + factory AgX only |
-| fonts | 15 MiB | Inter face + required filename alias |
-| icons | 660 KiB | remove |
-| studiolights | 4.0 MiB | retain basic.sl |
-
-### Installed binary and shared libraries, descending
-
-Command: `du -sh build/orb/bin/blender build/orb/bin/lib/* | sort -rh`.
-Zero-byte symlink aliases are omitted; each actual library is counted once.
-
-| File (version suffix shortened) | Allocated size | Action |
-|---|---:|---|
-| blender | 185 MiB | keep |
-| libusd_ms | 76 MiB | remove |
-| liboslexec | 61 MiB | remove |
-| libopenvdb | 56 MiB | keep voxel remesh |
-| liboslcomp | 48 MiB | remove |
-| libembree4 | 27 MiB | keep CPU BVH |
-| libur_loader | 17 MiB | required by pinned SYCL |
-| libOpenImageIO | 17 MiB | keep image IO |
-| libOpenColorIO | 6.9 MiB | keep color management |
-| libceres | 5.4 MiB | remove tracking dependency |
-| libsycl | 3.9 MiB | required by pinned Embree |
-| libSDL3 | 2.8 MiB | remove |
-| libdraco | 2.0 MiB | keep glTF |
-| libhiprt0200564 | 1.7 MiB | remove |
-| libur_adapter_level_zero_v2 | 1.4 MiB | retain pinned UR runtime adapter |
-| libOpenEXR | 1.3 MiB | keep image IO dependency |
-| libMaterialXCore | 1.2 MiB | remove |
-| libOpenImageIO_Util | 1.1 MiB | keep |
-| libMaterialXGenShader | 904 KiB | remove |
-| libosdCPU | 820 KiB | keep subdivision |
-| libosdGPU | 816 KiB | keep subdivision |
-| libopenxr_loader | 772 KiB | remove |
-| libMaterialXRender | 584 KiB | remove |
-| libvulkan | 552 KiB | keep observation backend |
-| libIex | 520 KiB | keep image IO dependency |
-| libopenjph | 492 KiB | keep image IO dependency |
-| libMaterialXRenderGlsl | 420 KiB | remove |
-| libMaterialXGenMdl | 416 KiB | remove |
-| libMaterialXGenGlsl | 408 KiB | remove |
-| libOpenEXRCore | 396 KiB | keep |
-| libMaterialXFormat | 320 KiB | remove |
-| libImath | 308 KiB | keep |
-| libMaterialXGenMsl | 300 KiB | remove |
-| libtbb | 292 KiB | keep threading |
-| liboslquery | 228 KiB | remove |
-| libOpenEXRUtil | 208 KiB | keep |
-| libMaterialXGenOsl | 184 KiB | remove |
-| libmeshoptimizer | 152 KiB | keep glTF |
-| libtbbmalloc | 136 KiB | keep allocator |
-| libMaterialXRenderOsl | 92 KiB | remove |
-| libbf_intern_draco_bridge | 72 KiB | keep glTF runtime bridge |
-| liboslnoise | 52 KiB | remove |
-| libIlmThread | 48 KiB | keep |
-| libtbbmalloc_proxy | 28 KiB | keep |
-| libMaterialXRenderHw | 20 KiB | remove |
-| libblender_cpu_check, libbf_intern_meshopt_bridge | 16 KiB each | keep |
-
-## Measured — macOS arm64
-
-GitHub `macos-15` arm64, AppleClang 17.0.0, Release, actual Metal device:
-[run 34164393096](https://github.com/fran0220/blender-cli/actions/runs/34164393096)
-at [4e7edf76](https://github.com/fran0220/blender-cli/commit/4e7edf7614bad68d107a7cdfde9e386cf91592dd).
-The full install passes all nine CTests with no skips, the trimmed tree
-passes all nine scripts, including IO, and package smoke passes Cycles registration after
-factory reset. Original/trimmed observation equality passes with SHA-256
-`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`.
-The uploaded package contains `release.json` with the per-path measurements.
-All figures here are logical bytes, not rounded `du` allocation.
-
-| Measurement | Bytes |
-|---|---:|
-| Warm installed tree | 744,885,109 |
-| Trimmed plain-directory tree | 346,213,975 |
-| Removed, net | 398,671,134 (53.5%) |
-| `blender-cli-5.3.0-alpha-agent.1-macos-arm64.tar.zst`, level 19 | 72,824,909 |
-
-The untrimmed macOS archive was not compressed; no compressed before/after
-percentage is inferred. The detailed component/removed-payload attribution below
-is historical from [run 33969385411](https://github.com/fran0220/blender-cli/actions/runs/33969385411),
-not re-attributed to the final run. Component rows are nested subtotals, not additive.
-
-| Component | Before | After |
-|---|---:|---:|
-| `Resources/5.3` | 284,008,579 | 91,667,987 |
-| `Resources/lib` | 307,331,624 | 112,505,432 |
-| `bin/Blender` | 141,132,200 | 141,132,200 |
-| `bin/blender-cli` | 216,888 | 216,888 |
-| Python stdlib tree | 207,480,655 | 57,651,245 |
-| Python site-packages | 139,688,577 | 27,814,604 |
-| Color-management data | 20,140,158 | 2,723,190 |
-| Fonts | 15,380,344 | 351,132 |
-| Studio lights | 4,036,709 | 1,128 |
-
-| Removed payload | Logical bytes saved |
-|---|---:|
-| Disabled shared libraries | 194,826,192 |
-| VFX Python bindings and Cython | 109,390,135 |
-| Python static archives | 33,098,760 |
-| Color-management reduction | 17,416,968 |
-| Extra fonts | 15,029,212 |
-| Build helpers, ensurepip, icons and GUI themes | 10,940,171 |
-| Generated bytecode | 10,670,046 |
-| Extra studio lights | 4,035,581 |
-| Optional add-ons | 568,418 |
-| Layout-only net remainder, including omitted bundle metadata | 219,785 |
-
-The largest deleted libraries are USD (74,342,912), OSL exec (53,318,672),
-OSL compiler (49,702,608), Ceres (8,678,400) and SDL (2,746,784).
-Retained OpenVDB is 65,822,128; Embree is 15,147,184; OpenImageIO is
-16,355,720; OpenColorIO is 6,965,720. The same modelling keep decisions apply.
-macOS's case-insensitive filesystem required selecting the platform's actual
-stdlib layout rather than probing both `Lib` and `lib/python3.*`. Archives use
-tar's shared `--use-compress-program` option, not GNU-only `-I` semantics.
-
-## Measured — Windows x64 (software Vulkan)
-
-GitHub `windows-2022`, Release, lavapipe 25.0.7,
-[run 34101160262](https://github.com/fran0220/blender-cli/actions/runs/34101160262)
-at [5aac050c718](https://github.com/fran0220/blender-cli/commit/5aac050c718b930ffbba63fb802f69ec234ebbca).
-All eight installed CTests and all eight trimmed scripts pass without CTest
-skips. Package smoke passes Cycles registration after factory reset and
-byte-identical original/trimmed observation (SHA-256
-`9d5aaaa2a3fa70ae5c1779de339ea709bce8d07f86e360afd5de1e14352ba835`).
-HKLM discovery succeeds through the bundled loader; sessions report
-`device: "vulkan"`. This validates the DLL/manifest trim with software Vulkan,
-not Windows 11 GPU hardware. These logical-byte measurements are valid for
-this revision. The later 6a276a08 run passes rendering/package smoke but fails
-protocol/session timeouts: installed 770,039,611 B, trimmed 290,678,958 B and
-ZIP 104,141,853 B remain provisional because its complete package gate fails.
-The corrected Windows-only retry is recorded in PLAN.
-`diagnostics-windows_x64-full/release.json` contains the complete per-path record.
-
-| Measurement | Bytes |
-|---|---:|
-| Installed tree | 770,030,373 |
-| Trimmed tree | 290,678,527 |
-| Removed, net | 479,351,846 |
-| ZIP archive | 104,141,664 |
-
-| Retained component | Bytes |
-|---|---:|
-| `5.3` | 111,136,202 |
-| `blender.exe` | 92,631,040 |
-| `blender.shared` | 75,068,555 |
-| `blender-cli.exe` | 267,776 |
-
-## Measuring
-
-```
-cmake -S . -B build -C build_files/cmake/config/blender_agent.cmake
-cmake --build build --target install
-du -sh build/bin/*                              # per top-level component
-du -sh build/bin/5.3/python/lib/python3.13/*    # stdlib
-du -sh build/bin/5.3/scripts/addons_core/*
+```sh
+cmake -S . -B build/orb -C build_files/cmake/config/blender_agent.cmake
+cmake --build build/orb --target install
+ctest --test-dir build/orb -R agent --output-on-failure
+python3 source/blender/agent/packaging/package.py build/orb/bin build/release --platform linux-x64 --archive
+python3 tests/agent/package.py build/orb/bin/blender-cli build/release/blender-cli
 ```
 
-Record the numbers per platform in this file, then adjust the profile.
+Run every CMake-registered agent protocol script against the packaged tree as
+well. `tests/agent/package.py` hashes installed runtime resources before/after,
+requires production build options, imports bindings, enables production add-ons
+and resolves operators after repeated factory resets. It checks engine and
+color/image-format registration and retains byte-identical observation checks
+when a device exists. Capability failures fail the test; device absence only
+marks rendering unverified, never missing production modules as acceptable.
+
+`tests/agent/io.py` performs real mesh round trips through blend, OBJ, native
+and add-on FBX, STL, PLY, glTF/GLB, USD/USDA/USDC/USDZ and Alembic. It verifies
+topology, bounds (absolute tolerance 1e-5 Blender units), UVs and materials where
+the format carries shader data. Alembic tests geometry/UVs, not shader graphs.
+It copies only `model.json` to a different directory and replays in a fresh
+process; no Python-program compatibility or snapshot dependency is permitted.
+References to external assets remain explicit dependencies, not magically
+embedded into the JSON artifact.
+
+Packaging writes a sibling JSON containing actual CLI version, logical input
+and output bytes (excluding symlinks), per-component sizes, every removal with
+reason/presence/byte count, and actual compressed bytes. Measure the same
+revision, dependency pins and profile before making size claims; warm Python
+caches can inflate an installed tree. A symbol-size attribution is not a
+counterfactual uninstall saving.
+
+**No complete-production package sizes are established yet.** Previous
+modelling-only Linux/macOS/Windows sizes and trim percentages are not applicable
+to this profile and are deliberately not presented as current measurements.
+Re-measure each platform after its full installed and packaged suites pass.
+Linux configure/build results are development evidence only; macOS Metal,
+Windows 11 hardware and Cycles GPU delivery require runs on those targets.
