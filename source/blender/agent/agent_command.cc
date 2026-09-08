@@ -42,6 +42,7 @@ namespace blender::agent {
 struct RequestState {
   bContext *context;
   std::unordered_map<unsigned int, unsigned int> initial_recalc;
+  std::unordered_map<unsigned int, unsigned int> accumulated_recalc;
 };
 
 /* Snapshot real Main IDs, not Python references which can become invalid after deletion/load. */
@@ -54,6 +55,7 @@ static PyObject *id_state(PyObject *self, PyObject *args)
   auto &state = *static_cast<RequestState *>(PyCapsule_GetPointer(self, "agent.request"));
   if (reset) {
     state.initial_recalc.clear();
+    state.accumulated_recalc.clear();
   }
   PyObject *result = PyDict_New();
   ID *id;
@@ -66,8 +68,11 @@ static PyObject *id_state(PyObject *self, PyObject *args)
     for (char &c : type) {
       c = char(std::toupper(static_cast<unsigned char>(c)));
     }
-    const unsigned int flags = id->recalc_after_undo_push |
-                               (id->recalc & ~state.initial_recalc[id->session_uid]);
+    /* Memfile writes consume recalc_after_undo_push. Keep request activity by
+     * session UID across explicit snapshots and Main replacement on rollback. */
+    unsigned int &flags = state.accumulated_recalc[id->session_uid];
+    flags |= id->recalc_after_undo_push |
+             (id->recalc & ~state.initial_recalc[id->session_uid]);
     PyObject *key = PyLong_FromUnsignedLong(id->session_uid);
     PyObject *value = Py_BuildValue("(ssI)", type.c_str(), id->name + 2, flags);
     PyDict_SetItem(result, key, value);
@@ -158,7 +163,7 @@ class AgentCommand : public CommandHandler {
     }
     const PyGILState_STATE gil = PyGILState_Ensure();
     BPY_context_set(C);
-    RequestState state{C, {}};
+    RequestState state{C, {}, {}};
     PyObject *capsule = PyCapsule_New(&state, "agent.request", nullptr);
     PyObject *native = PyDict_New();
     PyObject *snapshot = PyCFunction_New(&id_state_method, capsule);

@@ -175,7 +175,7 @@ Changing scene parameters can stale a cache. Re-evaluate/bake the intended frame
 range and verify outputs independently of program replay. Long jobs report
 progress as `phase` and `fraction` (0–1), at most once per 0.5 seconds plus
 completion, unless the session's progress policy is off. Animation loops and
-point-cache baking can observe cancellation during work. Fluid, ocean and
+point-cache/ocean baking can observe cancellation during work. Fluid and
 production-render execution currently check at operation boundaries, not
 necessarily during an upstream bake/render. Partial external files can remain
 after cancellation or failure; inspect `external_effects` when reported in an

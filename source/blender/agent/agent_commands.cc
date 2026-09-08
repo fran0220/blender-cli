@@ -103,7 +103,9 @@ static JSON pointer_json(bContext *C, const PointerRNA &ptr)
   if (ptr.owner_id) {
     ID *owner = nullptr;
     const auto suffix = RNA_path_from_real_ID_to_struct(CTX_data_main(C), &ptr, &owner);
-    if (!owner || !suffix) {
+    /* Upstream returns no suffix for a top-level ID: its empty relative path is
+     * valid. A non-ID child without a path is not addressable from that owner. */
+    if (!owner || (!suffix && ptr.data != owner)) {
       return result;
     }
     PointerRNA root = RNA_main_pointer_create(CTX_data_main(C));
@@ -119,8 +121,8 @@ static JSON pointer_json(bContext *C, const PointerRNA &ptr)
       {
         std::string path = std::string(RNA_property_identifier(property)) + "[" +
                            JSON(owner->name + 2).dump() + "]";
-        if (!suffix->empty()) {
-          path += "." + *suffix;
+        if (suffix && !suffix->empty()) {
+          path += ((*suffix)[0] == '[' ? "" : ".") + *suffix;
         }
         PropertyRNA *resolved_property = nullptr;
         if (RNA_path_resolve(&root, path.c_str(), &candidate, &resolved_property) &&
@@ -431,6 +433,9 @@ CommandJSON command_operator(bContext *C, const std::string &name, const JSON &p
   context_ensure(C);
   wmOperatorType *type = operator_type(name);
   PointerRNA ptr = WM_operator_properties_create_ptr(type);
+  /* Property setters take PointerRNA copies. Allocate their shared backing group
+   * first so a setter cannot create an IDProperty group on a discarded copy. */
+  RNA_struct_idprops(&ptr, true);
   struct FreeProperties {
     PointerRNA *ptr;
     ~FreeProperties()

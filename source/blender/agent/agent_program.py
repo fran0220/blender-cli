@@ -520,6 +520,7 @@ class Program:
         self.session = session
         self.directory = directory
         self.recording = True
+        self.replaying = False  # Runtime snapshots are transient while a step replays.
         self.cache = {}          # prefix key -> memfile snapshot id
         self.result_cache = {}   # prefix key -> JSON-only named results
         self.results = {}
@@ -717,6 +718,8 @@ class Program:
                 "reproducible": self.reproducible}
 
     def _step(self, request, number):
+        previous_replaying = self.replaying
+        self.replaying = True
         try:
             from agent_runtime import execute_step
             result = execute_step(request, self.session, results=self.results)
@@ -730,6 +733,8 @@ class Program:
             inner = [frame for frame in frames if frame.filename.startswith(("<program ", "<agent>"))]
             line = getattr(error, "lineno", None) or (inner[-1].lineno if inner else None)
             raise StepError(number, error, line) from error
+        finally:
+            self.replaying = previous_replaying
 
     def _check_divergence(self, content):
         """A full re-run landing on different content than the last one is not reproducible."""

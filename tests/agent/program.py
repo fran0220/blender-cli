@@ -323,6 +323,53 @@ def main():
         finally:
             call("session", "close", cwd=unrecoverable)
 
+        # Replaying explicit snapshots produces usable transient checkpoints, not
+        # new durable labels. Original IDs and the disk index survive replay/recovery.
+        checkpoints = root / "checkpoints"
+        checkpoints.mkdir()
+        call("session", "open", cwd=checkpoints)
+        try:
+            set_model(source, cwd=checkpoints)
+            first = call("session", "snapshot", "--label", "same-label", cwd=checkpoints)["snapshot"]
+            code = ('bpy.data.objects["Body"].location.z = 5\n'
+                    'checkpoint = agent.snapshot("same-label")\n'
+                    'bpy.data.objects["Body"].location.z = 9\n'
+                    'agent.rollback(checkpoint)\n'
+                    'assert bpy.data.objects["Body"].location.z == 5')
+            call("exec", "-c", code, cwd=checkpoints)
+            durable_index = checkpoints / ".blender-cli" / "snapshots" / "index.json"
+            durable_bytes = durable_index.read_bytes()
+            original_ids = [row["id"] for row in json.loads(durable_bytes)]
+            assert len(original_ids) == 2 and original_ids[0] == first
+            assert program("run", cwd=checkpoints)["ran"] == [4]
+            assert durable_index.read_bytes() == durable_bytes
+            failing = {"base": "factory-empty", "params": {}, "steps": [
+                {"op": "exec", "code": "raise RuntimeError('flag cleanup')"}]}
+            set_model(failing, cwd=checkpoints, ok=False)
+            assert extension("import agent_program\n"
+                             "agent_program.attach(agent._session).replaying", cwd=checkpoints)["value"] == "False"
+            # Restore the recorded program through its durable JSON version before crashing.
+            versions = program("history", cwd=checkpoints)["versions"]
+            program("rollback", versions[-2]["version"], cwd=checkpoints)
+            assert durable_index.read_bytes() == durable_bytes
+            extension("import os; os._exit(3)", cwd=checkpoints, ok=False)
+        finally:
+            call("session", "close", cwd=checkpoints)
+        for saved in (checkpoints / ".blender-cli").glob("autosave-*.blend"):
+            os.utime(saved, (time.time() - 3600, time.time() - 3600))
+        call("session", "open", cwd=checkpoints)
+        try:
+            assert call("session", "status", cwd=checkpoints)["recovered_from"] == "program"
+            assert durable_index.read_bytes() == durable_bytes
+            history = call("session", "history", cwd=checkpoints)["history"]
+            assert [row["snapshot"] for row in history if row["label"] == "same-label"] == original_ids
+            assert call("inspect", cwd=checkpoints)["objects"][0]["location"][2] == 5
+            call("session", "rollback", first, cwd=checkpoints)
+            assert call("inspect", cwd=checkpoints)["objects"][0]["location"][2] == 0.5
+        finally:
+            call("session", "close", cwd=checkpoints)
+        assert durable_index.read_bytes() == durable_bytes
+
         # Actual bounded memfile eviction, not a synthetic missing-cache fixture.
         heavy = root / "heavy"
         heavy.mkdir()

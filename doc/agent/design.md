@@ -1175,8 +1175,8 @@ the relevant cache state and external path. `render` uses the actual scene
 camera, lights, world and compositor, rather than observation's presets.
 Rendered/exported files and simulation caches are external effects: rollback
 of scene data cannot undo writes or guarantee valid cached frames. Cancellation
-of animation loops and point-cache baking can be observed during work. Fluid,
-ocean and production rendering currently check at operation boundaries around
+of animation loops, point-cache and synchronous ocean baking can be observed
+during work. Fluid and production rendering check at operation boundaries around
 upstream execution, not necessarily inside a bake/render. Do not promise
 immediate interruption. Partial output files may remain; errors can carry
 `external_effects` describing the affected outputs/cache rather than pretending

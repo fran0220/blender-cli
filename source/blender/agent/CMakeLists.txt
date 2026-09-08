@@ -44,6 +44,7 @@ set(SRC agent_command.cc AGENT_command.hh agent_session.cc agent_session.hh
 set(LIB
   PRIVATE bf::blenkernel
   PRIVATE bf::blenlib
+  PRIVATE bf::depsgraph
   PRIVATE bf::dna
   PRIVATE bf::imbuf
   PRIVATE bf::intern::guardedalloc

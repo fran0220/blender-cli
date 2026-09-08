@@ -64,6 +64,10 @@ def main():
         add("data", "set", path=cube + ".rotation_mode", value="NOT_A_MODE", error="enum")
         add("data", "call", path="materials.new", arguments={"name": "Native Material"},
             check=lambda result: result["value"]["material"]["path"] == material)
+        add("data", "get", path=material,
+            check=lambda result: result["value"]["path"] == material)
+        add("data", "get", path=material + ".node_tree",
+            check=lambda result: result["value"]["path"] == material + ".node_tree")
         add("data", "call", path=cube + ".data.materials.append", arguments={"material": {"path": material}})
         add("data", "get", path=cube + ".data.materials[0]",
             check=lambda result: result["value"]["name"] == "Native Material")
@@ -85,7 +89,11 @@ def main():
         add("data", "call", path="materials.new", arguments={}, error="required")
         add("data", "call", path="materials.new", arguments={"name": "Bad", "unknown": 1}, error="argument")
         add("data", "call", path=cube + ".data.materials.append", arguments={"material": {"path": cube}}, error="type")
-        add("data", "call", path=group + ".weight", arguments={"index": 9999}, error="")
+        # Upstream returns zero for an out-of-mesh index; an existing unassigned
+        # vertex reports the RNA error that this test exercises.
+        add("data", "call", path=group + ".weight", arguments={"index": 9999},
+            check=lambda result: result["value"]["weight"] == 0.0)
+        add("data", "call", path=group + ".weight", arguments={"index": 7}, error="Vertex not in group")
         add("object", "create", name="Native Camera", type="CAMERA", scale=[2, 3, 4])
         add("data", "get", path='objects["Native Camera"].scale', check=equals("value", [2, 3, 4]))
         add("data", "set", path="scenes[0].camera", value={"path": 'objects["Native Camera"]'})

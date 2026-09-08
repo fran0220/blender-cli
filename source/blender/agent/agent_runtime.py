@@ -763,10 +763,15 @@ class Session:
         """A labelled snapshot is also a disk checkpoint that survives a crash."""
         if label is not None and not isinstance(label, str):
             raise TypeError("Snapshot label must be a string or None")
+        if getattr(getattr(self, "program", None), "replaying", False):
+            # Replay rebuilds scene state, not the user's durable checkpoint history.
+            # Return a real transient snapshot so in-step rollback still works.
+            label = None
         if "snapshot" not in self.native:
             raise RuntimeError("This operation requires an open blender-cli session")
         parent = self.current
         filepath, dirty = bpy.data.filepath, bpy.data.is_dirty
+        self.native["id_state"](False)  # Preserve flags consumed by memfile encoding.
         self.current = self.native["snapshot"]()
         self.snapshot_taken = True
         event = {"snapshot": self.current, "label": label, "parent": parent,
@@ -810,6 +815,7 @@ class Session:
                           self.history[i]["label"] == target), -1)
             if index >= 0:
                 target = self.history[index]["snapshot"]
+        self.native["id_state"](False)  # Retain request activity across Main replacement.
         try:
             self.native["rollback"](target)
         except KeyError:

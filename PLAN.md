@@ -35,10 +35,19 @@ Production exports `production_execute(bContext *, const json &)`; core routes
 rig/pose/animation/simulation/render there. Implementations must read upstream
 APIs and compile against this base, not invent an ABI. Integration owns pushes.
 
-Linux configure passes with xPack GCC 14.3 and the full upstream release feature
-profile; full build is running in `build/orb`. Syntax checks and CLI table
-generation pass. Native execution, production tests, JSON recovery and all
-packaged/product-platform evidence remain pending; no acceptance is claimed.
+Linux configure/build/install passes with xPack GCC 14.3 and the full upstream
+release feature profile in `build/orb`. Integrated native commands, batch,
+protocol, describe, CLI, observe and feedback tests have passed individually.
+The production test has exercised actual rig deformation, animation, animated
+USD interchange, rigid/cloth/softbody, synchronous ocean and fluid caches, and
+Cycles PNG/sequence outputs. Full-suite acceptance remains pending: testing found
+and is verifying fixes for memfile-consumed request flags, replayed durable
+checkpoints, and upstream image/video media-type selection. Initial JSON program
+tests passed before the additional checkpoint regression. A regression run
+overlapped relinking and is invalid evidence; subsequent runs use a stable install.
+Packaged tests and product-platform runs are not yet verified. Windows CI SDK
+provisioning is implemented and syntax-checked, not executed; its Server 2022
+host is not official Windows 11 HIP hardware evidence. No acceptance is claimed.
 
 ## Historical foundations
 

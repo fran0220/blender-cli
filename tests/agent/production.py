@@ -197,6 +197,12 @@ assert max(v.co.z for v in ob.data.vertices) - min(v.co.z for v in ob.data.verti
 """)
         request("simulation", action="bake", name="Ocean", type="OCEAN", start=1, end=2,
                 path=str(root / "ocean"))
+        check(f"""
+from pathlib import Path
+assert bpy.data.objects['Ocean'].modifiers['Ocean'].is_cached
+cache_files = sorted(Path({str(root / 'ocean')!r}).glob('disp_*.exr'))
+assert len(cache_files) == 2 and all(p.stat().st_size > 100 for p in cache_files), cache_files
+""")
         request("simulation", action="free", name="Ocean", type="OCEAN")
         create("Domain", type="MESH", primitive="cube", location=[30, 0, 0])
         request("simulation", action="add", name="Domain", type="FLUID", start=1, end=2,
@@ -215,7 +221,8 @@ assert max(v.co.z for v in ob.data.vertices) - min(v.co.z for v in ob.data.verti
         # Use a real scene camera and native CPU-capable production renderer.
         request("scene", action="reset")
         create("Visible", type="MESH", primitive="cube")
-        create("Camera", type="CAMERA", location=[0, 0, 6])
+        # Camera add otherwise inherits Blender's view alignment. Aim down -Z.
+        create("Camera", type="CAMERA", location=[0, 0, 6], rotation=[0, 0, 0])
         data('scenes["Scene"].camera', {"path": 'objects["Camera"]'})
         create("Key", type="LIGHT", location=[1, 2, 4])
         data('objects["Key"].data.energy', 1000)
@@ -257,10 +264,13 @@ bpy.data.images.remove(movie)
         for item in requests:
             terminal = [event for event in events if event.get("id") == item["id"] and
                         event.get("event") in {"done", "error"}]
+            diagnostic = (item, terminal,
+                          [event for event in events if event.get("id") == item["id"] and
+                           event.get("event") == "log"], process.stderr[-12000:])
             if item["id"] in expected_errors:
-                assert any(event.get("event") == "error" for event in terminal), (item, terminal)
+                assert any(event.get("event") == "error" for event in terminal), diagnostic
             else:
-                assert terminal and all(event.get("ok", False) for event in terminal), (item, terminal)
+                assert terminal and all(event.get("ok", False) for event in terminal), diagnostic
         image = (root / "frame.png").read_bytes()
         assert image[:8] == b"\x89PNG\r\n\x1a\n" and struct.unpack(">II", image[16:24]) == (64, 64)
         assert (root / "anim-0001.png").is_file() and (root / "anim-0002.png").is_file()

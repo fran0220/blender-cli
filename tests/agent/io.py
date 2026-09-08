@@ -149,7 +149,10 @@ def main():
                 assert call('exec', '-c', 'len(bpy.data.objects)', cwd=live)['value'] == '0'
                 events = stream(imported, live)
                 assert any(event['event'] == 'diff' and event['added'] for event in events), events
-                name = 'asset' if extension in ('stl', 'ply') else 'Model'
+                # USD names the imported object after its mesh prim (the source
+                # mesh datablock is Cube), rather than the parent object Model.
+                name = ('asset' if extension in ('stl', 'ply') else
+                        'Cube' if extension in ('usd', 'usda', 'usdc', 'usdz') else 'Model')
                 check(facts(live), expected, vertices, faces, materials, uv, name)
                 program = call('program', 'get', cwd=live)
                 text = program['text']

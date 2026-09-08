@@ -6,6 +6,7 @@
 #include "agent_session.hh"
 
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -15,12 +16,17 @@
 #include "BKE_armature.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
+#include "BKE_image_format.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
 #include "BKE_modifier.hh"
+#include "BKE_ocean.h"
 #include "BKE_pointcache.h"
 #include "BKE_scene.hh"
+#include "BLI_fileops.hh"
 #include "BLI_listbase.hh"
+#include "BLI_path_utils.hh"
+#include "BLI_string.hh"
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
 #include "DNA_action_types.h"
@@ -33,6 +39,7 @@
 #include "DNA_scene_types.h"
 #include "ED_armature.hh"
 #include "RNA_access.hh"
+#include "RNA_enum_types.hh"
 #include "RNA_path.hh"
 #include "RNA_prototypes.hh"
 
@@ -385,6 +392,76 @@ static void cache_progress(void *, float progress, int *cancel)
   request_progress("simulation", std::isfinite(progress) ? progress : 1.0f);
 }
 
+static void ocean_bake(bContext *C, Object *object, OceanModifierData *modifier)
+{
+  /* OBJECT_OT_ocean_bake starts a window-manager job even from EXEC. A request
+   * must instead finish its bake before feedback/snapshotting can inspect it. */
+  const char *relbase = BKE_modifier_path_relbase(CTX_data_main(C), object);
+  char directory[FILE_MAX];
+  STRNCPY(directory, modifier->cachepath);
+  BLI_path_abs(directory, relbase);
+  BLI_path_abs_from_cwd(directory, sizeof(directory));
+  if (!BLI_dir_create_recursive(directory)) {
+    throw std::runtime_error("Cannot create ocean cache directory: " + std::string(directory));
+  }
+  using Cache = std::unique_ptr<OceanCache, decltype(&BKE_ocean_free_cache)>;
+  using Simulation = std::unique_ptr<Ocean, decltype(&BKE_ocean_free)>;
+  Cache cache(BKE_ocean_init_cache(modifier->cachepath,
+                                   relbase,
+                                   modifier->bakestart,
+                                   modifier->bakeend,
+                                   modifier->wave_scale,
+                                   modifier->chop_amount,
+                                   modifier->foam_coverage,
+                                   modifier->foam_fade,
+                                   modifier->resolution),
+              BKE_ocean_free_cache);
+  if (!cache) {
+    throw std::runtime_error("Ocean simulation is unavailable in this build");
+  }
+  cache->time = MEM_new_array_uninitialized<float>(cache->duration, "agent ocean bake time");
+  const float original_time = modifier->time;
+  for (int frame = cache->start; frame <= cache->end; frame++) {
+    const AnimationEvalContext eval = BKE_animsys_eval_context_construct(
+        CTX_data_depsgraph_pointer(C), frame);
+    BKE_animsys_evaluate_animdata(&object->id, object->adt, &eval, ADT_RECALC_ANIM, false);
+    cache->time[frame - cache->start] = modifier->time;
+  }
+  modifier->time = original_time;
+  Simulation ocean(BKE_ocean_add(), BKE_ocean_free);
+  if (!ocean || !BKE_ocean_init_from_modifier(ocean.get(), modifier, modifier->resolution)) {
+    throw std::runtime_error("Cannot initialize ocean simulation");
+  }
+  check_cancel();
+  BKE_ocean_bake(ocean.get(), cache.get(), cache_progress, nullptr);
+  check_cancel();
+  if (!cache->baked) {
+    throw std::runtime_error("Ocean simulation did not complete");
+  }
+  /* The kernel logs write failures but has no failure return. Read its own cache
+   * back before publishing 'cached', including each enabled output channel. */
+  for (int frame = cache->start; frame <= cache->end; frame++) {
+    check_cancel();
+    BKE_ocean_simulate_cache(cache.get(), frame);
+    const int i = frame - cache->start;
+    if (!cache->ibufs_disp[i] ||
+        ((modifier->flag & MOD_OCEAN_GENERATE_FOAM) && !cache->ibufs_foam[i]) ||
+        ((modifier->flag & MOD_OCEAN_GENERATE_NORMALS) && !cache->ibufs_norm[i]) ||
+        ((modifier->flag & MOD_OCEAN_GENERATE_FOAM) &&
+         (modifier->flag & MOD_OCEAN_GENERATE_SPRAY) &&
+         (!cache->ibufs_spray[i] || !cache->ibufs_spray_inverse[i])))
+    {
+      throw std::runtime_error("Ocean cache output is missing or unreadable at frame " +
+                               std::to_string(frame));
+    }
+  }
+  BKE_ocean_free_modifier_cache(modifier);
+  modifier->oceancache = cache.release();
+  modifier->cached = true;
+  DEG_id_tag_update(&object->id, ID_RECALC_SYNC_TO_EVAL);
+  request_progress("simulation", 1.0f);
+}
+
 static CommandJSON simulation_execute(bContext *C, const CommandJSON &request)
 {
   const std::string name = request.at("name"), action = request.at("action");
@@ -475,6 +552,9 @@ static CommandJSON simulation_execute(bContext *C, const CommandJSON &request)
       check_cancel();
       if (type == "FLUID") {
         command_operator(C, action == "bake" ? "fluid.bake_all" : "fluid.free_all");
+      }
+      else if (action == "bake") {
+        ocean_bake(C, object, reinterpret_cast<OceanModifierData *>(modifier));
       }
       else {
         command_operator(
@@ -569,9 +649,18 @@ static CommandJSON render_execute(bContext *C, const CommandJSON &request)
     throw std::invalid_argument("Production rendering requires a scene camera");
   }
   const std::string base = "scenes[" + CommandJSON(scene->id.name + 2).dump() + "]";
+  if (request.contains("format")) {
+    const std::string format = request.at("format");
+    int type;
+    if (!RNA_enum_value_from_id(rna_enum_image_type_all_items, format.c_str(), &type)) {
+      throw std::invalid_argument("Unknown render format: " + format);
+    }
+    /* File-format RNA is filtered by the current media type. The kernel setter
+     * switches both together, including image -> movie and movie -> image. */
+    BKE_image_format_set(&scene->r.im_format, &scene->id, type);
+  }
   for (const auto &[field, property] : {std::pair{"path", "render.filepath"},
                                         {"engine", "render.engine"},
-                                        {"format", "render.image_settings.file_format"},
                                         {"width", "render.resolution_x"},
                                         {"height", "render.resolution_y"},
                                         {"start", "frame_start"},

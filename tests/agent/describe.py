@@ -137,7 +137,9 @@ def main():
             assert record["events"] and set(record["events"]) <= set(events), record
             for name, field in record["fields"].items():
                 assert isinstance(field["required"], bool), (op, name, field)
-                assert "type" in field or "ref" in field, (op, name, field)
+                # An unconstrained JSON value deliberately has neither type nor ref.
+                if "type" in field:
+                    assert field["type"] in {"string", "number", "integer", "boolean", "array", "object"}, (op, name, field)
                 assert field["doc"].endswith("."), (op, name, field)
                 if "ref" in field:
                     assert field["ref"] in channel["defs"], (op, name, field)
