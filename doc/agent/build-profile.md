@@ -363,8 +363,8 @@ Zero-byte symlink aliases are omitted; each actual library is counted once.
 ## Measured — macOS arm64
 
 GitHub `macos-15` arm64, AppleClang 17.0.0, Release, actual Metal device:
-[run 34147274931](https://github.com/fran0220/blender-cli/actions/runs/34147274931)
-at [0f526b4f](https://github.com/fran0220/blender-cli/commit/0f526b4f176269d645742eefab3a667445512f59).
+[run 34164393096](https://github.com/fran0220/blender-cli/actions/runs/34164393096)
+at [4e7edf76](https://github.com/fran0220/blender-cli/commit/4e7edf7614bad68d107a7cdfde9e386cf91592dd).
 The full install passes all nine CTests with no skips, the trimmed tree
 passes all nine scripts, including IO, and package smoke passes Cycles registration after
 factory reset. Original/trimmed observation equality passes with SHA-256
@@ -377,7 +377,7 @@ All figures here are logical bytes, not rounded `du` allocation.
 | Warm installed tree | 744,885,109 |
 | Trimmed plain-directory tree | 346,213,975 |
 | Removed, net | 398,671,134 (53.5%) |
-| `blender-cli-5.3.0-alpha-agent.1-macos-arm64.tar.zst`, level 19 | 72,827,125 |
+| `blender-cli-5.3.0-alpha-agent.1-macos-arm64.tar.zst`, level 19 | 72,824,909 |
 
 The untrimmed macOS archive was not compressed; no compressed before/after
 percentage is inferred. The detailed component/removed-payload attribution below

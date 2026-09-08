@@ -574,6 +574,21 @@ the CMake-derived nine-script loop. Distinct before/after operator polls remain.
 Both-platform workflow validation is authorized after this change is committed;
 the installed nine-test product evidence on 0f526b4f stands independently.
 
+Split-workflow [run 34164393096](https://github.com/fran0220/blender-cli/actions/runs/34164393096)
+at [4e7edf76](https://github.com/fran0220/blender-cli/commit/4e7edf7614bad68d107a7cdfde9e386cf91592dd)
+validates artifact handoff on both platforms and all nine installed CTests.
+macOS seconds: protocol 70.24, describe 34.21, cli 70.11, session 165.15,
+program 48.98, IO 183.22, observe 54.24, feedback 21.53, fit 293.47.
+Windows seconds: protocol 276.22, describe 159.61, cli 105.84, session 1275.53,
+program 167.95, IO 1087.61, observe 400.13, feedback 179.61, fit 1610.40.
+macOS nine trimmed scripts and smoke pass; sizes validated at 744,885,109 B
+installed / 346,213,975 B trimmed / 72,824,909 B tar.zst.
+Windows smoke and eight trimmed scripts pass; session's 120-render call hits
+its inner 1500 s subprocess timeout (`session.py:497,509`), not the job budget.
+K is notified to align the inner and outer harness budgets without reducing
+render coverage. No further dispatch until coordinator routes it. Windows sizes
+772,171,059 B / 290,680,354 B / 104,142,403 B ZIP remain provisional.
+
 ## Ordering
 
 ```diagram
