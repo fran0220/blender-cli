@@ -6,6 +6,11 @@ model, targets and `fit`, the session protocol, observation determinism and
 the comparison metrics. Constraints are in `AGENTS.md`; status is in
 `PLAN.md`.
 
+Numerical timings and measured transcripts retained below are historical
+evidence for their recorded workloads, not validation of newly added native
+commands or the complete-production package. Current execution status remains
+in `PLAN.md`; the contract itself has no legacy program or request surface.
+
 ## Why this shape
 
 The production interface is native structured commands, not generated Python.
@@ -26,13 +31,16 @@ Native production interface declarations:
 - `data`: `action=get|set|call`, `path` (RNA path from Main, e.g.
   `objects["Body"].location`), `value` (JSON), `arguments` (JSON object for
   native RNA functions). No Python evaluation. Collection reads return
-  names/identifiers, not an unbounded recursive scene dump.
+  names/identifiers, not an unbounded recursive scene dump. Function results
+  retain RNA output names: `{value:{RNA_OUTPUT_NAME:{name,type,path}}}` for
+  an output pointer. Pointer arguments/assignments accept `{path: RNApath}`.
 - `operator`: `action=call|describe|list`, `name` (upstream operator identifier),
   `properties` (JSON object), `objects` (explicit selection), `active`, `mode`.
   Calls use EXEC, never an interactive invoke. Python-defined operators are
   rejected here; Python add-ons are explicitly executed with `exec`.
-- `scene`: `action=reset|frame|save|open`, `frame`, `path`; frame evaluates the
-  scene, save/open use native file operators.
+- `scene`: `action=reset|frame|save|open`, `frame`, `path`, `empty` (default
+  true for reset; CLI `--no-empty` restores factory defaults); frame evaluates
+  the scene, save/open use native file operators.
 - `capabilities`: compiled production features and native/extension execution
   availability, derived from the actual build, not desired profile values.
 - `rig`: `action=create|bone|bind`, `name` (armature), `bone`, `head`, `tail`,
@@ -42,8 +50,9 @@ Native production interface declarations:
 - `animation`: `action=key|delete|bake`, `path` (RNA property path from Main),
   `frame`, `index` (default -1), `start`, `end`, `step`, `objects`.
 - `simulation`: `action=add|bake|free`, `name`, `type`
-  (RIGID_BODY|CLOTH|SOFT_BODY|FLUID|OCEAN), `start`, `end`.
-- `render`: `action=frame|animation`, `start`, `end`, `path`, `engine`,
+  (RIGID_BODY|CLOTH|SOFT_BODY|FLUID|OCEAN), `start`, `end`, optional `path`
+  (absolute external cache directory).
+- `render`: `action=frame|animation`, optional `frame`, `start`, `end`, `path`, `engine`,
   `format`, `width`, `height`, `samples`. This is production scene-camera
   rendering, not deterministic observation lighting.
 - `batch`: `steps` (array of requests without ids), `record` (default true).
@@ -56,8 +65,8 @@ Every mutating native request accepts `record` (default true) and `feedback`
 functions/operators so production features do not wait for curated wrappers.
 Selection/mode-sensitive commands establish their context explicitly.
 
-The canonical program is `model.json`: an object with `base` (factory-empty
-or an absolute blend path), `params` (literal JSON object), and `steps` (request
+The canonical program is `model.json`: an object with `base` (`factory-empty`,
+`factory-default` or an absolute blend path), `params` (literal JSON object), and `steps` (request
 objects without ids). A JSON object `{"$param":"name"}` substitutes a program
 parameter; `{"$ref":"stepName.name"}` substitutes a prior named step's result
 field, with step names supplied through `as`. Python extension steps are
@@ -72,9 +81,9 @@ Simulation caches and rendered/exported files are external effects: successful
 file writes are not undone by scene rollback. Cache status/invalidation and
 multi-frame acceptance must be tested independently of memfile recovery.
 
-An agent modelling from a reference image runs one loop: look at the scene,
-write `bpy` code, execute it, look at the result, compare with the
-reference, repeat. The agent's decision is the only step that must be slow
+An agent runs a production loop: perceive the scene, choose a native command
+or an explicit extension, execute it and assess the resulting data, picture
+and objective deltas. The agent's decision is the only step that must be slow
 (seconds, tokens). Everything else is either computed inside the process or
 it is waste:
 
@@ -90,8 +99,8 @@ Four cuts follow from that, in order of how much loop they remove:
    three channels — structural diff, perceptual delta, objective delta — so
    "observe" and "compare" are not separate decisions. Budgets keep the cost
    bounded; deltas keep the tokens low.
-2. **The scene is a program.** `model.py` is the record; the agent edits
-   text, the process re-executes from the longest cached prefix. State is
+2. **The scene is a program.** `model.json` is the record; the agent edits
+   structured steps, the process re-executes from the longest cached prefix. State is
    fully visible, history is a version tree on disk, rollback is a checkout.
 3. **Search runs inside.** `fit` evaluates parameters against registered
    targets in-process with progress and cancellation; the agent proposes a
@@ -135,12 +144,37 @@ writes escapes non-ASCII, so no reader ever chooses an encoding. Transports:
 {"id":14, "op": "session",  "action": "snapshot|rollback|history|save|close|feedback|status",
                             "label": "...", "snapshot": "sha256:…|~N", "file": "...", "feedback": {...}}
 {"id":15, "op": "cancel",   "target": 10}
+{"id":16, "op": "object",   "action": "create|transform|delete|select", "name": "Body",
+                            "type": "MESH|ARMATURE|EMPTY|CAMERA|LIGHT", "primitive": "cube|plane|uv_sphere|cylinder",
+                            "location": [...], "rotation": [...], "scale": [...], "objects": [...],
+                            "record": true|false, "feedback": {...}}
+{"id":17, "op": "data",     "action": "get|set|call", "path": "RNA path", "value": ...,
+                            "arguments": {...}, "record": true|false, "feedback": {...}}
+{"id":18, "op": "operator", "action": "call|describe|list", "name": "object.modifier_add",
+                            "properties": {...}, "objects": [...], "active": "Body", "mode": "OBJECT",
+                            "record": true|false, "feedback": {...}}
+{"id":19, "op": "scene",    "action": "reset|frame|save|open", "empty": true|false, "frame": 1,
+                            "path": "/absolute/scene.blend", "record": true|false, "feedback": {...}}
+{"id":20, "op": "capabilities"}
+{"id":21, "op": "rig",      "action": "create|bone|bind", "name": "Skeleton", "bone": "Root",
+                            "head": [...], "tail": [...], "parent": "...", "objects": [...],
+                            "weights": "automatic|envelope|empty", "record": true|false, "feedback": {...}}
+{"id":22, "op": "pose",     "action": "set", "name": "Skeleton", "bone": "Root",
+                            "location": [...], "rotation": [...], "scale": [...], "record": true|false, "feedback": {...}}
+{"id":23, "op": "animation", "action": "key|delete|bake", "path": "RNA path", "frame": 1, "index": -1,
+                            "start": 1, "end": 24, "step": 1, "objects": [...], "record": true|false, "feedback": {...}}
+{"id":24, "op": "simulation", "action": "add|bake|free", "name": "Body", "type": "RIGID_BODY|CLOTH|SOFT_BODY|FLUID|OCEAN",
+                             "start": 1, "end": 24, "path": "/absolute/cache", "record": true|false, "feedback": {...}}
+{"id":25, "op": "render",   "action": "frame|animation", "frame": 1, "start": 1, "end": 24,
+                            "path": "/absolute/output", "engine": "CYCLES", "format": "PNG",
+                            "width": 640, "height": 640, "samples": 32, "record": true|false, "feedback": {...}}
+{"id":26, "op": "batch",    "steps": [...], "record": true|false, "feedback": {...}}
 ```
 
 `id` is a client-chosen integer, unique within the connection. Fields not
 listed for an `op` are rejected with `error` of type `ProtocolError`, naming
 the field and the ones the op accepts, before anything runs. The request
-table in `agent_runtime.py` (`REQUESTS`, `EVENTS`, `DEFS`) is that list: the
+table in `agent_contract.py` (`REQUESTS`, `EVENTS`, `DEFS`) is that list: the
 validator, `describe channel` and `describe schema` all read it, and each
 field carries `type`, `required`, `default`, `enum`, `items`, `ref` and
 numeric bounds. One request executes at a time; later requests queue in
@@ -159,8 +193,8 @@ other three ways a search ends. Discarding a paid-for search is the opposite
 of what the search is for. An op's outcome is data, so
 `describe schema` projects it rather than restating it.
 
-Every CLI verb is exactly one request and its flags are that request's
-fields; the mapping lives once, in `agent_cli.hh`, so the launcher and the
+Every CLI verb projects one request and its flags are that request's
+fields; the mapping is generated from `agent_contract.py` for `agent_cli.hh`, so the launcher and the
 in-process one-shot verb build identical requests. `--file` and `--save`
 are not request fields except where an op declares `file`: they select the
 scene a one-shot verb loads and writes, and a session rejects them.
@@ -174,7 +208,7 @@ changes no datablock takes no snapshot and does not advance `step`; its
 
 A peer is greeted the moment it joins a channel, before any request of its is
 read, with one unsolicited `session` event carrying the `session status`
-shape and no `id`. A conversation therefore opens knowing its step, snapshot,
+shape and `id: null`. A conversation therefore opens knowing its step, snapshot,
 feedback budget, targets and — after a crash — what the scene was rebuilt
 from, without spending a round trip to ask.
 
@@ -192,14 +226,17 @@ in exactly one `done` or `error`:
                                  "pass": "color", "path": "...", "inline": "<base64>",
                                  "size": [w, h], "region": [x0, y0, x1, y1]}
 {"id":10, "event": "progress",   "eval": 37, "of": 200, "best": 0.913, "params": {...}}
+{"id":16, "event": "progress",   "phase": "bake", "fraction": 0.5}
 {"id": 7, "event": "done",       "ok": true, "ms": 123.4, ...op-specific result...}
 {"id": 7, "event": "error",      "ok": false, "type": "...", "message": "...", "line": 3,
                                  "rna": {...}, "fix": {"code": "..."}, "autosave": "..."}
 ```
 
-Ordering within one request: `log` and `progress` as produced; `value`; then
+Ordering within one request: `log` and `progress` as produced; Python `exec`'s
+optional repr `value`; then
 `diff`; then `perception`; then `objective`; then zero or more `image`; then
-`done`. `log` may interleave with anything before `done`. `done` carries the
+`done`. Native commands put structured result values in `done`, not Python
+repr strings. `log` may interleave with anything before `done`. `done` carries the
 op-specific result fields defined under each request below (`session
 history` rows, `describe` records, `observe` paths). Human-readable output
 is the folded envelope, indented.
@@ -233,9 +270,9 @@ function.
 ```
 
 Defaults are the values above. `threshold` is the fraction of changed
-pixels in the budget view below which no `image` event is sent. `exec` and
-`program` requests may carry `"feedback"` to override the image policy for
-one request; nothing else is per-request.
+pixels in the budget view below which no `image` event is sent. Mutating native
+requests, `batch`, `exec` and `program` may carry `"feedback"` to override the
+image policy for one request; the overall feedback budget remains per-session.
 
 `progress` is what a search pushes while it runs. The default,
 `improvements`, sends a `progress` event only for an evaluation that beat the
@@ -260,8 +297,10 @@ delta.
 
 ### Perception event
 
-Always sent for `exec`, `program set|patch|run|rollback` and `session
-rollback`; costs no render beyond the budget view at budget size.
+Sent at mutating request boundaries, including native production commands,
+`batch`, `exec`, `program set|patch|run|rollback` and `session rollback`, when
+perception is enabled and an observation device exists. It costs no render
+beyond the budget view at budget size.
 
 ```
 {"event": "perception",
@@ -446,15 +485,15 @@ class Provider(Protocol):
 def register_provider(provider: Provider) -> None
 def register_op(op: str, handler) -> None          # handler(request, session, emit) -> dict
 def register_helper(name: str, function) -> None   # function(session, ...) backs agent.<name>
-def register_record_hook(hook) -> None             # hook(session, code, step)
+def register_record_hook(hook) -> None             # hook(session, request, step)
 
 PROVIDER_MODULES = ["agent_feedback", "agent_target", "agent_program"]
 ```
 
 `before` runs on the main thread before the request executes; `after` runs
 after it, in `order`, and may call `emit` any number of times. Both run only
-for a request that can change `Main` (`exec`, `fit`, `program
-set|patch|run|rollback`, `session rollback`), because a request that changes
+for a request that can change `Main` (native production mutations, `batch`,
+`exec`, `fit`, `program set|patch|run|rollback`, `session rollback`), because a request that changes
 nothing has no consequences to push. A provider that raises is reported as a
 `log` event on `stderr` and skipped; it never fails the request. Providers
 read session state through `Session`; they do not call each other. The image
@@ -487,39 +526,57 @@ nothing replays over it.
 
 ## Program model
 
-`.blender-cli/program/model.py` is the session's program: a re-executable
-Python file whose steps are the actions that produced the scene. Layout:
+`.blender-cli/program/model.json` is the session's re-executable structured
+command program. It is parsed as JSON, never executed to discover its structure:
 
-```python
-# blender-cli program
-# base: factory-empty
-P = {"handle_x": 0.43, "body_r": 0.35}      # parameters (fit targets these by name)
-
-# step 1
-bpy.ops.mesh.primitive_cylinder_add(radius=P["body_r"], depth=1.0)
-
-# step 2
-bpy.data.objects["Cylinder"].location.x = P["handle_x"]
+```json
+{
+  "base": "factory-empty",
+  "params": {"handle_x": 0.43, "body_r": 0.35},
+  "steps": [
+    {"op":"object","action":"create","name":"Body","primitive":"cylinder","as":"body"},
+    {"op":"object","action":"transform","name":{"$ref":"body.name"},
+     "location":[{"$param":"handle_x"},0,0],
+     "scale":[{"$param":"body_r"},{"$param":"body_r"},1]}
+  ]
+}
 ```
 
-Everything before the first `# step N` line is the **header**; it is the
-parameter block and it must not change `Main`, because it is re-executed at
-the start of every run. `P` is a literal `dict` with string keys, read by
-`ast.literal_eval`; the program is never executed to be parsed. Steps are
-the text between `# step N` lines, renumbered on every write.
+`base` names the state before step 1: `factory-empty`, `factory-default`, or
+an absolute blend-file path. The base is re-executable, not a snapshot. An
+ordinary new session uses factory defaults; `scene reset` explicitly chooses
+empty unless its `empty` field is false. External base files must remain
+available when the program travels to another directory or process.
 
-`# base:` names the state step 1 starts from and is written when the program
-is created: `factory` for a session opened without `--file`, `file <path>`
-for one opened with it, `factory-empty` when the line is absent. The base is
-a re-executable statement (`wm.read_factory_settings`, `wm.open_mainfile`),
-not a snapshot, so a program rebuilds its scene in any process.
+`params` is a literal JSON object with string keys. A step is a request object
+without a transport `id`. `{"$param":"name"}` substitutes a value recursively
+inside arrays/objects. `as` names a step's result; `{"$ref":"body.name"}` reads
+a field of that prior result. References are structured substitutions, not
+Python expressions. Preserve native function output names when traversing a
+result, for example `newMaterial.value.material.path` after `data call materials.new`.
+Names must be nonempty, unique in their step list and contain no dots. Values
+are resolved once; a substituted user's JSON object is not interpreted again
+as another `$param` or `$ref`. A batch's local result scope inherits outer
+results, then accumulates child results in order without leaking those names
+into the enclosing list.
 
-- `program record on` (default on in a session) appends every `exec` whose
-  diff is non-empty as the next `# step N` block; an `exec` with an empty
-  diff, a failed `exec` and `exec` with `"record": false` are never
-  recorded.
+`agent_runtime.execute_step` resolves and validates steps and dispatches native
+commands through the same command entry used by the channel. Replay suppresses
+per-step feedback and recording recursion. `batch` uses the same ordered-step
+machinery with one outer transaction/feedback boundary; nested batches and
+session/program/target/fit/cancel control requests are not production steps.
+Explicit extensions are `{"op":"exec","code":"..."}`. They share the session
+namespace during that run and receive `P` as the program parameter dictionary.
+Program extension steps require inline `code`, not a `script` path. The parser has
+no Python-program compatibility path, textual step markers or executable header.
+
+- `program record on` (default in a session) records successful mutating
+  native requests and explicit extension requests whose diff is non-empty.
+  Failed requests, empty diffs and requests with `"record": false` are not
+  recorded as successful actions. A recorded batch retains its ordered steps.
 - `program get` returns `{text, params, steps, version, base, record,
-  reproducible}`, where `steps` is `[{n, code, reproducible}…]`.
+  digest, reproducible}`. `text` is serialized canonical JSON; `steps` reports
+  `[{n,request,reproducible}, ...]`, where `request` is the structured step.
   `program set` replaces the text; `program patch` applies one `old`→`new`
   replacement and fails when the match count is not exactly one. Both
   re-execute.
@@ -531,7 +588,8 @@ not a snapshot, so a program rebuilds its scene in any process.
 - `set`, `patch`, `run` and `rollback` answer
   `{version, steps, digest, from_step, cached, ran, reproducible}`.
 - A step that raises ends the request with `error`, whose `type` is the
-  step's own exception type, `line` is relative to that step, and `message`
+  step's own exception type, `line` is relative to explicit extension code
+  (or null when there is no source line), and `message`
   is prefixed `step N:`. It also carries `step`, the `version` holding the
   failing text, and `cached_through`, the last prefix still cached; those
   three reach the wire through the kernel's `agent_fields` merge, so a
@@ -544,33 +602,36 @@ not a snapshot, so a program rebuilds its scene in any process.
   the agent patches the text it can see. Its version row records
   `failed: true` with `step` and `line`. And the prefix cache keeps every
   step that did run, because a cache is not state — so a corrected `set` or
-  `patch` resumes from `cached_through` at no extra cost.
+  `patch` can reuse eligible native prefixes. The extension/external-effect
+  replay barriers below still apply; `cached_through` is not permission to
+  skip rebuilding Python state or external work.
 
 ### Prefix-cached re-execution
 
 Re-execution runs from the longest prefix whose memfile snapshot is still
-cached. The key of the state after `N` steps is
+cached. A prefix key hashes the base, canonical structured steps through that
+prefix and the values of parameters they depend on. Native dependencies come
+from `$param` substitutions. In explicit extension code, literal `P["name"]`
+reads identify dependencies; a computed key, `P.get` or passing `P` along
+conservatively depends on all parameters. Changing a parameter invalidates
+its dependent suffix rather than unrelated earlier native creation steps.
 
-```
-sha256( "# blender-cli program" ∥ base ∥ header-without-P ∥ step₁ … step_N
-        ∥ canonical JSON of the parameters those texts read )
-```
-
-The parameters that enter the key are exactly the names appearing as
-`P["name"]` in the header or in steps 1..N; any other use of `P` (a computed
-key, `P.get`, passing `P` along) makes the prefix depend on every parameter.
-Changing one parameter therefore invalidates the first step that reads it
-and everything after it, and nothing before. Each executed step's snapshot
-is cached under its prefix key, so the same prefix is never recomputed.
-Rolling back to a cached prefix restores `Main`, **not** Python variables:
-a step that reads a variable a skipped step defined sees that variable's
-value from the last time the skipped step ran, and RNA references in it are
-stale, exactly as after `session rollback`.
+Prefix reuse also retains named results needed by subsequent `$ref` steps.
+Those results contain serialized values/paths, not pointers into discarded
+Main data. Each program run creates a fresh extension namespace and binds `P`.
+Reuse stops before the first explicit extension (including one inside a batch)
+or conservatively irreproducible operation. That suffix re-executes even if
+its Main snapshots exist: snapshots cannot recreate Python globals or external
+effects. File bases also force a rebuild because a path does not identify its
+current contents. `from_step` may force replay earlier, never bypass these limits.
+If a needed memfile/result prefix is unavailable, replay falls back rather than
+using a stale result. Ordinary session rollback still restores Main without
+restoring arbitrary Python variables; reacquire RNA references afterwards.
 
 An evicted memfile drops every prefix that named it and re-execution falls
 back to a shorter prefix, or to the base. The snapshot store is bounded at
 256 MiB and evicts oldest-first, so a long enough program outlives its own
-early prefixes: measured on Linux, 12 steps each adding a 361,201-vertex
+early prefixes: in historical Linux cache measurements, 12 steps each adding a 361,201-vertex
 grid leave the first 8 prefixes unrestorable and the last 5 alive, and a
 parameter change that only a late step reads then rebuilds from the base
 rather than restoring a memfile that is gone. The fallback is invisible in
@@ -618,7 +679,7 @@ its content is the geometry buffers and its attribute domains, and walking a
 million-vertex collection as RNA references would cost far more and say
 less.
 
-Measured on Linux (Release, five calls each, median; every scene hashed
+Historical Linux measurements (Release, five calls each, median; every scene hashed
 identically across all five): an empty scene costs 0.4 ms; 50 objects with
 150 modifiers, 50 constraints and a geometry node group cost 40.5 ms; a
 1,002,001-vertex grid alone costs 663.5 ms; both together cost 610.4 ms.
@@ -628,8 +689,8 @@ not per `exec`.
 
 ### Versions
 
-Every `set|patch|rollback` and every recorded `exec` writes
-`versions/<sha256 of the text>.py` and appends a row to `index.json`:
+Every `set|patch|rollback` and every recorded production/extension action writes
+`versions/<sha256 of the text>.json` and appends a row to `index.json`:
 `{version, parent, label, at, steps, reproducible, message, failed}`, with
 `step` and `line` added when `failed` is true. `program run` changes no text
 and so creates no version; it re-executes the current one. `current` names
@@ -642,15 +703,18 @@ answers `null` and keeps its snapshot.
 
 ### `reproducible`
 
-`reproducible` is a static, conservative verdict per step and for the
-program: a step is reproducible unless its source shows something a re-run
-cannot replay. It is false when the step
+`reproducible` is a conservative verdict per step and for the program, not
+a promise that arbitrary external resources remain available. Native steps
+are assessed as structured operations; imports, scene files, cache/output
+paths and other external dependencies must not be treated as embedded data.
+An explicit extension is assessed from its Python source. It is false when
+the extension
 
 - imports or names `time`, `datetime`, `uuid`, `secrets`, `socket`,
   `subprocess`, `urllib`, `requests`, `http`, `getpass`, `tempfile` or
   `webbrowser`, or names `os.urandom`, `os.environ`, `os.getpid` or
   `bpy.app.timers`;
-- imports or names `random` or `numpy` and the program contains no `seed()`
+- imports or names `random` or `numpy` and that extension contains no `seed()`
   call with a literal argument;
 - calls `input()`, or reads a file the program cannot carry: `open`,
   `bpy.ops.wm.open_mainfile|append|link|revert_mainfile`, `bpy.data.*.load`
@@ -659,7 +723,16 @@ cannot replay. It is false when the step
   computed paths all count as outside);
 - fails to parse.
 
-A program is reproducible when its header and every step are. The verdict is
+Native `operator`, `render`, `simulation` and `data call` steps are
+conservatively irreproducible, as are `scene open|save` and non-factory bases.
+This does not mean a pure RNA function cannot replay; it means generic calls
+are not certified free of external effects. Explicit extensions using file,
+cache, export, fluid or render operations are likewise conservatively marked.
+A batch inherits the verdict of its children. Substituted action names cannot
+be certified statically. Do not infer that external files are restored from
+`reproducible`, `digest` or a memfile ID.
+
+A program is reproducible only when its base and every step qualify. The verdict is
 recorded in each `index.json` row. It is only ever downgraded at run time:
 when two full runs from the base of the same version land on different
 `digest`s, that version becomes irreproducible for the rest of the session.
@@ -668,7 +741,7 @@ survive a restart; the static verdict does.
 
 ### Crash recovery
 
-Recovery always recovers, and the newest source wins. A session directory
+Recovery prefers the newest usable source. A session directory
 that holds work another process left behind compares the program's newest
 version time with the modification time of that process's recovery file:
 
@@ -679,9 +752,10 @@ version time with the modification time of that process's recovery file:
   The program stays attached — its text is still the record — with an empty
   prefix cache, because the scene on screen is the file's and not a prefix of
   the program;
-- replaying the program raises: the recovery file is loaded instead and the
-  failure is reported on stderr. A program that no longer runs never leaves
-  its directory unopenable, and never leaves the agent empty-handed.
+- replaying the program raises: an available recovery file is tried instead
+  and the failure is reported. If neither source can be used, reopening fails;
+  missing external assets and damaged recovery files are not reconstructible
+  from a timestamp or a snapshot identifier.
 
 `recovered_from` is null only when there was nothing to recover. It is
 reported by `session open` and by `session status`. Which branch a reopen
@@ -700,21 +774,23 @@ installs the `program` request handler, backs `agent.program()`, installs the
 record hook, and performs crash recovery.
 
 A program belongs to a session, so `register` does nothing in one-shot mode,
-where there is no snapshot store to cache prefixes in: a one-shot `exec`
-leaves no `model.py` behind for the next session to replay, and the
+where there is no snapshot store to cache prefixes in: a one-shot command
+leaves no `model.json` behind for the next session to replay, and the
 `program` request there answers that it is not implemented. Recovery is also
 skipped when the session was opened on a file. `session open --file F` asked
 for `F`; the program is the truth only when recovering, never over a scene
 the agent named.
 
 The record hook is the runtime's
-`register_record_hook(f)`: `f(session, code, step)` runs after an `exec`
-whose diff was non-empty and whose `record` was not false, so a failed exec,
-an exec that changed nothing and `exec --no-record` are never steps. The hook
+`register_record_hook(f)`: `f(session, request, step)` runs after a mutating
+request whose diff was non-empty and whose `record` was not false. It records
+the structured request, not generated Python. The hook
 reads the snapshot on each side of the request from the session's history;
 the step's snapshot enters the prefix cache only when the pre-request
 snapshot is the one the program's own prefix produced, so a recording made
-after a rollback never poisons the cache.
+after a rollback never poisons the cache. The record hook does not have the
+handler's result, so a newly recorded named step must replay before its result
+can be used as a cached `$ref` producer; it is not guessed from scene names.
 
 An `exec` that itself drives the program — calling `Program.run` or
 `set_params` — should carry `--no-record`, or the program comes to contain a
@@ -728,19 +804,21 @@ step that re-runs the program.
 
 ```python
 program = agent_program.attach(session)   # the session's Program, created on demand
-program.params                            # the parsed P dict
-program.set_params(values, label=None)    # rewrite P, commit, re-execute the affected suffix
+program.params                            # the JSON params object
+program.set_params(values, label=None)    # merge params, commit, re-execute the affected suffix
 program.version                           # current "sha256:…"
 program.run()                             # re-execute from the longest cached prefix
 ```
 
-`set_params` merges named values into `P`, rewrites only the `P = {…}`
-statement in the header, commits a version and re-executes from the first
-step that reads a changed parameter, leaving `Main` at the result. That is
+`set_params` merges named values into the JSON `params` object, preserving
+unrelated parameters, the base and structured steps. It commits a version and
+re-executes from the first affected step or earlier replay barrier, leaving
+`Main` at the result. That is
 one `fit` evaluation, and it costs one partial re-execution. It answers the
 run result above, so `version` identifies the evaluated program and `digest`
 identifies the scene it produced, and it raises `agent_program.StepError`
-when a step fails. Setting a parameter no step reads re-executes nothing.
+when a step fails. Setting an unused parameter reuses all eligible native
+prefixes; explicit extensions and externally dependent suffixes still replay.
 
 ## Targets and `fit`
 
@@ -792,7 +870,7 @@ otherwise.
 Every parameter needs `min` and `max`; the search starts from the live value,
 clamped into that interval, and works in the unit cube so a step means the
 same thing on every parameter. Each evaluation sets the parameters (program
-parameters re-execute from the parameter block's cached prefix; RNA paths
+parameters re-execute the dependent JSON-program suffix; RNA paths
 assign directly), updates the depsgraph, renders the objective's views at
 `budget.size`, and scores. Repeated parameter vectors are answered from the
 search's own cache and cost no render and no evaluation.
@@ -941,14 +1019,22 @@ it carries no `fix`; the property record's ranges expose the limit instead.
 
 ## Process model
 
-```
-┌───────────────────────── blender-cli process ─────────────────────────┐
-│ transport thread(s)      main thread                                     │
-│  AF_UNIX / stdio  ─────▶ queue ─▶ execute ─▶ BLI_timer_execute ─▶ answer │
-│                                     │                                    │
-│                          Python namespace ── bpy ── Main ── depsgraph    │
-│                          offscreen GPU (EEVEE) ── metrics ── snapshots   │
-└──────────────────────────────────────────────────────────────────────────┘
+```diagram
+┌───────────────────── blender-cli process ─────────────────────┐
+│ transport threads              main thread                   │
+│ AF_UNIX / stdio ──▶ queue ──▶ validated request                │
+│                                   │                          │
+│                    ┌──────────────┴─────────────┐            │
+│                    ▼                            ▼            │
+│             native commands              explicit exec       │
+│             RNA / operators              namespace / bpy     │
+│                    └──────────────┬─────────────┘            │
+│                                   ▼                          │
+│                           Main / depsgraph                   │
+│               production render / simulation / IO           │
+│               observation / metrics / snapshot cache         │
+│                           timer pump / events                │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 - Entry: `blender --command agent <verb> …`, registered through
@@ -960,7 +1046,8 @@ it carries no `fix`; the property record's ranges expose the limit instead.
   Transport threads only move bytes. One request is in flight per session;
   a second request waits in arrival order in memory and is dropped with the
   process. There is no durable queue.
-- One process holds one `Main`. Multiple scenes are multiple processes.
+- One process holds one `Main`, which may contain multiple Blender scenes.
+  Independent sessions use independent processes.
 - GPU: `WM_init_gpu_offscreen` on first `observe`. macOS builds are normal
   builds run in background mode so `createSystemBackground()` reaches the
   Cocoa offscreen path and Metal; Windows builds use Vulkan. `WITH_HEADLESS`
@@ -1026,21 +1113,79 @@ lists it, without a hand-written line anywhere. The naming rule is:
 Everything `--help` prints is ASCII, because it is read on a console whose code
 page is not the process's business.
 
-The projections that this rule does not produce are `exec -c CODE` and its
-`SCRIPT.py` argument, `--image` for the per-request feedback override, and the
-action of `session`, `program` and `target` with its argument, which read as
-words rather than flags (`session rollback ~1`, not `session --action
-rollback --snapshot ~1`). They are listed in one place, `IRREGULAR` in
-`agent_cli_gen.py`, and nothing else deviates.
+Actions are positional across the production and control commands. Object,
+rig, pose, simulation and operator names follow the action; a data path follows
+its action (`data set 'objects["Body"].location' --value '[0,0,1]'`). Scene,
+animation and render fields otherwise use flags. `location`, `rotation`,
+`scale`, `head` and `tail` accept comma triples or JSON arrays.
+
+Other explicit projections include `exec -c CODE`, its `SCRIPT.py` argument,
+`--image` for exec/program feedback overrides and positional control arguments
+such as `session rollback ~1`, `program rollback VERSION` and `target set NAME`.
+These exceptions are declared in `IRREGULAR` in `agent_cli_gen.py`; there is no
+independent hand-maintained command table.
 
 Wherever a value is a statement, a program or a policy rather than a word, it
 may name its source instead: `@FILE` is that file's contents and `-` is stdin,
-so `exec -c @edit.py` and `program set --text @model.py` do not depend on
+so `exec -c @edit.py` and `program set --text @model.json` do not depend on
 shell quoting. A value that must begin with an at sign is written `@@`.
 
 `cancel` has no CLI projection: it stops a request that is still running, which
 needs the channel. `repl` and `session open` are the reverse — the launcher
 answers them itself, so they are the only verbs that are not requests.
+
+### Native production CLI
+
+```text
+object create|transform|delete|select [NAME] [--type TYPE] [--primitive PRIMITIVE]
+       [--location X,Y,Z] [--rotation X,Y,Z] [--scale X,Y,Z] [--objects NAMES]
+data get|set|call PATH [--value JSON] [--arguments JSON]
+operator call|describe|list [NAME] [--properties JSON] [--objects NAMES] [--active NAME] [--mode MODE]
+scene reset [--no-empty]
+scene frame --frame N
+scene save|open --path /absolute/scene.blend
+capabilities
+rig create|bone|bind NAME [--bone NAME] [--head X,Y,Z] [--tail X,Y,Z]
+    [--parent NAME] [--objects NAMES] [--weights automatic|envelope|empty]
+pose set NAME --bone NAME [--location X,Y,Z] [--rotation X,Y,Z] [--scale X,Y,Z]
+animation key|delete --path RNA_PATH --frame N [--index N]
+animation bake --objects NAMES --start N --end N [--step N]
+simulation add|bake|free NAME --type TYPE [--start N] [--end N] [--path /absolute/cache]
+render frame|animation --path /absolute/output [--frame N] [--start N] [--end N]
+       [--engine ENGINE] [--format FORMAT] [--width N] [--height N] [--samples N]
+batch --steps JSON
+```
+
+Mutating requests accept `--no-record`; structured feedback fields are image
+policies. Exact enums/defaults and action-specific requirements are published
+by the registry and live RNA. `capabilities` reports actual compiled support
+and native/extension availability, not merely the intended CMake profile.
+Native operators use execution, never interactive invoke; Python-defined
+operators such as Rigify or glTF/FBX add-on IO belong to explicit `exec`.
+
+Data reads/calls return JSON. `data call` keys outputs by their RNA names;
+pointer outputs include `{name,type,path}` and pointer inputs are `{path:...}`.
+This supports native creation of materials, node trees and links, and native
+access to animation, compositing and sequencer settings without generated code.
+References must be reacquired/resolved against current Main after rollback.
+
+`simulation add` configures the chosen system; it does not invent emitters,
+collision objects or a physically useful domain. Baking/freeing must report
+the relevant cache state and external path. `render` uses the actual scene
+camera, lights, world and compositor, rather than observation's presets.
+Rendered/exported files and simulation caches are external effects: rollback
+of scene data cannot undo writes or guarantee valid cached frames. Cancellation
+of animation loops and point-cache baking can be observed during work. Fluid,
+ocean and production rendering currently check at operation boundaries around
+upstream execution, not necessarily inside a bake/render. Do not promise
+immediate interruption. Partial output files may remain; errors can carry
+`external_effects` describing the affected outputs/cache rather than pretending
+the whole operation was undone.
+
+Native progress uses `phase` (string) and `fraction` (0–1). It is rate-limited
+to one update per 0.5 seconds plus completion, and suppressed by progress `off`.
+These are not `fit` evaluation/score fields; the search retains its own progress
+shape and improvement policy.
 
 ### `session`
 
@@ -1432,7 +1577,7 @@ changes are needed.
 ```
 program get                        {"text", "params", "steps", "version", "base",
                                     "record", "digest", "reproducible"}
-program set   --text @model.py     replace the program and re-execute from the first change
+program set   --text @model.json   replace the program and re-execute from the first change
 program patch --old OLD --new NEW  replace text matching exactly once, then re-execute
 program run                        re-execute from the longest cached prefix
 program history                    {"versions": [{"version", "parent", "label", "at",
@@ -1926,13 +2071,14 @@ this socket.
 
 ## What is deliberately absent
 
-- No asset library, generation or download verbs. Files arrive; `exec`
-  imports them.
-- No curated operator wrappers (`gameready`, `rig`, `retarget`). The agent
-  writes code; recipes belong in the agent's own skill documents.
-- No typed tool catalog derived from RNA. `describe` serves RNA on demand
-  instead of enumerating it; `describe schema` projects the request set,
-  never `bpy`.
+- No network asset library, generation service or download verbs. Files
+  arrive through the agent; native IO or explicit add-on extensions import them.
+- No generated Python implementation behind a native command. Production
+  commands, generic RNA/functions and native operators form the primary typed
+  interface; explicit extensions retain upstream `bpy` unchanged.
+- No hand-maintained host tool catalog or compatibility protocol. `describe
+  schema` projects the request registry; live RNA discovery supplies detailed
+  native operator/property metadata on demand.
 - No comparison verb. Comparison is an objective pushed after every action.
 - No confirmation, dry-run or preview step. Rollback is the control.
 - No MCP, HTTP or add-on socket. See `AGENTS.md`.

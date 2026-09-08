@@ -17,21 +17,32 @@ how far the scene now is from its target.
 ```sh
 blender-cli repl                       # the channel: JSON-line requests in, events out
 blender-cli session open               # or a daemon, and one verb per request
-blender-cli exec -c 'bpy.ops.mesh.primitive_cube_add()' --json
+blender-cli scene reset --json         # empty scene; --no-empty keeps factory defaults
+blender-cli object create Body --primitive cube --json
+blender-cli object transform Body --scale 1,1,2 --json
+blender-cli capabilities --json        # actual compiled production features
 blender-cli --help                     # every verb with every flag
 ```
 
-The Python API is upstream's `bpy`, unwrapped: there is no DSL, no operator
-wrapper layer and no typed tool catalog. What the fork adds around it is the
-persistent channel, feedback pushed with every action, a re-executable program
-as the record of the scene, in-process parameter search, self-description from
-live RNA, and errors that name the nearest valid identifier.
+Typed native production commands cover scene creation, data and operators,
+rigging, posing, animation, simulation and rendering. Generic RNA and native
+operator access extend that surface without generating Python. Upstream `bpy`
+is unchanged and available through explicit `exec`, including Python add-ons
+such as Rigify, glTF and FBX export. The scene's record is `model.json`, a
+structured command program with parameters, named results and a version tree.
+Feedback is pushed after actions; numeric fitting runs inside the process.
 
-What that costs an agent: modelling a mug from a reference image took 11
+The production scope includes assets, characters, animation, simulation,
+lighting, rendering, compositing and interchange. Headless means no interactive
+GUI, not a reduced Blender feature set. `render` uses the production scene's
+camera and lights; `observe` uses deterministic observation presets.
+
+Historical loop evidence: modelling a mug from a reference image took 11
 requests over one channel and about 6,123 tokens of pushed feedback — two
 parameter searches, a program edit, and a recovery from a killed process that
 the channel answered without dropping the conversation. None of the 11 existed
-only to look at the scene. The run is recorded in [PLAN.md](PLAN.md).
+only to look at the scene. This predates the native production surface and is
+not a validation claim for it; the run and current status are in [PLAN.md](PLAN.md).
 
 Start with [the working recipe](doc/agent/usage.md); the contract is
 [design.md](doc/agent/design.md), the constraints are [AGENTS.md](AGENTS.md),

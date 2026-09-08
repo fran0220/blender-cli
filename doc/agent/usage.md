@@ -1,682 +1,139 @@
 <!-- SPDX-FileCopyrightText: 2026 blender-cli Authors
      SPDX-License-Identifier: GPL-2.0-or-later -->
 
-# Working recipe
+# Production recipes
 
-[design.md](design.md) owns the contract: the request set, the event shapes,
-the metrics and the recovery guarantees. This page is the recipe, and every
-command on it was run against the built binary with its output pasted. Paths,
-hashes, PIDs and timings vary between runs; `…` marks where a long answer is
-cut, never where one is invented.
+[design.md](design.md) owns the contract; [build-profile.md](build-profile.md)
+owns retained capabilities. These are current-interface examples, not pasted
+test transcripts or timing claims. Check [PLAN.md](../../PLAN.md) for actual
+build, workflow and platform evidence. Replace `/absolute/...` paths with paths
+on the machine running Blender; create output directories before use.
 
-## One pipe for the whole session
+## One process, one channel
 
-`repl` is the primary mode. Hold one pipe, write one request per line, read
-its events back. Nothing pays for process start-up or shell quoting again:
-
-```sh
-blender-cli exec -c 'bpy.ops.wm.read_factory_settings(use_empty=True)' --save empty.blend --json
-blender-cli repl --file empty.blend
-```
-
-Three requests in, and what came back on stdout:
+Hold `blender-cli repl` open and send newline-delimited JSON requests. The
+greeting is a `session` event with `id: null`, including the scene, snapshot,
+device, feedback policy, targets and recovery source. Wait for each request's
+`done` or `error` before deciding the next action. Structural, perceptual and
+objective feedback is pushed between those boundaries, subject to the session
+budget and device availability.
 
 ```json
-{"id": 1, "op": "exec", "code": "bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=2.0)\nbpy.context.object.name = 'Handle'\nbpy.context.object.dimensions[:]"}
-{"id": 2, "op": "exec", "code": "bpy.data.objects['Handle'].scale.x = 1.8"}
-{"id": 3, "op": "exec", "code": "bpy.data.objects['Handle'].locaton"}
+{"id":1,"op":"scene","action":"reset"}
+{"id":2,"op":"object","action":"create","name":"Body","primitive":"cube"}
+{"id":3,"op":"object","action":"transform","name":"Body","scale":[1,0.5,2]}
+{"id":4,"op":"data","action":"get","path":"objects[\"Body\"].location"}
 ```
 
-```json
-{"id": null, "event": "session", "session": "268544", "file": "/tmp/u7/empty.blend", "dirty": false, "step": 0, "snapshot": "sha256:c4b0284f…", "device": "vulkan", "feedback": {"perception": true, "objective": true, "progress": "improvements", "image": {"mode": "delta", "threshold": 0.002, "views": ["front"], "pass": "color", "size": 256, "samples": 8, "overlay": true, "inline": false}}, "targets": [], "recovered_from": null}
-{"id": 1, "event": "value", "value": "(0.800000011920929, 0.800000011920929, 2.0)"}
-{"id": 1, "event": "diff", "added": [{"type": "MESH", "name": "Cylinder"}, {"type": "OBJECT", "name": "Handle"}], "changed": [{"type": "SCENE", "name": "Scene", "fields": ["selection", "base_flags"]}], "removed": [], "snapshot": "sha256:4e694aa7…", "step": 1}
-{"id": 1, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.4, -0.4, -1.0], "high": [0.4, 0.4, 1.0]}, "dims": [0.8, 0.8, 2.0], "framing": {"bounds": {…}, "center": [0.0, 0.0, 0.0], "radius": 1.1489125391646506, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": null, "symmetry": {"x": 0.9787234042553191, "y": null, "z": 1.0}}
-{"id": 1, "event": "image", "kind": "full", "view": "front", "pass": "color", "size": [256, 256], "region": [0, 0, 256, 256], "path": "/tmp/u6/.blender-cli/feedback/94e15039….png"}
-{"id": 1, "event": "done", "ok": true, "ms": 1500.149801999214}
-{"id": 2, "event": "value", "value": null}
-{"id": 2, "event": "diff", "added": [], "changed": [{"type": "OBJECT", "name": "Handle", "fields": ["transform", "copy_on_eval", "parameters"]}], "removed": [], "snapshot": "sha256:37766c21…", "step": 2}
-{"id": 2, "event": "perception", "objects": 1, "verts": 64, "faces": 34, "bounds": {"low": [-0.72, -0.4, -1.0], "high": [0.72, 0.4, 1.0]}, "dims": [1.4399999380111694, 0.8, 2.0], "framing": {…, "radius": 1.2955307658126247, "objects": ["Handle"], "occupancy": 0.9090909090909091}, "changed": {"objects": ["Handle"], "view": "front", "region": [43, 11, 213, 245], "fraction": 0.497772216796875, "silhouette_delta": 0.4464285714285714}, "symmetry": {"x": 1.0, "y": null, "z": 1.0}}
-{"id": 2, "event": "image", "kind": "delta", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/7c642250….png"}
-{"id": 2, "event": "image", "kind": "overlay", "view": "front", "pass": "color", "size": [186, 250], "region": [35, 3, 221, 253], "path": "…/feedback/52413ccc….png"}
-{"id": 2, "event": "done", "ok": true, "ms": 630.5600579999009}
-{"id": 3, "event": "error", "ok": false, "type": "AttributeError", "message": "'Object' object has no attribute 'locaton'", "line": 1, "rna": {"struct": "Object", "nearest": ["location", "lock_rotation", "lock_location", "delta_location", "lock_rotation_w"], "type": "float[3]"}, "fix": {"code": "bpy.data.objects['Handle'].location", "reason": "Object has no 'locaton'; nearest 'location' (similarity 0.93)"}}
-```
-
-Read that transcript for what the loop costs. Nothing in it was asked for.
-
-The channel greets you before it reads anything: a `session` event with
-`id: null` carrying the whole of `session status` — which scene is open, the
-step and snapshot it is at, whether the machine has a GPU, the feedback policy
-in force, the registered targets, and whether this session was recovered. There
-is never a reason to open a conversation by asking what state it is in.
-
-Request 1 answered with the value of its last expression, the datablocks it
-added, the snapshot the scene is now at, its counts and world bounds, and the
-first picture of the view. Request 2 scaled the handle and answered with the
-region of the view that changed (`[43, 11, 213, 245]`, half the frame), how much
-of the silhouette moved with it, and two crops of exactly that region — the
-result and a before/after overlay — instead of a whole frame. Request 3
-misspelled a property and came back with the five nearest identifiers, the type
-of the right one, and a `fix.code` that runs as it stands. No `observe` and no
-`compare` request appears anywhere: looking is what an action already answers.
-
-`diff` names the datablocks the agent can act on. Blender's windows, screens,
-workspaces, brushes and palettes change constantly and mean nothing to a model,
-so they are not listed.
-
-`--file` names the scene the session opens; without it the session starts from
-Blender's factory startup, **including its default cube**. `--standalone` runs
-the loop in the same process instead of connecting to a daemon; the bytes are
-identical either way.
-
-## One-shot verbs are the same requests
-
-Anything the channel can do, a verb can do. Each verb is one request, its flags
-are that request's fields, and it prints the same events folded into one
-document. Run in a directory with a live session, a verb is a socket round trip
-of a few milliseconds; run without one it loads, executes, optionally saves and
-exits:
-
-```sh
-blender-cli session open --file empty.blend --json
-# {"session":"140957","socket":"/tmp/u5/.blender-cli/session.sock"}
-blender-cli exec -c "bpy.data.objects['Knob'].scale = (1.6, 1.6, 0.6)" --json
-# {"diff":{"added":[],"changed":[{"fields":["transform","copy_on_eval","parameters"],"name":"Knob","type":"OBJECT"}],"removed":[],"snapshot":"sha256:1d044ef4…","step":3},"ms":3.0733940002392046,"ok":true,"value":null}
-blender-cli inspect --select 'objects["Knob"].scale' --json
-# {"ms":0.04988100045011379,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
-```
-
-`blender-cli --help` prints every verb with every flag it has; that list is
-generated from the request table, so it is never out of date. Three
-conventions are worth knowing before reading it:
-
-- a value written `@FILE` is read from that file and `-` is read from stdin, so
-  `exec -c @edit.py` and `program set --text @model.py` never fight the shell
-  (`@@` starts a literal value that really begins with an at sign);
-- `--json` prints one compact line; the default is the same document indented;
-- `--select` paths start at `bpy.data`: `objects["Cube"].location`, not
-  `location` and not `bpy.data.objects["Cube"].location`.
-
-`value` is the **repr string** of the statement's last expression, not its JSON
-serialization: `"(0.8, 0.8, 2.0)"` is text, and `ast.literal_eval` turns it back
-into a tuple. `diff` names datablocks and depsgraph update categories, not a
-property patch.
-
-## Bringing a model in and taking it out
-
-Import and export are Python statements, not verbs. Use the same `exec` and
-the same session as for modelling: an import adds datablocks, is recorded as
-a program step, and its objects are ordinary `bpy` objects. A transform,
-modifier or bmesh edit gives the same feedback as on a model built from
-primitives; `target set` and an RNA-path `fit` work on those objects too.
-
-Here is a complete GLB exchange. The source file was made by the binary in
-`/tmp/model-io-recipe/source`, a directory with no live session. The input
-could equally be a file supplied by another application:
-
-```sh
-blender-cli exec -c "bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.mesh.primitive_cube_add(); bpy.context.object.name = 'Part'; bpy.ops.export_scene.gltf(filepath='/tmp/model-io-recipe/input.glb', export_format='GLB')" --json | jq -c '{ok,value}'
-# {"ok":true,"value":"{'FINISHED'}"}
-```
-
-In `/tmp/model-io-recipe/live`, keep the scene in a session. Perception and
-images are off for this exchange; restore `perception=true image.mode=delta`
-when the change needs a picture. `jq` below only selects fields from the real
-JSON, not a different response shape:
+The shell projection sends the same requests to a daemon in the current
+directory. Without a session, one-shot requests do not share live state:
 
 ```sh
 blender-cli session open --json
-# {"session":"77819","socket":"/tmp/model-io-recipe/live/.blender-cli/session.sock"}
-blender-cli session feedback perception=false image.mode=off --json
-blender-cli exec -c 'bpy.ops.wm.read_factory_settings(use_empty=True)' --json | jq -c '{ok,value}'
-# {"ok":true,"value":"{'FINISHED'}"}
-blender-cli exec -c "bpy.ops.import_scene.gltf(filepath='/tmp/model-io-recipe/input.glb'); [(o.name, len(o.data.vertices), len(o.data.polygons)) for o in bpy.context.scene.objects]" --json | jq -c '{ok,value,added:.diff.added}'
-# {"ok":true,"value":"[('Part', 24, 12)]","added":[{"name":"Cube","type":"MESH"},{"name":"Part","type":"OBJECT"}]}
-blender-cli program get --json | jq -c '{digest,steps:[.steps[]|{n,reproducible}]}'
-# {"digest":"sha256:85990ad8a719d4ec36acbce10b0eb11fa72483747a7c9a7e77a48ddbd4d60e05","steps":[{"n":1,"reproducible":true},{"n":2,"reproducible":false}]}
-blender-cli exec -c 'bpy.data.objects["Part"].scale.x = 1.5' --json | jq -c '{ok,changed:.diff.changed}'
-# {"ok":true,"changed":[{"fields":["transform","copy_on_eval","parameters"],"name":"Part","type":"OBJECT"}]}
-blender-cli exec -c "bpy.ops.object.select_all(action='DESELECT'); obj=bpy.data.objects['Part']; obj.select_set(True); bpy.context.view_layer.objects.active=obj; bpy.ops.export_scene.gltf(filepath='/tmp/model-io-recipe/modified.glb', export_format='GLB', use_selection=True)" --no-record --json | jq -c '{ok,value}'
-# {"ok":true,"value":"{'FINISHED'}"}
-blender-cli session close --json
+blender-cli capabilities --json
+blender-cli scene reset --json
+blender-cli object create Body --primitive cube --json
+blender-cli object transform Body --scale 1,0.5,2 --json
+blender-cli data get 'objects["Body"].location' --json
 ```
 
-A new one-shot process in `/tmp/model-io-recipe/reader` reads the exported
-result, not the old scene in memory:
+`scene reset` is empty by default; `scene reset --no-empty` restores Blender's
+factory cube, camera and light. An ordinary `session open` without a file or
+recovery starts with factory defaults, so reset explicitly when constructing
+an empty scene. `session open --file /absolute/scene.blend` opens the named
+scene rather than replaying a different program over it.
+
+CLI conventions:
+
+- Actions are positional: `object create`, `data set`, `render frame`.
+  Object/rig/pose/simulation/operator names are the next positional argument;
+  data paths occupy that position for `data`. Other fields use flags.
+- `--location`, `--rotation`, `--scale`, `--head` and `--tail` accept comma
+  triples or JSON arrays. Euler rotations use radians; bone endpoints are
+  armature-local coordinates. `--objects` accepts comma-separated names.
+- `--properties`, `--arguments`, `--value`, `--steps` and other structured
+  fields take JSON. Shell-quote JSON and RNA paths. RNA paths start at Main,
+  e.g. `objects["Body"].scale`, not `bpy.data.objects["Body"].scale`.
+- `@FILE` reads a structured/text value from a file; `-` reads stdin; `@@`
+  escapes an initial at sign. `program set --text @model.json` and
+  `exec -c @extension.py` avoid shell quoting of a whole program.
+- `--json` prints a compact folded response. Native results are structured
+  JSON; only explicit Python `exec` returns its last expression as a repr
+  string. Do not parse a native result with `ast.literal_eval`.
+- `blender-cli --help`, `describe channel` and `describe schema` derive from
+  the registry. `describe bpy.types.Object.rotation_euler` reads live RNA.
+
+## Creation, materials and generic native operations
+
+Dedicated commands establish their own object context. Generic native
+operators expose upstream properties without generating Python:
 
 ```sh
-blender-cli exec -c "bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath='/tmp/model-io-recipe/modified.glb'); bpy.context.view_layer.update(); tuple(bpy.data.objects['Part'].dimensions)" --json | jq -c '{ok,value}'
-# {"ok":true,"value":"(3.0, 2.0, 2.0)"}
+blender-cli operator describe object.modifier_add --json
+blender-cli operator call object.modifier_add --objects Body --active Body --properties '{"type":"BEVEL"}' --json
+blender-cli data set 'objects["Body"].modifiers["Bevel"].width' --value 0.08 --json
+blender-cli data call materials.new --arguments '{"name":"Finish"}' --json
+blender-cli data set 'materials["Finish"].diffuse_color' --value '[0.2,0.4,0.6,1]' --json
+blender-cli data set 'materials["Finish"].node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value' --value '[0.2,0.4,0.6,1]' --json
+blender-cli data call 'objects["Body"].data.materials.append' --arguments '{"material":{"path":"materials[\"Finish\"]"}}' --json
+blender-cli inspect --object Body --full --json
 ```
 
-The cube came in at 2 × 2 × 2 and left at 3 × 2 × 2. It imported as 24
-vertices / 12 triangles because default glTF export keeps the cube's normal
-and UV seams. Those are the same six surfaces, not six new objects.
+Creation returns actual names; use them if Blender disambiguates a requested
+name. `data call` preserves native RNA output names. For `materials.new`, the
+result includes `value.material`, a reference with `name`, `type` and `path`.
+A function with a differently named RNA output uses that name, not a guessed
+generic `result`. Pointer arguments and assignments use `{"path":"RNA path"}`.
 
-The exchange surface is upstream Blender's. These are the operators in this
-build, including the trimmed package; prefix each with `bpy.ops.`:
+The same APIs create node trees and links, edit modifier settings and manage
+compositing or sequencer data. Discover each function's actual parameter and
+output names through RNA instead of guessing them. Material viewport color
+does not replace a production shader graph: set shader node inputs when
+building a shaded deliverable.
 
-| Format | Import | Export | What survives the mesh round trip |
-|---|---|---|---|
-| OBJ + MTL | `wm.obj_import` | `wm.obj_export` | Polygon topology, bounds, object name, UV-to-corner mapping, material assignment/name/base color. Keep the adjacent MTL and any textures. Transforms are baked into geometry. |
-| FBX | `wm.fbx_import` (native), or `import_scene.fbx` (add-on) | `export_scene.fbx` | Both importers preserve the tested polygon topology, bounds, object name, UV mapping and material assignment/name/base color. FBX is not a copy of a Blender shader graph. |
-| STL | `wm.stl_import` | `wm.stl_export` | Surface geometry and bounds; quads become triangles. No UVs or materials. The imported object's name comes from the filename. |
-| PLY | `wm.ply_import` | `wm.ply_export` | Polygon geometry, bounds and vertex UVs. No material slots or stored object names; the filename names the imported mesh. Attribute seams can split vertices; multiple objects are combined. |
-| glTF (`.gltf` + `.bin`) / GLB (`.glb`) | `import_scene.gltf` | `export_scene.gltf` | Bounds, object name, UV mapping and the tested PBR base color/material assignment. Geometry is triangulated. `.gltf` with `export_format='GLTF_SEPARATE'` has sidecar files; `export_format='GLB'` puts the model in one binary file. |
-| Blender (`.blend`) | `wm.open_mainfile` | `wm.save_as_mainfile` | Native scene data, including polygon topology, object names, materials and UVs. Opening replaces the whole scene rather than adding a mesh to it. `session save` also writes a blend file. |
-| USD | `wm.usd_import` — absent | `wm.usd_export` — absent | Trimmed: `WITH_USD=OFF`. |
-| Alembic | `wm.alembic_import` — absent | `wm.alembic_export` — absent | Trimmed: `WITH_ALEMBIC=OFF`. |
-| Grease Pencil SVG/PDF | `wm.grease_pencil_import_svg` — absent | `wm.grease_pencil_export_svg`, `wm.grease_pencil_export_pdf` — absent | Trimmed: `WITH_IO_GREASE_PENCIL=OFF`. This does not remove mesh IO. |
+Use `batch` for related native steps with one feedback boundary. Name a result
+with `as` and address it with `$ref`:
 
-The round-trip check builds a 2.5 × 1.5 × 3 box in the binary, with eight
-vertices, six quads, continuous UVs and one material. OBJ, both FBX importers,
-PLY and blend return 8 vertices / 6 faces; STL and glTF/GLB return 8 / 12.
-Bounds and material base colors have an absolute tolerance of 1e-5 (Blender
-units and linear RGBA respectively), allowing text/float32 conversion; UV
-mapping is compared at five decimal places. This is mesh evidence, not a
-promise that every format preserves rigs, animations, procedural materials
-or Blender-only data.
+```json
+{"id":5,"op":"batch","steps":[
+  {"op":"object","action":"create","name":"Detail","primitive":"uv_sphere","as":"detail"},
+  {"op":"object","action":"transform","name":{"$ref":"detail.name"},"location":[0,0,2.5],"scale":[0.5,0.5,0.5]}
+]}
+```
 
-For that topology check, PLY and glTF export with `export_normals=False`.
-glTF requires separate vertices at discontinuous normals or UVs, so exporting
-a normally shaded cube can legitimately yield more than eight vertices.
-Its importer offers `merge_vertices=True`, but vertices with different
-normals cannot be merged. Do not confuse a vertex-count change at seams with
-missing geometry, and do not turn normals off merely to make a production
-asset's vertex count smaller.
+Send that JSON as one line on the channel, or save the `steps` array to a file
+and use `blender-cli batch --steps @steps.json`. Nested batches and control
+requests are rejected. Failure rolls scene data back, not already written files.
 
-There are a few boundaries worth making explicit:
+## Rigging, posing and animation
 
-- **Record absolute input paths.** An absolute literal in the import statement
-  keeps the program runnable from another cwd. `//` is relative to the current
-  blend file, not to `model.py`. Keep the input and its sidecars immutable:
-  program history does not copy arbitrary model files. The static
-  `reproducible: false` flag on an external-file step is intentional even when
-  a fresh-process replay produces the exact same `digest`.
-- **Reset before enabling add-ons.** Factory startup and
-  `read_factory_settings(use_empty=True)` enable glTF and FBX in both the
-  installed and trimmed builds; no manual enable is needed for these formats.
-  A reset discards custom add-on preferences. If enabling other add-ons, do
-  it after the reset, not before it.
-- **Selection is not an import result.** Importers can select several objects
-  and change the active object. Inspect the resulting names, then address the
-  intended object explicitly. Before a selection-only export, deselect the
-  rest, select what should leave, and make the intended object active.
-  `describe` gives each exporter's own selection flag; defaults need not
-  mean “only the object just imported”.
-- **Agree on axes and units at both ends.** Blender is Z-up; glTF is Y-up;
-  OBJ's default conversion uses −Z forward / Y up. FBX carries axis and unit
-  metadata. STL and PLY do not give you a universal physical-unit convention.
-  Matching default importer/exporter settings preserve the tested bounds, but
-  files from another application can require explicit axis or scale options.
-  Check world bounds before modifying a model, not just its apparent size in
-  an automatically framed image.
-- **External writes are not rollback state.** Export to a new path rather
-  than overwriting the input the program replays. Use `exec --no-record` for
-  delivery-only exports: repeating an export is not how a scene is rebuilt.
-  Snapshots cannot undo an overwritten OBJ, GLB or blend file.
-
-An unsupported format is a normal error, and the next request still works.
-The original Blender exception is retained; `rna.description` explains the
-build constraint rather than suggesting a different importer for the same
-file:
+For the `Body` mesh created above, create an armature and one bone, bind it,
+and keyframe a pose through native commands:
 
 ```sh
-blender-cli exec -c "bpy.ops.wm.usd_import(filepath='/tmp/model-io-recipe/input.usd')" --json
-# {"error":{"line":1,"message":"Calling operator \"bpy.ops.wm.usd_import\" error, could not be found","rna":{"description":"USD support is not built in (WITH_USD=OFF). Convert the file externally to OBJ, FBX, STL, PLY, glTF or .blend before importing through exec.","nearest":[],"struct":"bpy.ops.wm"},"type":"AttributeError"},"ok":false}
+blender-cli rig create Skeleton --json
+blender-cli rig bone Skeleton --bone Root --head 0,0,-2 --tail 0,0,2 --json
+blender-cli rig bind Skeleton --objects Body --weights automatic --json
+blender-cli pose set Skeleton --bone Root --rotation 0,0,0 --json
+blender-cli animation key --path 'objects["Skeleton"].pose.bones["Root"].rotation_euler' --frame 1 --json
+blender-cli pose set Skeleton --bone Root --rotation 0,0,0.4 --json
+blender-cli animation key --path 'objects["Skeleton"].pose.bones["Root"].rotation_euler' --frame 24 --json
+blender-cli scene frame --frame 12 --json
+blender-cli inspect --object Skeleton --full --json
 ```
 
-Alembic answers the same way, naming `Alembic` and `WITH_ALEMBIC=OFF`.
-For fitting, use the imported name in the usual RNA path, for example
-`objects["Part"].scale[0]`. RNA collection keys must use double quotes; that
-path is Blender RNA syntax, not an arbitrary Python expression.
+`rig bone --parent NAME` creates a hierarchy. Weighting choices are
+`automatic`, `envelope` and `empty`; empty groups require explicit weights
+before useful deformation. `animation delete` removes keys from a path;
+`animation bake --objects NAME --start 1 --end 24 --step 1` samples evaluated
+object transforms. It is not a promise to bake every constraint, simulation
+cache or pose channel into a complete interchange rig.
 
-## Feedback budgets
-
-Every action's consequences come back on their own; what varies is how much they
-cost. The policy is per session:
-
-```sh
-blender-cli session feedback image.size=128 image.mode=delta --json
-# {"feedback":{"perception":true,"objective":true,"progress":"improvements","image":{"mode":"delta","threshold":0.002,"views":["front"],"pass":"color","size":128,"samples":8,"overlay":true,"inline":false}},"ms":0.039956999899004586,"ok":true}
-```
-
-A setting is a dotted path into the policy and its value is JSON when it parses
-as JSON, so `image.views='["front","persp"]'` works and several settings merge
-in one request. `session status` reports the policy in force. The knobs that
-matter: `perception` and `image.mode` decide whether there is a budget render at
-all, `image.threshold` is the changed-pixel fraction below which no picture is
-worth sending, `image.size` and `image.samples` are what that render costs
-(8 samples by default, against `observe`'s 32), and `progress` decides how much
-a running `fit` says while it works.
-
-None of those move a score. The objective is scored at a fixed 256 px and the
-silhouette it measures renders at one sample count everywhere, so `image.size`
-and `image.samples` buy a better-looking picture and change no number —
-[design.md](design.md) states the rule and what it is for. Turn the picture
-budget up while you are looking at something and down while you are not,
-without wondering whether the objective moved underneath you.
-
-`exec` and `program` take `--image` to override the picture for one request —
-a whole frame when something needs looking at, nothing when the answer is
-already known. On a session with a GPU, that is:
-
-```sh
-blender-cli exec -c "bpy.data.objects['Handle'].scale.z = 0.5" --image full --json
-# {"ok":true,"images":[{"kind":"full","view":"front","pass":"color","region":[0,0,128,128],"size":[128,128],"path":"…/.blender-cli/feedback/b4eadf2e….png"}],"ms":713.6910519993762}
-blender-cli exec -c "bpy.data.objects['Handle'].scale.y = 1.4" --image off --json
-# {"ok":true,"ms":711.387843999546}
-```
-
-Those two cost the same, because one budget render feeds both channels and
-`--image off` only stops the pixels coming back. Switching off both is what
-removes the render:
-
-```sh
-blender-cli session feedback perception=false image.mode=off --json
-blender-cli exec -c "bpy.data.objects['Handle'].scale.y = 1.1" --json
-# {"ok":true,"ms":3.508742000121856}
-blender-cli session feedback perception=true image.mode=delta --json
-blender-cli exec -c "bpy.data.objects['Handle'].scale.z = 1.7" --json
-# {"ok":true,"ms":688.5190940001849, … "images":[{"kind":"delta",…},{"kind":"overlay",…}]}
-```
-
-Use that for a run of edits whose outcome is already known — building a rig,
-importing, renaming — and switch back on for the change that needs looking at.
-An action that changes nothing is not charged for it either way: there is
-nothing to re-render, so it answers in under a millisecond and its perception
-still arrives, with the deltas at zero.
-
-```sh
-blender-cli exec -c "len(bpy.data.objects)" --json
-# {"ok":true,"value":"1","ms":0.6380220002029091,
-#  "perception":{…,"changed":{"view":"front","objects":[],"region":null,"fraction":0.0,"silhouette_delta":0.0}}}
-```
-
-All of that assumes the machine can render. The greeting and `session status`
-report `device` as `vulkan`, `metal` or `null`, and a session with no device
-pushes no pictures, no perception and no objective at all, while `observe`,
-`fit` and `agent.perceive()` answer `NoDevice` rather than pretending. Read
-`device` once from the greeting: it decides whether looking is available for
-the rest of the conversation, and no feedback setting changes it.
-
-Pictures come back in four kinds. `delta` is the changed region cropped out of
-the budget view and `overlay` is the same region before and after (before red,
-after cyan, agreement white); `full` is the whole frame. Once a target is
-registered a fourth arrives with every scoring — `error`, that target's
-silhouette error over its worst cell, missing red and extra blue — so the
-picture says which way the model is wrong rather than only that it moved:
-
-```sh
-blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.0, 1.0, 1.0)' --json
-# {"ok":true,…,"images":[{"kind":"full","view":"front","region":[0,0,128,128],"size":[128,128],…},
-#                        {"kind":"error","view":"front","region":[56,0,136,72],"size":[80,72],…}]}
-```
-
-## The scene is a program
-
-Every `exec` that changes data is recorded as the next step of
-`.blender-cli/program/model.py`. That file, not the `.blend`, is the record: the
-agent reads it, edits it, and the process re-executes it from the longest cached
-prefix. A parameter block named `P` is the surface a search drives.
-
-```sh
-cat model.py
-```
+Rigify is a Python add-on, so its metarig and generation operations belong in
+an explicit extension, not `operator call`. Reset before enabling it:
 
 ```python
-# blender-cli program
-# base: file /tmp/u5/empty.blend
-P = {"radius": 0.4, "height": 2.0}
-
-# step 1
-bpy.ops.mesh.primitive_cylinder_add(radius=P["radius"], depth=P["height"])
-bpy.context.object.name = "Handle"
-
-# step 2
-bpy.ops.mesh.primitive_uv_sphere_add(radius=P["radius"] * 1.6,
-                                     location=(0, 0, P["height"] / 2))
-bpy.context.object.name = "Knob"
-```
-
-Editing a program re-executes it, so this session ran with
-`session feedback perception=false image.mode=off` — the point here is what ran,
-not what it looks like:
-
-```sh
-blender-cli program set --text @model.py --json
-# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:510e884d…","version":"sha256:7b78b83b…","ms":13.148849000572227,"ok":true,"diff":{"added":[{"name":"Cylinder","type":"MESH"},{"name":"Sphere","type":"MESH"},{"name":"Handle","type":"OBJECT"},{"name":"Knob","type":"OBJECT"}],…,"step":1}}
-blender-cli program patch --old '"height": 2.0' --new '"height": 3.0' --json
-# {"cached":0,"ran":[1,2],"from_step":1,"steps":2,"reproducible":true,"digest":"sha256:8e2638d1…","version":"sha256:a533bbbd…","ms":16.626302000076976,"ok":true,"diff":{…,"step":2}}
-blender-cli program run --json
-# {"cached":2,"ran":[],"from_step":3,"steps":2,"reproducible":true,"digest":"sha256:8e2638d1…","version":"sha256:a533bbbd…","ms":1.5858120004850207,"ok":true,"diff":{"added":[],"changed":[],"removed":[],…}}
-```
-
-`ran` is the steps that actually executed and `cached` the ones the prefix cache
-supplied. The patch changed `P["height"]`, which both steps read, so both re-ran
-— in 17 ms; the following `run` found nothing to do and answered in 1.6 ms with
-an empty diff and the same `digest`. That digest is content, not timing: a
-prefix-cached re-execution that lands where a full run would lands on the same
-value, which is what makes editing the text safe.
-
-`patch` requires its `--old` to match exactly once, which makes an edit that
-silently hits the wrong place impossible. Every change writes a version:
-
-```sh
-blender-cli program history --json
-# {"current":"sha256:a533bbbd…","ok":true,"versions":[
-#  {"version":"sha256:7b78b83b…","parent":null,"message":"set","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788651129.85441},
-#  {"version":"sha256:a533bbbd…","parent":"sha256:7b78b83b…","message":"patch","label":null,"steps":2,"reproducible":true,"failed":false,"at":1788651129.8751857}]}
-blender-cli program rollback 'sha256:7b78b83b…' --json
-```
-
-A version is named by its hash, by a `--label` given when it was made, or by a
-hash prefix; `program rollback` takes it as its argument, the way
-`session rollback` takes a snapshot.
-
-`program record off` stops recording without stopping execution, and
-`exec --no-record` skips one statement — use them for the throwaway probes that
-should not become part of the model.
-
-## From `repl` to a fitted model
-
-Everything above composes into the loop this process exists for: register what
-the model should look like, let every action say how far it is, and hand the
-numeric part to the process. Start with a reference image bound to a view:
-
-```sh
-blender-cli target set front --ref reference.png --view front --mask none --metrics iou,chamfer --json
-# {"ok":true,"name":"front","view":"front","mask":"none","fit":"bbox","metrics":["iou","chamfer"],
-#  "ref":"/tmp/p3/.blender-cli/targets/front/reference.png","silhouette":"…/targets/front/silhouette.png",
-#  "reference":{"bbox":[87,11,169,244],"occupancy":0.91015625,"fit":"bbox"},
-#  "objective":{"targets":{"front":{"iou":0.7111992708947622,"chamfer":9.531271046920601,"delta":null,
-#    "worst":{"region":[128,64,192,128],"iou":0.6128274009402284,"missing":0.0,"extra":1.0}}},
-#   "best":{"front":{"iou":0.7111992708947622,"snapshot":"sha256:f787acc6…","step":1}}}}
-```
-
-Registering already scores: `iou` 0.71, and the worst 4×4 cell has
-`extra: 1.0` — every pixel wrong there is model the reference does not have.
-Every action from here carries an `objective`, so the agent never asks how it
-is doing.
-
-The score is absolute, not merely comparable with itself: a model that matches
-scores `iou` 1.0 and `chamfer` 0.0. Getting exactly that from a reference this
-process rendered is a recipe, because the objective compares silhouettes at
-256 px:
-
-```sh
-blender-cli observe --views front --passes silhouette --size 256 --out ref.png --json
-blender-cli target set front --ref ref.png --view front --mask none --json
-# iou 1.0, chamfer 0.0
-```
-
-Those are the very pixels the objective will compare against, so there is
-nothing left to resample and nothing to segment — `--mask none` because a
-silhouette is already two-valued. Ask for the same silhouette at 512 and the
-same scene scores 0.9956 instead: the gap is the reference's resolution, not
-the model. Use 256 whenever the reference is one you rendered; a reference
-from outside is whatever size it is, and `--mask auto` will find its
-foreground.
-
-The numeric part is `fit`. Name the program parameters to search, the objective
-to optimise and a budget, and the search runs inside the process. Over the
-channel it reports as it goes:
-
-```json
-{"id": 1, "op": "fit", "params": [{"name": "height", "min": 1.0, "max": 4.0}], "objective": {"target": "front", "metric": "iou"}, "budget": {"evals": 40}}
-{"id": 1, "event": "progress", "eval": 1, "of": 40, "best": 0.720560152768937, "params": {"height": 2.0}}
-{"id": 1, "event": "progress", "eval": 2, "of": 40, "best": 0.9477653631284916, "params": {"height": 2.75}}
-{"id": 1, "event": "progress", "eval": 6, "of": 40, "best": 0.9652351738241309, "params": {"height": 2.9375}}
-{"id": 1, "event": "progress", "eval": 7, "of": 40, "best": 0.9661864157600706, "params": {"height": 3.03125}}
-{"id": 1, "event": "progress", "eval": 9, "of": 40, "best": 0.9665591082428865, "params": {"height": 2.984375}}
-{"id": 1, "event": "progress", "eval": 17, "of": 40, "best": 0.9671457905544147, "params": {"height": 2.9814453125}}
-{"id": 1, "event": "done", "ok": true, "ms": 16865.63041699992, "method": "coordinate",
- "objective": {"targets": ["front"], "metric": "iou", "weights": [1.0]},
- "best": {"params": {"height": 2.9814453125}, "snapshot": "sha256:8c14f0c4…"},
- "evals": 22, "failed": 0,
- "curve": [[1, 0.720560152768937], [2, 0.9477653631284916], [6, 0.9652351738241309], [7, 0.9661864157600706], [9, 0.9665591082428865], [17, 0.9671457905544147]],
- "applied": true, "stopped": "patience",
- "error_map": {"view": "front", "target": "front", "image": "…/.blender-cli/fit/39df6ff3….png", "size": [128, 128], "region": [64, 64, 96, 96]}}
-```
-
-Twenty-two evaluations of a budget of forty, six `progress` events, and the
-answer is a number the agent never had to guess: the model was built with
-`height` 2.0 and the reference was rendered from 3.0, and the search returned
-2.9814453125. The best parameters are applied to the live scene and written
-into the program's `P` block, so `program get` now reports
-`{"height": 2.9814453125, "radius": 0.4}` and the program still reproduces the
-scene.
-
-`curve` is the search's own reading, taken at its `budget.size` — 128 by
-default, cheaper than the objective's 256 — and the `objective` pushed after
-`fit` is the session's score. For this search that is `iou`
-0.9976686470632473, and it is the number to compare with every other score in
-the session.
-
-Two more fields say what the search did with the money. `stopped` is why it
-ended — `budget`, `seconds`, `cancel` or `patience`; this one converged, so it
-stopped at 22 rather than spending all 40. `error_map` is a picture of what is
-still wrong, at the 4×4 cell contributing most of it. And `curve` records only
-the evaluations that improved, so it is the trajectory rather than the
-transcript, and a flat tail means the budget was enough.
-
-`patience` is the convergence rule: the search gives up after that many
-evaluations without a real improvement. It has no fixed default, because the
-right value depends on the search — a cyclic coordinate descent probes `2n`
-points per cycle before it can halve its step — so `fit` derives it as
-`max(16, 5 × parameters)` unless the request sets one. Raise it to spend the
-whole budget on a stubborn fit; lower it to stop paying for renders sooner.
-
-`progress` follows the session's `progress` policy, `improvements` by default:
-an event only when the best value moves, because an evaluation that changed
-nothing is a token you cannot act on. `all` makes it a heartbeat at most every
-0.5 s and `off` silences it — and loses nothing, since every improvement is in
-`done.curve` anyway. A one-shot `blender-cli fit …` folds all of this into one
-document.
-
-Afterwards the objective keeps scoring, so a change that undoes the progress
-says so immediately:
-
-```sh
-blender-cli exec -c 'bpy.data.objects["Knob"].scale = (1.35, 1.35, 1.35)' --json
-# {"ok":true,"ms":633.5521260007226,…,"objective":{"targets":{"front":{"iou":0.8289790865854453,"chamfer":4.684057971014493,
-#   "delta":{"iou":-0.16868956047780204,"chamfer":4.6259848484848485},
-#   "worst":{"region":[128,64,192,128],"iou":0.7152,"missing":0.05196629213483146,"extra":0.9480337078651685}}},
-#  "best":{"front":{"iou":0.9976686470632473,"snapshot":"sha256:8c14f0c4…","step":2}}}}
-```
-
-That cost 0.17 of `iou`, and `best` still names the snapshot that scored
-0.9977, so returning to it is `session rollback 'sha256:8c14f0c4…'` — the
-process did the bookkeeping.
-
-`--params` also takes RNA paths (`{"path": "objects[\"Knob\"].scale[0]", "min":
-0.5, "max": 2}`) for values that are not program parameters, `--objective` takes
-several targets with weights or a `code` expression, and `--method` is
-`coordinate`, `nelder-mead` or `random`. Cancelling a long search keeps what it
-paid for: it stops, applies its best parameters, and ends with `done` and
-`stopped: "cancel"` rather than an error.
-
-## Checkpoints and rollback
-
-Rollback is the only control this process has; there is no confirmation step
-anywhere. A labelled snapshot is written to disk and survives a crash:
-
-```sh
-blender-cli session snapshot --label two-parts --json
-# {"label":"two-parts","snapshot":"sha256:50ced3d3…","version":"sha256:a533bbbd…","ms":8.388486000512785,"ok":true}
-blender-cli exec -c "bpy.data.objects['Knob'].scale = (1.6, 1.6, 0.6)" --json
-blender-cli session rollback two-parts --json
-# {"diff":{"added":[],"changed":[],"removed":[],"snapshot":"sha256:50ced3d3…","step":3},"ms":4.163031999269151,"ok":true,"snapshot":"sha256:50ced3d3…"}
-blender-cli inspect --select 'objects["Knob"].scale' --json
-# {"ms":0.04988100045011379,"ok":true,"selected":{"objects[\"Knob\"].scale":[1.0,1.0,1.0]}}
-```
-
-`session history` lists every snapshot with the op that produced it;
-`session rollback '~1'` goes back one, `'~0'` restores the current one, and a
-hash or a label goes straight there. Rollback replaces Blender data, so
-reacquire `knob = bpy.data.objects["Knob"]` afterwards: Python references into
-the old data may be invalid. Snapshot hashes identify memfiles inside one
-process, not geometry, and are not comparable across processes. Reusing a label
-selects the newest checkpoint while older ones stay reachable by their IDs, and
-`.blender-cli/snapshots/` is yours to clean.
-
-## When the process dies
-
-Native code can terminate the session, and the agent does not have to do
-anything about it. The pipe outlives the process behind it: every request still
-outstanding is answered with an `error` of type `Crashed`, the session is
-reopened, and the channel greets you again with the state it came back at.
-
-```json
-{"id": 4, "event": "objective", "targets": {"front": {"iou": 0.9800367922599986, "delta": {"iou": 0.17515740025647397}, …}}, "best": {"front": {"iou": 0.9800367922599986, "snapshot": "sha256:a1a7c07b…", "step": 3}}}
-{"id": 5, "op": "exec", "code": "import os; os._exit(1)"}
-{"event": "error", "id": 4, "type": "Crashed", "ok": false, "message": "Session 161358 exited during this request; see .blender-cli/session.log. The session was reopened and this pipe still serves it", "recovered_from": "program", "snapshot": "sha256:6cb355a9…", "step": 0}
-{"event": "error", "id": 5, "type": "Crashed", "ok": false, …}
-{"event": "error", "id": 6, "type": "Crashed", "ok": false, …}
-{"event": "session", "id": null, "session": "161459", "step": 0, "snapshot": "sha256:6cb355a9…", "targets": ["front"], "recovered_from": "program", …}
-```
-
-The next request is answered by the recovered session, and it is the scene that
-was there before the kill:
-
-```json
-{"id": 7, "op": "exec", "code": "agent.objective()['targets']['front']['iou']", "record": false}
-{"id": 7, "event": "value", "value": "0.9800367922599986"}
-{"id": 8, "op": "program", "action": "run"}
-{"id": 8, "event": "done", "ok": true, "steps": 3, "cached": 3, "ran": []}
-```
-
-`0.9800367922599986` before the kill and `0.9800367922599986` after it, digit
-for digit, with the registered target still registered and nothing left for
-`program run` to replay. `repl` exits non-zero only when the recovery itself
-fails.
-
-Recovery always recovers, and the newest source wins. The program and the
-autosave are both on disk; whichever was written last is the one that is used,
-and `recovered_from` names it. One-shot verbs get the same treatment from a
-plain `session open` — there is never a second open naming a file:
-
-```sh
-blender-cli exec -c 'import os; os._exit(1)' --json
-# {"ok":false,"error":{"type":"SessionError","message":"Session 183161 exited unexpectedly; see .blender-cli/session.log. `session open` recovers it from the newest of its program and autosave; `session close` discards it"},"autosave":"/tmp/f5/.blender-cli/autosave-183161.blend"}
-blender-cli session open --json
-# {"session":"183606","socket":"/tmp/f5/.blender-cli/session.sock","recovered_from":"autosave"}
-blender-cli exec -c 'agent.objective()["targets"]["front"]["iou"]' --no-record --json
-# {"ok":true,"value":"0.9736367733213159"}
-```
-
-That session was idle long enough for its autosave to be written after its last
-program version, so the autosave won; the `repl` transcript above ended on a
-burst of edits, so the program did. Each came back at the objective its own
-session had. The distinction is worth knowing only because `recovered_from`
-reports it, not because it changes what you do.
-
-Neither source restores the failed call or Python variables, and an autosave is
-the last *completed* write rather than every acknowledged edit. A recovered
-session keeps the original live filepath rather than the recovery file, so it
-will not overwrite its own lifeboat — keep the autosave's adjacent `.json`
-sidecar, which is where that filepath and the dirty flag live. `session.log`
-names the request that was running and the crash file
-`.blender-cli/session-<pid>.crash.txt`; a native rendering crash also carries
-the Python stack captured before the renderer took the GIL. `os._exit` and
-SIGKILL bypass the handlers, so they leave recovery files but no dump. Closing
-a dead session discards it and keeps its crash file.
-
-## Looking at the scene
-
-Pictures arrive on their own, at budget size and cropped to what moved.
-`observe` is for the times that is not what you need: a bigger frame, another
-view, a different pass, or a file to feed back as a reference. It renders
-offscreen with fixed cameras, a fixed light rig and fixed colour management, so
-the same scene state always produces the same PNG — the two runs behind this
-page, in different directories, wrote the same `060bef51…` bytes. It is
-deterministic, not fast: a 512 px pair on a software Vulkan device took 4.8 s.
-
-```sh
-blender-cli observe --views front,persp --json
-# {"image":"/tmp/u5/.blender-cli/observe/060bef51….png","views":["front","persp"],"passes":["color"],"size":[516,1032],"ms":4782.478429000548,"ok":true,
-#  "framing":{"bounds":{"low":[-0.64,-0.64,-1.5],"high":[0.64,0.64,2.14]},"center":[0.0,0.0,0.32],"objects":["Handle","Knob"],"occupancy":0.9090909090909091,"radius":2.032633603644515}}
-```
-
-`framing` is world-space and free: bounds, centre, radius and the objects that
-contributed them answer "is it the right size and in the right place" without
-looking at the image. Views are `front back left right top bottom persp
-camera`; passes are `color wire silhouette normal depth`; `--layout separate`
-writes one file per view and pass, and `--inline` returns base64 instead of
-files. Curves and modifiers are framed from their evaluated geometry, so there
-is no need to `object.convert` first. Automatic framing hides uniform scale:
-vary a proportion, pass `--frame OBJECT`, or use a scene camera.
-
-`inspect` is the cheap read — objects with transforms, bounds, modifiers and
-mesh counts, materials, armatures, cameras, lights and collections, never
-truncated. `--full` expands node trees and modifier settings, and `--select`
-reads exact RNA paths.
-
-## Asking the process instead of guessing
-
-`describe` answers from live RNA, so it is current for this build rather than
-for some documentation:
-
-```sh
-blender-cli describe bpy.types.Object.rotation_mode --json
-# {"animatable":true,"default":"XYZ","description":"The kind of rotation to apply, values from other rotation modes are not used",
-#  "enum_items":[{"identifier":"QUATERNION","name":"Quaternion (WXYZ)","description":"No Gimbal Lock"},{"identifier":"XYZ","name":"XYZ Euler","description":"XYZ Rotation Order - prone to Gimbal Lock (default)"},…]}
-```
-
-`describe bpy.ops.mesh.bevel` gives an operator's keywords and whether its
-`poll()` passes right now; `describe agent` and `describe agent.compare` give
-the helper module; `describe channel` gives the request and event registry, and
-`describe schema` the same as JSON Schema. Errors already carry the nearest
-valid identifiers (`rna.nearest` in the transcript above), so `describe` is for
-what you want to know before writing, not for repairing a typo.
-
-Inside `exec` the same answers are one call away: the `agent` module is
-preloaded beside `bpy`, `bmesh`, `mathutils` and `math`, and `describe agent`
-lists it. Every helper returns the dict its request or event carries, so
-`agent.objective()["targets"]["front"]` has the same `iou`, `chamfer`, `delta`
-and `worst` the event does, `agent.perceive()` the same counts, bounds,
-framing, changed region and symmetry, and `agent.program()["version"]` and
-`agent.history()[-1]["op"]` read what `program get` and `session history`
-return. Keeping a loop inside one `exec` — score, adjust, score again — costs
-one round trip instead of one per iteration, which is the same reason `fit`
-exists as a request.
-
-## Blender gotchas worth knowing before you hit them
-
-- Factory startup includes a default cube. Start from
-  `bpy.ops.wm.read_factory_settings(use_empty=True)` or a saved empty file,
-  or the next `primitive_cube_add` produces `Cube.001` beside it.
-- `mode_set(mode='EDIT')` enters multi-object edit for every selected
-  compatible object. Deselect, select the target, make it active, then switch.
-- Numeric assignment often clamps silently: `SubsurfModifier.levels = 99`
-  becomes 11. Read the value back, and consult `describe` for the range.
-  Extreme evaluated geometry can abort the whole process, and a native
-  allocator abort is not a Python exception you can catch.
-- Set `rotation_mode` **before** assigning `rotation_euler`. Assigning Euler
-  values in `QUATERNION` mode and then switching to `XYZ` converts from the
-  quaternion and can zero what you just wrote.
-- After `obj.scale = …`, `obj.dimensions` can be stale until
-  `bpy.context.view_layer.update()` or the next evaluation. Update first, then
-  read; never fit against a stale dimension.
-- A reference image only compares usefully against a view that frames the same
-  way. `target set --fit bbox` (the default) centres the reference's foreground
-  at observation's occupancy `1/1.1`, which removes reference margins but not a
-  different viewpoint or perspective.
-- Automatic framing removes uniform scale, so a `fit` over a parameter that only
-  scales the whole model measures nothing. Search a proportion, or fix the
-  framing with `--frame OBJECT` or a scene camera.
-- `--mask auto` is deterministic classic CV, not segmentation: it can fail on a
-  textured background, on foreground touching the border, or on shading close to
-  the background colour. `target set` writes the silhouette it derived beside
-  the reference — look at it before trusting a bad score.
-
-### Rigify ships disabled
-
-Factory startup enables glTF and FBX but not Rigify, and resetting the scene
-resets add-on state, so enable it *after* the reset and in the same `exec`:
-
-```python
+# Save as rigify_extension.py, then run: blender-cli exec rigify_extension.py --json
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.preferences.addon_enable(module="rigify")
 bpy.ops.object.armature_human_metarig_add()
@@ -684,6 +141,204 @@ bpy.ops.pose.rigify_generate()
 len(bpy.data.objects["rig"].data.bones)
 ```
 
-That answered `"706"` in 5.1 s on the Linux orb build. Avoid
-`addon_utils.enable("rigify", default_set=False)`: Rigify's registration reads
-the preferences entry that call does not create.
+This extension replaces the scene; run it as a separate recipe, not as a
+continuation that is expected to preserve `Body`. Add-on preferences reset
+with factory settings. Native `operator call` rejects Python-defined operators
+rather than secretly invoking an extension implementation.
+
+## Simulation and external caches
+
+This separate example resets the scene, adds a rigid body and evaluates a frame:
+
+```sh
+blender-cli scene reset --json
+blender-cli object create Falling --location 0,0,3 --json
+blender-cli simulation add Falling --type RIGID_BODY --start 1 --end 24 --json
+blender-cli scene frame --frame 12 --json
+blender-cli simulation bake Falling --type RIGID_BODY --start 1 --end 24 --json
+blender-cli simulation free Falling --type RIGID_BODY --json
+```
+
+The simulation surface also covers `CLOTH`, `SOFT_BODY`, `FLUID` and `OCEAN`.
+Adding a modifier/domain is configuration, not a finished physical setup:
+configure collisions, fluid flows/effectors, domain resolution or ocean
+parameters with `data set` and native operators. Inspect the resulting RNA.
+For disk caches, supply an absolute directory through `--path` where supported
+by the simulation's cache implementation, and inspect the returned cache status.
+For example, a fluid bake must have a configured domain and its intended flow
+objects before `simulation bake NAME --type FLUID --path /absolute/cache/fluid`.
+
+Scene rollback cannot restore overwritten cache files, exported assets or
+rendered frames. A `free` operation can deliberately invalidate external caches;
+do not describe it as reversible merely because scene data has snapshots.
+Changing scene parameters can stale a cache. Re-evaluate/bake the intended frame
+range and verify outputs independently of program replay. Long jobs report
+progress as `phase` and `fraction` (0–1), at most once per 0.5 seconds plus
+completion, unless the session's progress policy is off. Animation loops and
+point-cache baking can observe cancellation during work. Fluid, ocean and
+production-render execution currently check at operation boundaries, not
+necessarily during an upstream bake/render. Partial external files can remain
+after cancellation or failure; inspect `external_effects` when reported in an
+error as well as checking the output directory.
+
+## Production rendering and interchange
+
+`render` uses the scene camera, lights, world, render engine and compositor.
+It does **not** substitute observation's fixed light rig or automatic framing.
+Here factory defaults provide a camera and light for an independent render recipe:
+
+```sh
+blender-cli scene reset --no-empty --json
+blender-cli data set 'objects["Camera"].data.lens' --value 50 --json
+blender-cli object create Fill --type LIGHT --location -3,-4,5 --json
+blender-cli data set 'objects["Fill"].data.energy' --value 600 --json
+blender-cli operator call scene.new_compositor_effect_node_group --json
+blender-cli data get 'scenes["Scene"].compositor_effects' --json
+blender-cli render frame --frame 1 --engine CYCLES --format PNG --width 640 --height 640 --samples 32 --path /absolute/output/frame.png --no-record --json
+blender-cli render animation --start 1 --end 24 --engine CYCLES --format PNG --path /absolute/output/frame_ --no-record --json
+blender-cli scene save --path /absolute/output/scene.blend --no-record --json
+blender-cli operator call wm.usd_export --properties '{"filepath":"/absolute/output/scene.usdc"}' --no-record --json
+blender-cli operator call wm.alembic_export --properties '{"filepath":"/absolute/output/cache.abc","start":1,"end":24,"as_background_job":false}' --no-record --json
+```
+
+The compositor command creates and attaches upstream's default compositor
+effect node group. Use its returned/discovered node-group name with `data call`
+for `nodes.new` and `links.new`, passing socket pointers by path, to add the
+intended grading or effects. Merely creating an unconnected node changes no
+output. The active camera can likewise be assigned through a native pointer,
+e.g. `data set 'scenes["Scene"].camera' --value '{"path":"objects[\"Camera\"]"}'`.
+
+FFmpeg video formats and sound mixing remain production capabilities. Configure
+`scenes["Scene"].render.ffmpeg` through native data and discover
+`sound.mixdown` for audio-file delivery. USD/Alembic, native OBJ/PLY/STL/FBX
+import, Grease Pencil SVG/PDF and the normal image codecs are retained, not
+reported as intentionally missing. `capabilities` reports the actual build;
+profile intent alone is not proof that a dependency or GPU is available.
+
+Python add-on IO remains explicit, including glTF and FBX export:
+
+```sh
+blender-cli exec -c "bpy.ops.export_scene.gltf(filepath='/absolute/output/scene.glb', export_format='GLB')" --no-record --json
+blender-cli exec -c "bpy.ops.export_scene.fbx(filepath='/absolute/output/scene.fbx')" --no-record --json
+blender-cli operator call wm.usd_import --properties '{"filepath":"/absolute/input/scene.usdc"}' --json
+```
+
+Agree on axis/unit conversions, selection flags and material limitations at
+both ends. Alembic carries geometry/cache data rather than Blender shader
+graphs; glTF may split vertices at attribute seams and triangulate polygons.
+Keep texture/MTL/bin sidecars. Record absolute immutable input paths for replay;
+`//` is relative to a blend file, not the JSON program. Export to new paths and
+use `--no-record` for delivery-only work that should not repeat during rebuild.
+
+## The scene is a JSON program
+
+Save this as `model.json`:
+
+```json
+{
+  "base": "factory-empty",
+  "params": {"height": 2.0, "width": 0.4},
+  "steps": [
+    {"op":"object","action":"create","name":"Handle","primitive":"cylinder","as":"handle"},
+    {"op":"object","action":"transform","name":{"$ref":"handle.name"},"scale":[{"$param":"width"},{"$param":"width"},{"$param":"height"}]}
+  ]
+}
+```
+
+`base` is `factory-empty`, `factory-default`, or an absolute blend-file path.
+`params` contains literal JSON. `$param` substitutes a named parameter and
+`$ref` reads a prior named result, not Python syntax or an arithmetic expression.
+Use explicit values/parameters for relationships the request does not compute.
+An advanced or add-on extension is a step with `{"op":"exec","code":"..."}`;
+its namespace exposes the parameter dictionary as `P`. Native steps never
+generate Python and replay through the same native command entry.
+
+```sh
+blender-cli program set --text @model.json --json
+blender-cli program patch --old '"height": 2.0' --new '"height": 3.0' --json
+blender-cli program run --json
+blender-cli program get --json
+blender-cli program history --json
+```
+
+The persisted record is `.blender-cli/program/model.json`; `program get.text`
+is serialized JSON. `cached`, `ran` and `from_step` report prefix reuse;
+`digest` identifies scene content rather than allocation-dependent snapshot
+bytes. `patch` requires exactly one textual match. Use `program rollback
+VERSION_OR_LABEL` to check out a version, or `program record off|on` to change
+automatic recording. Successful mutating native commands and explicit `exec`
+steps participate in the program; failed requests do not become successful steps.
+
+The JSON artifact rebuilds without its original memfile cache, provided its
+base and external inputs remain available. It does not embed external assets.
+Pure native prefixes retain serialized named results. Replay starts a fresh
+Python namespace and does not skip explicit extension steps or external-effect
+operations just because their Main snapshot exists; their suffix re-runs.
+After ordinary session rollback, reacquire Python RNA references: cached Main
+is not a snapshot of arbitrary Python variables. A failed program edit keeps the edited text and
+failure metadata available for correction while restoring pre-request scene data.
+
+## Observation, targets and fitting
+
+For the handle program, register a reference and let numeric search vary a
+proportion. These operations need a usable observation device:
+
+```sh
+blender-cli observe --views front --passes silhouette --size 256 --out /absolute/output/reference.png --json
+blender-cli target set front --ref /absolute/output/reference.png --view front --mask none --metrics iou,chamfer --json
+blender-cli program patch --old '"height": 3.0' --new '"height": 1.5' --json
+blender-cli fit --params '[{"name":"height","min":1,"max":4}]' --objective '{"target":"front","metric":"iou"}' --budget '{"evals":40,"size":256}' --json
+```
+
+`fit` applies its best parameters to `params` while preserving unrelated
+parameters and program steps. Program-parameter evaluations re-execute affected
+prefixes; RNA-path parameters assign properties directly. A helper call to
+`agent.fit(...)` inside explicit `exec --no-record` uses the same machinery.
+Progress follows the session policy; final results report the curve, best
+parameters, evaluations and stop reason. Cancellation keeps the best result
+for `fit`, unlike ordinary transactional edit cancellation.
+
+Automatic framing hides uniform scale: fit proportions, fix `--frame OBJECT`,
+or use a suitable camera view. A 256-pixel silhouette reference matches the
+objective's fixed resolution. Different raster sizes or reference masking can
+change a score even for unchanged geometry. `--mask auto` is deterministic
+classic image processing, not semantic segmentation; inspect its derived mask.
+
+```sh
+blender-cli session feedback image.size=128 image.mode=delta --json
+blender-cli session feedback perception=false image.mode=off --json
+blender-cli session feedback perception=true image.mode=delta --json
+blender-cli inspect --select 'objects["Handle"].scale' --json
+```
+
+Images are full frames, changed-region crops, before/after overlays or target
+error maps. `image.mode=off` suppresses returned pixels, not a render still
+needed by perception/objectives. Color-image samples do not change silhouette
+metric samples. A `device: null` greeting means observation is unavailable:
+`observe`/perceptual `fit` report `NoDevice`, not fabricated pictures or scores.
+That does not equate to disabling native scene editing or Cycles CPU production
+rendering. See the design for exact budgets, view presets and metric semantics.
+
+## Checkpoints and recovery
+
+```sh
+blender-cli session snapshot --label checkpoint --json
+blender-cli session history --json
+blender-cli session rollback checkpoint --json
+blender-cli session close --json
+```
+
+`session rollback '~1'` selects a relative snapshot; program rollback selects
+a program version. Neither undoes external writes or restores Python variables.
+Labelled checkpoints persist on disk. `session close` is an explicit end of
+the live session, not a command to leave a daemon running in the background.
+
+If the native process dies, the `repl` bridge reports `Crashed` for outstanding
+requests, attempts to reopen the session, and greets the same pipe again if
+recovery succeeds. `session open` also recovers an abandoned session. Recovery
+chooses the newer usable program/autosave according to the design and reports
+`recovered_from`; unavailable inputs or corrupt recovery files can still fail.
+There is no guarantee that a killed in-flight operation completed. Autosaves
+represent completed writes, and a program can only rebuild available inputs.
+Keep autosave sidecars; they preserve original filepath/dirty state. Inspect
+`.blender-cli/session.log` and native crash diagnostics when recovery fails.
