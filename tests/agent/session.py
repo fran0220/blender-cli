@@ -475,19 +475,24 @@ len(mesh.vertices)
         assert call("inspect")["objects"][0]["name"] == "Sphere"
         call("session", "close")
         assert index_path.read_bytes() == index_before
-        if sys.platform != "win32":
-            faulted = call("session", "open", "--file", saved_autosave)
-            quiet()
-            assert faulted["previous_autosave"] == str(saved_autosave), faulted
-            crash_script = root / "fault.py"
-            crash_script.write_text("# checkpoint crash regression\nimport os, signal; os.kill(os.getpid(), signal.SIGSEGV)\n")
-            call("exec", crash_script, ok=False)
-            dump = root / ".blender-cli" / f'session-{faulted["session"]}.crash.txt'
-            text = dump.read_text()
-            assert "# backtrace" in text and "# Agent request" in text, text
-            assert "# checkpoint crash regression" in text and str(crash_script) in text and '"id"' in text, text
-            assert str(dump) in (root / ".blender-cli/session.log").read_text()
-            call("session", "close")
+        # A crash dump is a product-platform promise, so it is tested on every one.
+        # A null read faults where the process runs: it reaches the POSIX SIGSEGV
+        # handler and Windows' SEH filter alike, both of which call the same
+        # crashlog_file_generate the agent's callback hooks. ctypes would not --
+        # it wraps the fault in its own SEH and hands back an OSError.
+        faulted = call("session", "open", "--file", saved_autosave)
+        quiet()
+        assert faulted["previous_autosave"] == str(saved_autosave), faulted
+        crash_script = root / "fault.py"
+        crash_script.write_text("# checkpoint crash regression\n"
+                                "import faulthandler; faulthandler._read_null()\n")
+        call("exec", crash_script, ok=False)
+        dump = root / ".blender-cli" / f'session-{faulted["session"]}.crash.txt'
+        text = dump.read_text()
+        assert "# backtrace" in text and "# Agent request" in text, text
+        assert "# checkpoint crash regression" in text and str(crash_script) in text and '"id"' in text, text
+        assert str(dump) in (root / ".blender-cli/session.log").read_text()
+        call("session", "close")
         # Exercise the real observation pipeline in one native process at a cheap tile size.
         # The unpatched 128px and 512px paths both leak ~1810 VMAs per render and die at ~35.
         require_device(executable)
