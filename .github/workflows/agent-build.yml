@@ -66,6 +66,104 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
+          # Upstream requires MSVC >= 19.44.35216; CUDA 12.8 needs VS 2022.
+          toolset: '14.44'
+      - name: Windows production GPU toolchains
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Match upstream versions.cmake and windows/vmprep.cmd.txt. Install SDKs
+          # on gate runs too: configuration must not silently drop GPU backends.
+          $versions = Get-Content build_files/build_environment/cmake/versions.cmake -Raw
+          if ($versions -notmatch 'set\(RELEASE_CUDA_VERSION 12\.8\)' -or
+              $versions -notmatch 'set\(RELEASE_HIP_WINDOWS_VERSION 7\.1\)') {
+            throw 'Upstream GPU compiler versions changed; update the CI SDK pins'
+          }
+          $sdk = (New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\agent-gpu-sdk").FullName
+          function Assert-VendorSignature($path, $vendor) {
+            $signature = Get-AuthenticodeSignature $path
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch $vendor) {
+              throw "Invalid vendor signature: $path"
+            }
+          }
+          # NVIDIA documents -s <subpackages> -n for unattended/no-reboot install.
+          # No display driver is needed to compile kernels on the hosted runner.
+          # https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-microsoft-windows/
+          $cudaInstaller = Join-Path $sdk 'cuda.exe'
+          Invoke-WebRequest 'https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe' -OutFile $cudaInstaller
+          # Vendor checksum: compute/cuda/12.8.0/docs/sidebar/md5sum.txt.
+          if ((Get-FileHash $cudaInstaller -Algorithm MD5).Hash -ne '5e7fe0f087d65fae4c0278f13af55c1d') {
+            throw 'CUDA installer checksum mismatch'
+          }
+          Assert-VendorSignature $cudaInstaller 'NVIDIA Corporation'
+          $process = Start-Process $cudaInstaller -ArgumentList '-s','nvcc_12.8','cudart_12.8','-n' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "CUDA installation failed: $($process.ExitCode)" }
+          Remove-Item $cudaInstaller
+          $cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          & "$cuda\bin\nvcc.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'CUDA compiler probe failed' }
+          "CUDA_PATH=$cuda" >> $env:GITHUB_ENV
+          "CUDA_TOOLKIT_ROOT_DIR=$cuda" >> $env:GITHUB_ENV
+          "$cuda\bin" >> $env:GITHUB_PATH
+
+          # Use upstream's SDKCore MSI extraction, not AMD's full driver installer.
+          # HIPRT, DPC++ and Level Zero come from the pinned Blender libs.
+          # AMD lists 7.1.1 for Windows 11, not Server 2022: this compiler-only
+          # installation still needs a native CI run; never fall back to 6.x/OFF.
+          $hipInstaller = Join-Path $sdk 'hip.exe'
+          Invoke-WebRequest 'https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe' -OutFile $hipInstaller
+          Assert-VendorSignature $hipInstaller 'Advanced Micro Devices'
+          7z x -y $hipInstaller "-o$sdk" 'Packages\Apps\ROCmSDKPackages\SDKCore\*'
+          if ($LASTEXITCODE -ne 0) { throw 'HIP SDK extraction failed' }
+          $hipMsi = Join-Path $sdk 'Packages\Apps\ROCmSDKPackages\SDKCore\ROCm_SDK_Core.msi'
+          if (!(Test-Path $hipMsi)) { throw 'Upstream HIP SDKCore MSI layout changed' }
+          $hip = 'C:\tools\rocm'
+          New-Item -ItemType Directory -Force build/ci | Out-Null
+          $log = Join-Path $env:GITHUB_WORKSPACE 'build\ci\hip-install.log'
+          $process = Start-Process msiexec.exe -ArgumentList '/i',"`"$hipMsi`"",'/qn','/norestart',"INSTALLDIR=`"$hip`"",'/L*v',"`"$log`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "HIP SDK installation failed: $($process.ExitCode); see $log" }
+          Remove-Item $sdk -Recurse -Force
+          $env:HIP_PATH = $hip
+          & "$hip\bin\hipcc.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'HIP compiler probe failed' }
+          $hipVersion = Get-Content "$hip\include\hip\hip_version.h" -Raw
+          if ($hipVersion -notmatch '#define HIP_VERSION_MAJOR\s+7\b' -or
+              $hipVersion -notmatch '#define HIP_VERSION_MINOR\s+1\b') {
+            throw 'HIP SDK version does not match upstream 7.1'
+          }
+          "HIP_PATH=$hip" >> $env:GITHUB_ENV
+          "HIP_ROOT_DIR=$hip" >> $env:GITHUB_ENV
+          "$hip\bin" >> $env:GITHUB_PATH
+          foreach ($file in @('dpcpp/bin/clang++.exe', 'level-zero/lib/ze_loader.lib',
+                              'level-zero/include/level_zero/ze_api.h', 'hiprt/include/hiprt/hiprt.h',
+                              'hiprt/bin/hiprt0200564.lib')) {
+            if (!(Test-Path "lib/windows_x64/$file")) { throw "Pinned GPU dependency missing: $file" }
+          }
+          & lib/windows_x64/dpcpp/bin/clang++.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned DPC++ compiler probe failed' }
+          # Windows libraries do not bundle ocloc. Blender's GPU build handbook
+          # requires Intel's standalone Offline Compiler, not a replacement SYCL
+          # SDK. Keep its companion IGC DLLs and license files together.
+          # https://www.intel.com/content/www/us/en/developer/articles/tool/oneapi-standalone-components.html
+          $oclocZip = Join-Path $env:RUNNER_TEMP 'ocloc.zip'
+          Invoke-WebRequest 'https://registrationcenter-download.intel.com/akdlm/IRC_NAS/afea9409-dd07-4a3c-8f04-bf51fdd7b480/w_ocloc_p_2026.1.1.zip' -OutFile $oclocZip
+          if ((Get-FileHash $oclocZip -Algorithm SHA256).Hash -ne '59a2a804dbb75a30a0cfec75f6282f8fb15522e45579d83c3ec975012d278b3b') {
+            throw 'Intel ocloc archive checksum mismatch'
+          }
+          Expand-Archive $oclocZip "$env:RUNNER_TEMP/ocloc"
+          Remove-Item $oclocZip
+          $ocloc = "$env:RUNNER_TEMP/ocloc/bin"
+          & "$ocloc/ocloc.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw 'Intel ocloc probe failed' }
+          "OCLOC_INSTALL_DIR=$ocloc" >> $env:GITHUB_ENV
+          # NVIDIA's public headers are sufficient; no authenticated OptiX SDK
+          # installer or GPU driver is required. Pin OptiX 9.0.0, not moving main.
+          git clone --no-checkout https://github.com/NVIDIA/optix-dev.git "$env:RUNNER_TEMP/optix"
+          if ($LASTEXITCODE -ne 0) { throw 'OptiX download failed' }
+          git -C "$env:RUNNER_TEMP/optix" checkout --detach fff65c2a7c592f1ea5f1661ad7d2381cf965f9bd
+          if ($LASTEXITCODE -ne 0) { throw 'OptiX checkout failed' }
+          "OPTIX_ROOT_DIR=$env:RUNNER_TEMP/optix" >> $env:GITHUB_ENV
       - &mesa-cache
         uses: actions/cache@v4
         if: runner.os == 'Windows'
@@ -108,12 +206,33 @@ jobs:
       - name: Configure
         run: |
           extra=()
-          if [[ "$RUNNER_OS" = Windows ]]; then extra+=(-DWITH_WINDOWS_SCCACHE=ON); fi
+          if [[ "$RUNNER_OS" = Windows ]]; then
+            extra+=(-DWITH_WINDOWS_SCCACHE=ON "-DOCLOC_INSTALL_DIR:PATH=$OCLOC_INSTALL_DIR")
+            # Pinned Windows libraries name this directory level-zero, while
+            # platform_win32.cmake's default root currently uses level_zero.
+            extra+=("-DLEVEL_ZERO_INCLUDE_DIR:PATH=$GITHUB_WORKSPACE/lib/windows_x64/level-zero/include")
+            extra+=("-DLEVEL_ZERO_LIBRARY:FILEPATH=$GITHUB_WORKSPACE/lib/windows_x64/level-zero/lib/ze_loader.lib")
+          fi
           if [[ "$RUNNER_OS" = macOS ]]; then extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64); fi
           cmake -S . -B build/ci -G Ninja -C build_files/cmake/config/blender_agent.cmake \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_OPTIMIZE_DEPENDENCIES=ON \
             -DAGENT_WARNINGS_AS_ERRORS=ON "${extra[@]}"
+      - name: Verify generated Windows GPU build graph
+        if: runner.os == 'Windows'
+        run: |
+          # CMake can shadow ON cache entries with OFF when discovery fails.
+          # Require real generated AOT targets and compiled device definitions.
+          for backend in cuda optix hip hiprt oneapi; do
+            ninja -C build/ci -t query "cycles_kernel_$backend"
+          done
+          for define in WITH_CUDA WITH_OPTIX WITH_HIP WITH_HIPRT WITH_ONEAPI; do
+            grep -Eq "[/-]D${define}([ =]|$)" build/ci/build.ninja || {
+              echo "Missing compiled Cycles device: $define" >&2
+              exit 1
+            }
+          done
+          echo WINDOWS_GPU_BUILD_GRAPH_OK
       - name: Gate targets
         if: '!inputs.full && runner.os != ''Linux'''
         run: |
@@ -165,6 +284,7 @@ jobs:
           name: diagnostics-${{ matrix.platform }}-${{ inputs.full && 'full' || 'gate' }}
           path: |
             build/ci/CMakeCache.txt
+            build/ci/hip-install.log
             build/ci/Testing/Temporary/LastTest.log
             build/ci/Testing/Temporary/LastTestsFailed.log
   package:
