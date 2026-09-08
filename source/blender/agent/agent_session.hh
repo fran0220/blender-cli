@@ -15,6 +15,8 @@ namespace blender {
 struct bContext;
 namespace agent {
 void crashlog_python_context(bool capture);
+/* Main-thread cooperative checkpoint for native production work. */
+bool request_cancelled();
 
 /* The Python callable that writes one event the moment it is produced. */
 PyObject *event_emitter(EventSink &sink);

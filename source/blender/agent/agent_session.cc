@@ -42,6 +42,17 @@ namespace blender::agent {
 
 void (*crashlog_callback)(const char **filepath, FILE *output) = nullptr;
 static std::string crashlog_path, crashlog_request, crashlog_python;
+static Channel *active_channel = nullptr;
+
+bool request_cancelled()
+{
+  /* Transport writes only the atomic flag. Blender's non-atomic break state
+   * is updated by this main-thread checkpoint, never by a polling thread. */
+  if (active_channel && active_channel->cancelled.load()) {
+    G.is_break = true;
+  }
+  return G.is_break;
+}
 
 static void session_crashlog(const char **filepath, FILE *output)
 {
@@ -466,8 +477,10 @@ int session_serve(bContext *C,
       fprintf(stderr, "Agent request: %s\n", crashlog_request.c_str());
       fflush(stderr);
       sink.request = &request;
+      active_channel = channel;
       PyObject *answer = PyObject_CallMethod(
           runtime, "serve", "s", request.message.dump().c_str());
+      active_channel = nullptr;
       if (answer) {
         Py_DECREF(answer);
       }

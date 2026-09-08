@@ -86,6 +86,10 @@ IRREGULAR = {
     ("describe", "path"): {"position": 0, "value": "RNA_PATH|channel|schema"},
     # RNA paths contain commas inside subscripts, so they are separate words.
     ("inspect", "select"): {"kind": "Words", "value": "PATH..."},
+    ("data", "value"): {"kind": "Json"},
+    ("scene", "path"): {"kind": "Path"},
+    ("simulation", "path"): {"kind": "Path"},
+    ("render", "path"): {"kind": "Path"},
 }
 
 
@@ -106,7 +110,7 @@ def contract(path):
 def projection(op, field, spec, defs):
     """The one CLI projection of one request field."""
     name = field.upper()
-    structured = "ref" in spec or (spec.get("type") == "array" and
+    structured = "ref" in spec or spec.get("type") == "object" or (spec.get("type") == "array" and
                                    spec.get("items", {}).get("type") != "string")
     if structured:
         kind, value = "Json", "JSON"
@@ -123,6 +127,16 @@ def projection(op, field, spec, defs):
              "kind": kind, "value": value, "doc": spec.get("doc", ""),
              "required": bool(spec.get("required"))}
     override = IRREGULAR.get((op, field), {})
+    if field == "action":
+        entry["position"] = 0
+    if op in {"object", "rig", "pose", "simulation", "operator"} and field == "name":
+        entry["position"] = 1
+    if op == "data" and field == "path":
+        entry["position"] = 1
+    if spec.get("minItems") == 3 and spec.get("maxItems") == 3:
+        entry.update(kind="Vector", value="X,Y,Z")
+    if field == "feedback" and op not in {"session", "exec", "program"}:
+        entry.update(flag="--image", assign="feedback.mode", kind="Word", value="delta|full|off")
     entry.update(override)
     placeholders = {"OnOff": "on|off", "Settings": "KEY=VALUE", "Json": "JSON",
                     "Flag": "", "NoFlag": ""}
@@ -172,6 +186,7 @@ def emit(verbs, source):
              "  List,     /* comma-separated array of strings */",
              "  Words,    /* the following words, until the next flag */",
              "  Json,     /* literal JSON, or @FILE to read it */",
+             "  Vector,   /* numeric triple as X,Y,Z or JSON */",
              "  Flag,     /* no argument; true */",
              "  NoFlag,   /* no argument; false */",
              "  OnOff,    /* the word on or off */",
@@ -199,6 +214,9 @@ def emit(verbs, source):
              "};",
              ""]
     for verb in verbs:
+        if not verb["fields"]:
+            lines.append(f"inline const CliField *cli_fields_{verb['name']} = nullptr;")
+            continue
         lines.append(f"inline const CliField cli_fields_{verb['name']}[] = {{")
         for entry in verb["fields"]:
             lines.append("    {{{}, {}, {}, {}, {}, CliKind::{}, {}, {}, {}}},".format(

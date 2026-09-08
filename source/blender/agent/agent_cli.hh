@@ -283,7 +283,8 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
           }
           break;
         case CliKind::Text:
-        case CliKind::Json: {
+        case CliKind::Json:
+        case CliKind::Vector: {
           text = value(arg);
           if (!parsed.error.empty()) {
             break;
@@ -296,9 +297,20 @@ inline CommandLine cli_parse(const std::vector<std::string> &args)
             cli_assign(parsed.request, field->assign, body);
             break;
           }
+          if (field->kind == CliKind::Vector && !body.starts_with("[")) {
+            body = "[" + body + "]";
+          }
           auto document = nlohmann::json::parse(body, nullptr, false);
           if (document.is_discarded()) {
             return fail(arg + " requires a JSON value");
+          }
+          if (field->kind == CliKind::Vector &&
+              (!document.is_array() || document.size() != 3 ||
+               !std::all_of(document.begin(), document.end(), [](const auto &item) {
+                 return item.is_number();
+               })))
+          {
+            return fail(arg + " requires three numbers: X,Y,Z");
           }
           cli_assign(parsed.request, field->assign, document);
           break;

@@ -165,6 +165,11 @@ def check_value(where, spec, value):
         raise ProtocolError(f"{where} must be at most {spec['maximum']}")
     if kind == "number" and not math.isfinite(value):
         raise ProtocolError(f"{where} must be a finite number")
+    if kind == "array":
+        if len(value) < spec.get("minItems", 0):
+            raise ProtocolError(f"{where} requires at least {spec['minItems']} items")
+        if "maxItems" in spec and len(value) > spec["maxItems"]:
+            raise ProtocolError(f"{where} allows at most {spec['maxItems']} items")
     if kind == "array" and "items" in spec:
         for index, item in enumerate(value):
             check_value(f"{where}[{index}]", spec["items"], item)
@@ -269,8 +274,12 @@ class DiffProvider:
             session.step += 1
             if not session.snapshot_taken and "snapshot" in session.native:
                 session.snapshot(None, request["op"])
-            if request["op"] == "exec" and request.get("record", True):
-                session.on_recorded(session.last_code, session.step)
+            if request["op"] in STEP_OPS and request.get("record", True):
+                recorded = dict(request)
+                if request["op"] == "exec":
+                    recorded.pop("script", None)
+                    recorded["code"] = session.last_code
+                session.on_recorded(recorded, session.step)
         emit({"event": "diff", **diff, "snapshot": session.current, "step": session.step})
 
 
@@ -379,6 +388,72 @@ def id_diff(before, after, fields):
 
 # ---------------------------------------------------------------------------
 # Request handlers.
+
+
+NATIVE_OPS = frozenset({"object", "data", "operator", "scene", "capabilities",
+                        "rig", "pose", "animation", "simulation", "render"})
+STEP_OPS = NATIVE_OPS | {"exec", "batch"}
+
+
+def native_op(request, session, emit):
+    """Transport only: native commands never compile/evaluate generated Python."""
+    cancelled = session.native.get("cancelled")
+    if cancelled and cancelled():
+        raise Cancelled("Execution cancelled")
+    result = json.loads(agent._native["command"](json.dumps(request, allow_nan=False)))
+    if cancelled and cancelled():
+        error = Cancelled("Execution cancelled; external files are not rolled back")
+        if result.get("external_effects"):
+            error.agent_fields = {"external_effects": result["external_effects"]}
+        raise error
+    return result
+
+
+def execute_step(request, session, emit=lambda event: None, *, results=None):
+    """Execute a raw program/batch step, without another feedback or record boundary."""
+    from agent_program import attach, resolve_step
+    resolved = resolve_step(request, attach(session).params, results or {})
+    resolved = {**resolved, "id": 0}
+    validate(resolved)
+    if resolved["op"] not in STEP_OPS:
+        raise ProtocolError(f"{resolved['op']} cannot be a production step")
+    if resolved["op"] == "batch":
+        return batch_op(resolved, session, emit, results=results)
+    return HANDLERS[resolved["op"]](resolved, session, emit)
+
+
+def batch_op(request, session, emit, *, results=None):
+    from agent_program import validate_step
+    # Reject malformed/control/nested steps before any operation has an effect.
+    names = set(results or {})
+    for step in request["steps"]:
+        validate_step(step)
+        if step.get("op") not in STEP_OPS - {"batch"}:
+            raise ProtocolError("A batch contains production steps, not nested batches or controls")
+        if "as" in step:
+            if step["as"] in names:
+                raise ProtocolError(f"Duplicate step name: {step['as']}")
+            names.add(step["as"])
+    references = dict(results or {})
+    answers = []
+    external = []
+    for index, step in enumerate(request["steps"], 1):
+        try:
+            answer = execute_step(step, session, emit, results=references)
+        except BaseException as error:
+            error.agent_fields = {**getattr(error, "agent_fields", {}), "step": index}
+            if external:
+                error.agent_fields["external_effects"] = external
+            raise
+        answers.append(answer)
+        if "as" in step:
+            references[step["as"]] = answer
+        if answer.get("external_effects"):
+            external.append(answer["external_effects"])
+    result = {"results": answers}
+    if external:
+        result["external_effects"] = external
+    return result
 
 
 def exec_op(request, session, emit):
@@ -555,6 +630,8 @@ HANDLERS.update({"exec": exec_op, "inspect": inspect_op, "observe": observe_op,
                  "describe": describe_op, "session": session_op,
                  "program": unimplemented("program"), "target": unimplemented("target"),
                  "fit": unimplemented("fit"), "cancel": unimplemented("cancel")})
+HANDLERS.update({op: native_op for op in NATIVE_OPS})
+HANDLERS["batch"] = batch_op
 
 
 # ---------------------------------------------------------------------------
@@ -740,9 +817,9 @@ class Session:
     def diff(self):
         return id_diff(self.before, self.native["id_state"](False), self.native["fields"])
 
-    def on_recorded(self, code, step):
+    def on_recorded(self, request, step):
         if RECORD_HOOK is not None:
-            RECORD_HOOK(self, code, step)
+            RECORD_HOOK(self, request, step)
 
     # -- dispatch -----------------------------------------------------------
 
@@ -787,7 +864,7 @@ class Session:
             self.last_diff = None
             self.previous_snapshot = self.current
             self.request_feedback = self.feedback
-            if "feedback" in request and request["op"] in ("exec", "program"):
+            if "feedback" in request and request["op"] in STEP_OPS | {"program"}:
                 self.request_feedback = merge(json.loads(json.dumps(self.feedback)),
                                               {"image": request["feedback"]})
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):

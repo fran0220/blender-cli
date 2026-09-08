@@ -72,6 +72,9 @@ def json_schema(spec):
             node["exclusiveMinimum" if spec.get("exclusive_minimum") else "minimum"] = spec["minimum"]
         if "maximum" in spec:
             node["maximum"] = spec["maximum"]
+        for bound in ("minItems", "maxItems"):
+            if bound in spec:
+                node[bound] = spec[bound]
     if "default" in spec:
         node["default"] = spec["default"]
     if "doc" in spec:
